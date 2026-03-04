@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HAROLD // Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a1a;
+    --floor: #1a1430;
+    --floor-tile: #1e1836;
+    --wall: #1a1a30;
+    --wall-brick: #1e1e38;
+    --desk-wood: #6a4420;
+    --desk-wood-light: #8a6030;
+    --desk-wood-dark: #4a3010;
+    --desk-wood-edge: #7a5428;
+    --monitor-off: #1a1a2a;
+    --monitor-on: #002a18;
+    --monitor-border: #4a4a6a;
+    --monitor-glow: #00ff88;
+    --text-green: #00ff88;
+    --text-amber: #ffaa00;
+    --text-cyan: #00ccff;
+    --text-dim: #445566;
+    --text-white: #ccddee;
+    --red-alert: #ff3344;
+    --lamp-glow: #ffdd44;
+    --lamp-off: #555;
+    --paper-white: #d4c8b0;
+    --paper-shadow: #a89878;
+    --coffee-brown: #5a2a0a;
+    --plant-green: #2a8840;
+    --plant-pot: #7a4420;
+    --chair-dark: #2a2a3a;
+    --chair-mid: #3a3a4a;
+    --skin: #e8b878;
+  }
+
+  body {
+    font-family: 'Press Start 2P', monospace;
+    background: var(--bg);
+    color: var(--text-green);
+    min-height: 100vh;
+    image-rendering: pixelated;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* CRT scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.12) 2px,
+      rgba(0, 0, 0, 0.12) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* ===== TOP HUD BAR ===== */
+  .hud-bar {
+    background: linear-gradient(180deg, #0e0e24 0%, #0a0a1c 100%);
+    border-bottom: 4px solid #2a2a4a;
+    padding: 6px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 4px 0 #000;
+  }
+
+  .hud-left { display: flex; align-items: center; gap: 12px; }
+
+  .hud-title {
+    font-size: 10px;
+    color: var(--text-cyan);
+    letter-spacing: 2px;
+    text-shadow: 0 0 8px rgba(0, 204, 255, 0.3);
+  }
+
+  .hud-live { display: flex; align-items: center; gap: 6px; font-size: 8px; color: var(--text-green); }
+
+  .hud-live-dot {
+    width: 8px; height: 8px;
+    background: var(--text-green);
+    box-shadow: 0 0 6px var(--text-green), 0 0 12px var(--text-green);
+    animation: blink-dot 1s steps(2, start) infinite;
+  }
+
+  @keyframes blink-dot { 50% { opacity: 0; } }
+
+  .hud-right { display: flex; align-items: center; gap: 16px; }
+
+  .hud-clock {
+    font-size: 14px;
+    color: var(--text-amber);
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+  }
+
+  .hud-poll { font-size: 7px; color: var(--text-dim); }
+
+  /* ===== ROOM ===== */
+  .room {
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 8px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== BACK WALL ===== */
+  .back-wall {
+    background: var(--wall);
+    border: 4px solid #2a2a4a;
+    border-bottom: none;
+    padding: 10px 16px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    position: relative;
+    min-height: 80px;
+  }
+
+  /* Brick texture */
+  .back-wall::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background:
+      repeating-linear-gradient(90deg, transparent 0, transparent 40px, rgba(0,0,0,0.06) 40px, rgba(0,0,0,0.06) 42px),
+      repeating-linear-gradient(0deg, transparent 0, transparent 20px, rgba(0,0,0,0.04) 20px, rgba(0,0,0,0.04) 22px);
+    pointer-events: none;
+  }
+
+  /* World map monitor */
+  .wall-map {
+    width: 200px; height: 80px;
+    background: #001a0d;
+    border: 4px solid var(--monitor-border);
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 0 12px rgba(0, 255, 136, 0.1), 0 0 8px rgba(0, 255, 136, 0.08);
+  }
+
+  .map-dot {
+    position: absolute;
+    background: var(--text-green);
+    opacity: 0.4;
+    animation: map-blink 3s steps(2) infinite;
+  }
+
+  .map-dot.active-dot {
+    opacity: 1;
+    background: var(--text-amber);
+    box-shadow: 0 0 6px var(--text-amber);
+    animation: map-pulse 1s steps(2) infinite;
+  }
+
+  @keyframes map-blink { 50% { opacity: 0.15; } }
+  @keyframes map-pulse { 50% { opacity: 0.3; } }
+
+  .wall-map-label {
+    position: absolute;
+    bottom: 2px; right: 4px;
+    font-size: 5px;
+    color: var(--text-dim);
+  }
+
+  /* Wall stat monitors */
+  .wall-monitor {
+    background: #001a0d;
+    border: 4px solid var(--monitor-border);
+    width: 100px; height: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-shadow: inset 0 0 10px rgba(0, 255, 136, 0.1), 0 0 6px rgba(0, 255, 136, 0.08);
+  }
+
+  .wall-monitor::after {
+    content: '';
+    position: absolute;
+    bottom: -8px; left: 50%;
+    transform: translateX(-50%);
+    width: 20px; height: 4px;
+    background: var(--monitor-border);
+  }
+
+  .wall-monitor-value {
+    font-size: 20px;
+    color: var(--text-green);
+    text-shadow: 0 0 8px var(--text-green);
+  }
+
+  .wall-monitor-label {
+    font-size: 6px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* Wall decorations */
+  .wall-poster {
+    position: absolute;
+    top: 10px; left: 14px;
+    width: 30px; height: 20px;
+    background: #2a2244;
+    border: 2px solid #3a3a5a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .wall-poster::after {
+    content: 'HQ';
+    font-size: 6px;
+    color: var(--text-dim);
+  }
+
+  .wall-clock {
+    position: absolute;
+    top: 8px; right: 14px;
+    width: 24px; height: 24px;
+    border: 3px solid #4a4a6a;
+    border-radius: 50%;
+    background: #1a1a30;
+  }
+
+  .wall-clock::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 2px; height: 8px;
+    background: var(--text-dim);
+    transform-origin: bottom center;
+    transform: translate(-50%, -100%) rotate(var(--clock-angle, 0deg));
+  }
+
+  /* ===== HAROLD COMMAND DESK ===== */
+  .harold-station {
+    background: linear-gradient(180deg, #10102a 0%, #0c0c22 100%);
+    border: 4px solid #2a2a4a;
+    border-top: 4px solid #3a3a5a;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .harold-char {
+    width: 44px; height: 56px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .harold-hat {
+    position: absolute;
+    top: -2px; left: 50%;
+    transform: translateX(-50%);
+    width: 20px; height: 10px;
+    background: #1a1a1a;
+    border-radius: 2px 2px 0 0;
+  }
+
+  .harold-hat::after {
+    content: '';
+    position: absolute;
+    bottom: -3px; left: -3px;
+    width: 26px; height: 4px;
+    background: #2a2a2a;
+    border-radius: 1px;
+  }
+
+  .harold-head {
+    width: 20px; height: 18px;
+    background: var(--skin);
+    border-radius: 3px;
+    margin: 12px auto 0;
+    position: relative;
+  }
+
+  .harold-eyes {
+    position: absolute;
+    top: 6px; left: 3px;
+    width: 14px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .harold-eye {
+    width: 4px; height: 4px;
+    background: #222;
+  }
+
+  .harold-body {
+    width: 26px; height: 16px;
+    background: #224466;
+    margin: 2px auto 0;
+    border-radius: 2px;
+  }
+
+  .harold-info { flex: 1; }
+
+  .harold-name-text {
+    font-size: 11px;
+    color: var(--text-cyan);
+    letter-spacing: 2px;
+    text-shadow: 0 0 8px rgba(0, 204, 255, 0.4);
+  }
+
+  .harold-role-text {
+    font-size: 6px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+
+  .harold-status-text {
+    font-size: 7px;
+    color: var(--text-green);
+    margin-top: 8px;
+    line-height: 1.8;
+  }
+
+  /* ===== OPERATIONS FLOOR ===== */
+  .floor-area {
+    background: var(--floor);
+    border: 4px solid #2a2a4a;
+    border-top: 4px solid #222244;
+    padding: 10px 10px 8px;
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Floor tile pattern */
+  .floor-area::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background:
+      repeating-linear-gradient(90deg, transparent 0, transparent 58px, rgba(255,255,255,0.015) 58px, rgba(255,255,255,0.015) 60px),
+      repeating-linear-gradient(0deg, transparent 0, transparent 58px, rgba(255,255,255,0.015) 58px, rgba(255,255,255,0.015) 60px);
+    pointer-events: none;
+  }
+
+  .floor-label {
+    font-size: 7px;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    text-align: center;
+  }
+
+  /* ===== AGENT GRID ===== */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: 1fr 1fr;
+    gap: 4px;
+    flex: 1;
+  }
+
+  /* ===== WORKSTATION ===== */
+  .station {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 4px;
+    border-radius: 4px;
+    transition: background 0.3s;
+  }
+
+  .station.active {
+    background: rgba(0, 255, 136, 0.03);
+  }
+
+  /* ===== TASK SPEECH BUBBLE ===== */
+  .task-bubble {
+    background: #0c0c20;
+    border: 2px solid var(--text-green);
+    padding: 4px 6px;
+    font-size: 6px;
+    color: var(--text-green);
+    white-space: nowrap;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+    display: none;
+    position: relative;
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.15);
+  }
+
+  .station.active .task-bubble { display: block; }
+
+  .task-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -6px; left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid var(--text-green);
+  }
+
+  /* Multi-task bubble: stacked list when agent serves multiple sessions */
+  .task-bubble-multi {
+    white-space: normal;
+    max-width: 200px;
+    padding: 3px 4px;
+  }
+  .task-entry {
+    display: flex;
+    flex-direction: column;
+    padding: 2px 0;
+  }
+  .task-entry + .task-entry {
+    border-top: 1px solid rgba(0, 255, 136, 0.15);
+    margin-top: 2px;
+    padding-top: 3px;
+  }
+  .task-session-label {
+    font-size: 4px;
+    color: rgba(0, 255, 136, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 1px;
+  }
+  .task-text {
+    font-size: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* "IDLE" label for sleeping agents */
+  .idle-label {
+    font-size: 6px;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+    letter-spacing: 2px;
+    opacity: 0.5;
+    min-height: 14px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* ===== DESK SCENE (character + chair + desk) ===== */
+  .desk-scene {
+    position: relative;
+    width: 100%;
+    height: 110px;
+    overflow: visible;
+    flex: 1;
+    min-height: 90px;
+  }
+
+  /* ===== PIXEL CHARACTER ===== */
+  .pixel-char {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60px;
+    height: 52px;
+    /* z-index: auto — intentionally no z-index so children compete in desk-scene context */
+  }
+
+  /* Hair / accessory container */
+  .char-hair {
+    position: absolute;
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+  }
+
+  /* Character head */
+  .char-head {
+    width: 28px;
+    height: 24px;
+    border-radius: 4px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 20;
+  }
+
+  /* Eyes */
+  .char-eyes {
+    position: absolute;
+    top: 9px;
+    left: 4px;
+    width: 20px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .char-eye {
+    width: 5px;
+    height: 5px;
+    background: #111;
+  }
+
+  /* Blink animation for active characters */
+  .station.active .char-eye {
+    animation: eye-blink 4s steps(1) infinite;
+  }
+
+  @keyframes eye-blink {
+    0%, 95% { height: 5px; }
+    96%, 98% { height: 1px; }
+  }
+
+  /* Character body */
+  .char-body {
+    width: 34px;
+    height: 16px;
+    margin: 1px auto 0;
+    border-radius: 2px;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Arms */
+  .char-arms {
+    width: 46px;
+    height: 8px;
+    display: flex;
+    justify-content: space-between;
+    margin: 0 auto;
+    z-index: 10;
+    position: relative;
+  }
+
+  .char-arm {
+    width: 12px;
+    height: 8px;
+    border-radius: 1px;
+  }
+
+  .station.active .char-arm {
+    animation: typing 0.3s steps(2) infinite alternate;
+  }
+
+  .station.active .char-arm:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  @keyframes typing {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-3px); }
+  }
+
+  /* Idle character - dim + slumped */
+  .station.idle .pixel-char { opacity: 0.35; }
+
+  /* Zzz floating above idle characters */
+  .zzz {
+    display: none;
+    position: absolute;
+    top: -14px;
+    right: -4px;
+    z-index: 25;
+  }
+
+  .station.idle .zzz { display: flex; gap: 2px; }
+
+  .zzz-letter {
+    font-size: 8px;
+    color: var(--text-dim);
+    animation: zzz-float 2s ease-in-out infinite;
+    display: inline-block;
+  }
+
+  .zzz-letter:nth-child(2) {
+    font-size: 10px;
+    animation-delay: 0.3s;
+  }
+
+  .zzz-letter:nth-child(3) {
+    font-size: 12px;
+    animation-delay: 0.6s;
+  }
+
+  @keyframes zzz-float {
+    0%, 100% { transform: translateY(0); opacity: 0.6; }
+    50% { transform: translateY(-8px); opacity: 0.2; }
+  }
+
+  /* ===== CHAIR ===== */
+  .pixel-chair {
+    display: none;
+  }
+
+  .chair-back {
+    width: 26px;
+    height: 8px;
+    background: var(--chair-mid);
+    border: 2px solid var(--chair-dark);
+    border-radius: 2px 2px 0 0;
+    margin: 0 auto;
+  }
+
+  .chair-seat {
+    width: 32px;
+    height: 6px;
+    background: #333348;
+    border: 2px solid var(--chair-dark);
+    margin: 0 auto;
+    border-radius: 0 0 1px 1px;
+  }
+
+  /* ===== DESK ===== */
+  .desk {
+    width: calc(100% - 8px);
+    position: absolute;
+    bottom: 0;
+    left: 4px;
+    right: 4px;
+    /* z-index: auto — intentionally no z-index so children compete in desk-scene context */
+  }
+
+  /* Desk surface top edge */
+  .desk-top {
+    height: 10px;
+    background: var(--desk-wood-light);
+    border: 2px solid var(--desk-wood-dark);
+    border-bottom: none;
+    border-radius: 2px 2px 0 0;
+    position: relative;
+    z-index: 7;
+  }
+
+  /* Desk front panel */
+  .desk-front {
+    height: 22px;
+    background: var(--desk-wood);
+    border: 2px solid var(--desk-wood-dark);
+    border-top: 2px solid var(--desk-wood-edge);
+    position: relative;
+    z-index: 5;
+  }
+
+  /* Drawer detail */
+  .desk-front::before {
+    content: '';
+    position: absolute;
+    top: 4px; left: 50%;
+    transform: translateX(-50%);
+    width: 16px; height: 2px;
+    background: var(--desk-wood-dark);
+    box-shadow: 0 6px 0 var(--desk-wood-dark);
+  }
+
+  /* Drawer handle */
+  .desk-front::after {
+    content: '';
+    position: absolute;
+    top: 7px; left: 50%;
+    transform: translateX(-50%);
+    width: 6px; height: 2px;
+    background: #9a7a4a;
+    box-shadow: 0 6px 0 #9a7a4a;
+  }
+
+  .desk-legs {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 8px;
+  }
+
+  .desk-leg {
+    width: 6px;
+    height: 12px;
+    background: var(--desk-wood-dark);
+  }
+
+  /* ===== DESK ITEMS (on desk surface) ===== */
+  .desk-items {
+    position: absolute;
+    top: -38px;
+    left: 6px;
+    right: 6px;
+    height: 38px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-around;
+    z-index: 15;
+  }
+
+  /* Pixel monitor on desk */
+  .item-monitor {
+    width: 36px;
+    height: 30px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .item-monitor-screen {
+    width: 36px;
+    height: 26px;
+    background: var(--monitor-off);
+    border: 3px solid #4a4a6a;
+  }
+
+  .station.active .item-monitor-screen {
+    background: var(--monitor-on);
+    box-shadow: 0 0 8px rgba(0, 255, 136, 0.15);
+  }
+
+  .item-monitor-stand {
+    width: 14px;
+    height: 4px;
+    background: #4a4a6a;
+    margin: 0 auto;
+  }
+
+  .item-monitor-text {
+    font-size: 4px;
+    color: var(--text-green);
+    text-align: center;
+    padding-top: 2px;
+    opacity: 0;
+    line-height: 1.2;
+  }
+
+  .station.active .item-monitor-text { opacity: 1; }
+
+  /* Desk lamp */
+  .item-lamp {
+    width: 20px;
+    height: 32px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .item-lamp-shade {
+    width: 20px;
+    height: 10px;
+    background: var(--lamp-off);
+    clip-path: polygon(10% 100%, 90% 100%, 100% 0, 0 0);
+  }
+
+  .station.active .item-lamp-shade {
+    background: var(--lamp-glow);
+    box-shadow: 0 6px 12px rgba(255, 221, 68, 0.3);
+  }
+
+  .item-lamp-pole {
+    width: 2px;
+    height: 16px;
+    background: #666;
+    margin: 0 auto;
+  }
+
+  .item-lamp-base {
+    width: 14px;
+    height: 4px;
+    background: #666;
+    margin: 0 auto;
+    border-radius: 1px;
+  }
+
+  /* Paper stack */
+  .item-papers {
+    width: 22px;
+    height: 16px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .paper-sheet {
+    position: absolute;
+    background: var(--paper-white);
+    border: 1px solid var(--paper-shadow);
+    width: 16px;
+    height: 14px;
+  }
+
+  .paper-sheet:nth-child(1) {
+    bottom: 2px; left: 0;
+    transform: rotate(-4deg);
+  }
+
+  .paper-sheet:nth-child(2) {
+    bottom: 0; left: 3px;
+    transform: rotate(2deg);
+  }
+
+  .paper-sheet:nth-child(3) {
+    bottom: 1px; left: 1px;
+    transform: rotate(-1deg);
+    background: #c8bca4;
+  }
+
+  /* Coffee mug */
+  .item-coffee {
+    width: 16px;
+    height: 16px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .coffee-cup {
+    width: 14px;
+    height: 14px;
+    background: var(--coffee-brown);
+    border: 2px solid #3a1a00;
+    border-radius: 0 0 2px 2px;
+  }
+
+  .coffee-handle {
+    position: absolute;
+    right: -4px;
+    top: 3px;
+    width: 5px;
+    height: 8px;
+    border: 2px solid #3a1a00;
+    border-left: none;
+    border-radius: 0 3px 3px 0;
+  }
+
+  /* Steam from coffee when active */
+  .station.active .coffee-steam {
+    display: block;
+  }
+
+  .coffee-steam {
+    display: none;
+    position: absolute;
+    top: -8px;
+    left: 2px;
+    font-size: 6px;
+    color: rgba(255,255,255,0.3);
+    animation: steam 1.5s steps(3) infinite;
+  }
+
+  @keyframes steam {
+    0% { transform: translateY(0); opacity: 0.4; }
+    100% { transform: translateY(-6px); opacity: 0; }
+  }
+
+  /* Filing cabinet */
+  .item-filing {
+    width: 18px;
+    height: 24px;
+    background: #3a3a4a;
+    border: 2px solid #2a2a3a;
+    position: relative;
+    flex-shrink: 0;
+    border-radius: 1px;
+  }
+
+  .filing-drawer {
+    width: 10px;
+    height: 2px;
+    background: #555;
+    position: absolute;
+    left: 2px;
+  }
+
+  .filing-drawer:nth-child(1) { top: 4px; }
+  .filing-drawer:nth-child(2) { top: 10px; }
+  .filing-drawer:nth-child(3) { top: 16px; }
+
+  .filing-handle {
+    width: 4px;
+    height: 2px;
+    background: #888;
+    position: absolute;
+    left: 5px;
+  }
+
+  .filing-handle:nth-child(4) { top: 5px; }
+  .filing-handle:nth-child(5) { top: 11px; }
+  .filing-handle:nth-child(6) { top: 17px; }
+
+  /* Plant */
+  .item-plant {
+    width: 18px;
+    height: 26px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .plant-leaves {
+    width: 18px;
+    height: 16px;
+    background: var(--plant-green);
+    border-radius: 50% 50% 20% 20%;
+    position: absolute;
+    top: 0;
+  }
+
+  .plant-leaf-detail {
+    position: absolute;
+    width: 5px; height: 4px;
+    background: #1a7030;
+    border-radius: 50%;
+  }
+
+  .plant-leaf-detail:nth-child(1) { top: 4px; left: 2px; }
+  .plant-leaf-detail:nth-child(2) { top: 3px; right: 2px; }
+
+  .plant-pot {
+    width: 14px;
+    height: 10px;
+    background: var(--plant-pot);
+    border-radius: 0 0 2px 2px;
+    position: absolute;
+    bottom: 0;
+    left: 2px;
+    border: 1px solid #5a3010;
+  }
+
+  /* ===== AGENT COLORS ===== */
+  .agent-research .char-head { background: #4488ff; }
+  .agent-research .char-body { background: #3366cc; }
+  .agent-research .char-arm  { background: #4488ff; }
+
+  .agent-strategy .char-head { background: #ff6644; }
+  .agent-strategy .char-body { background: #cc4422; }
+  .agent-strategy .char-arm  { background: #ff6644; }
+
+  .agent-writing .char-head  { background: #aa66ff; }
+  .agent-writing .char-body  { background: #8844cc; }
+  .agent-writing .char-arm   { background: #aa66ff; }
+
+  .agent-coding .char-head   { background: #00cc88; }
+  .agent-coding .char-body   { background: #009966; }
+  .agent-coding .char-arm    { background: #00cc88; }
+
+  .agent-data .char-head     { background: #ffaa00; }
+  .agent-data .char-body     { background: #cc8800; }
+  .agent-data .char-arm      { background: #ffaa00; }
+
+  .agent-comms .char-head    { background: #ff44aa; }
+  .agent-comms .char-body    { background: #cc2288; }
+  .agent-comms .char-arm     { background: #ff44aa; }
+
+  .agent-design .char-head   { background: #44ddff; }
+  .agent-design .char-body   { background: #22aacc; }
+  .agent-design .char-arm    { background: #44ddff; }
+
+  .agent-ops .char-head      { background: #88aa44; }
+  .agent-ops .char-body      { background: #668822; }
+  .agent-ops .char-arm       { background: #88aa44; }
+
+  /* ===== CHARACTER ACCESSORIES ===== */
+  /* Glasses (ARCHIE) */
+  .acc-glasses {
+    position: absolute;
+    top: 7px; left: 1px;
+    width: 26px; height: 7px;
+    border: 2px solid #888;
+    border-radius: 2px;
+    background: rgba(100, 150, 255, 0.15);
+  }
+
+  .acc-glasses::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 9px;
+    width: 6px; height: 2px;
+    background: #888;
+  }
+
+  /* Headphones (BYTE) */
+  .acc-headphones {
+    position: absolute;
+    top: -5px; left: -3px;
+    width: 34px; height: 14px;
+    border: 3px solid #444;
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .acc-headphones::before, .acc-headphones::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    width: 7px; height: 7px;
+    background: #555;
+    border-radius: 1px;
+  }
+
+  .acc-headphones::before { left: -2px; }
+  .acc-headphones::after { right: -2px; }
+
+  /* Headset (MERCURY) */
+  .acc-headset {
+    position: absolute;
+    top: -3px; left: -2px;
+    width: 32px; height: 10px;
+    border: 2px solid #666;
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+  }
+
+  .acc-headset::after {
+    content: '';
+    position: absolute;
+    bottom: -7px; left: -5px;
+    width: 5px; height: 7px;
+    background: #888;
+    border-radius: 2px;
+  }
+
+  /* Beret (COMPASS + SKETCH) */
+  .acc-beret {
+    position: absolute;
+    top: -7px; left: 50%;
+    transform: translateX(-50%);
+    width: 30px; height: 10px;
+    border-radius: 14px 14px 2px 2px;
+  }
+
+  .agent-strategy .acc-beret { background: #cc4422; }
+  .agent-design .acc-beret { background: #22aacc; }
+
+  /* Visor (LEDGER) */
+  .acc-visor {
+    position: absolute;
+    top: -2px; left: -1px;
+    width: 30px; height: 7px;
+    background: rgba(0, 255, 136, 0.3);
+    border: 2px solid #338866;
+    border-radius: 2px;
+  }
+
+  /* Pencil (QUILL) */
+  .acc-pencil {
+    position: absolute;
+    top: -3px; right: -7px;
+    width: 4px; height: 16px;
+    background: #ddaa22;
+    transform: rotate(20deg);
+    border-radius: 1px;
+  }
+
+  .acc-pencil::after {
+    content: '';
+    position: absolute;
+    bottom: -4px; left: 0;
+    width: 4px; height: 4px;
+    background: #eebb88;
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+  }
+
+  /* Hard hat (GEARS) */
+  .acc-hardhat {
+    position: absolute;
+    top: -7px; left: 50%;
+    transform: translateX(-50%);
+    width: 32px; height: 10px;
+    background: #ddaa00;
+    border-radius: 12px 12px 0 0;
+    border: 2px solid #aa8800;
+  }
+
+  .acc-hardhat::after {
+    content: '';
+    position: absolute;
+    bottom: -2px; left: -2px;
+    width: 36px; height: 3px;
+    background: #ccaa00;
+    border-radius: 1px;
+  }
+
+  /* ===== NAMEPLATE ===== */
+  .agent-nameplate {
+    font-size: 7px;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+    text-align: center;
+    margin-top: 4px;
+    text-transform: uppercase;
+  }
+
+  .station.active .agent-nameplate {
+    color: var(--text-green);
+    text-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+  }
+
+  /* Agent role label */
+  .agent-role {
+    font-size: 6px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-align: center;
+    margin-top: 1px;
+    opacity: 0.6;
+    text-transform: uppercase;
+  }
+
+  .station.active .agent-role {
+    color: var(--text-green);
+    opacity: 0.7;
+  }
+
+  /* ===== PROGRESS BAR ===== */
+  .pixel-progress {
+    width: 80%;
+    height: 8px;
+    background: #0a0a1a;
+    border: 2px solid #2a2a4a;
+    margin: 4px auto 0;
+    display: none;
+  }
+
+  .station.active .pixel-progress { display: block; }
+
+  .pixel-progress-fill {
+    height: 100%;
+    background: var(--text-green);
+    box-shadow: 0 0 6px var(--text-green);
+    transition: width 0.5s steps(10);
+  }
+
+  .pixel-progress-text {
+    font-size: 6px;
+    color: var(--text-green);
+    text-align: center;
+    margin-top: 2px;
+    display: none;
+  }
+
+  .station.active .pixel-progress-text { display: block; }
+
+  /* ===== SESSION TAGS ===== */
+  .session-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    justify-content: center;
+    margin-top: 4px;
+  }
+
+  .session-tag {
+    font-size: 5px;
+    color: var(--text-dim);
+    background: rgba(0, 255, 136, 0.06);
+    border: 1px solid rgba(0, 255, 136, 0.15);
+    padding: 2px 4px;
+  }
+
+  /* ===== TICKER BAR ===== */
+  .ticker-bar {
+    background: #080818;
+    border-top: 2px solid #2a2a4a;
+    padding: 8px 16px;
+    font-size: 7px;
+    color: var(--text-dim);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .ticker-label {
+    color: var(--text-amber);
+    margin-right: 8px;
+  }
+
+  /* ===== AMBIENT: Water cooler ===== */
+  .water-cooler {
+    position: absolute;
+    bottom: 16px;
+    right: 20px;
+    width: 16px;
+    height: 30px;
+  }
+
+  .water-bottle {
+    width: 10px; height: 16px;
+    background: #336688;
+    border: 2px solid #224466;
+    margin: 0 auto;
+    border-radius: 3px 3px 0 0;
+    opacity: 0.7;
+  }
+
+  .water-base {
+    width: 14px; height: 12px;
+    background: #3a3a4a;
+    border: 2px solid #2a2a3a;
+    margin: 0 auto;
+  }
+
+  /* ===== EMPTY STATE ===== */
+  .empty-state {
+    text-align: center;
+    padding: 40px 16px;
+  }
+
+  .empty-state h2 {
+    font-size: 10px;
+    color: var(--text-green);
+    margin-bottom: 12px;
+    letter-spacing: 2px;
+  }
+
+  .empty-state p {
+    font-size: 7px;
+    color: var(--text-dim);
+    line-height: 2;
+  }
+
+  .empty-state code {
+    color: var(--text-amber);
+    font-size: 6px;
+  }
+
+  /* ===== SOUND CONTROLS ===== */
+  .sound-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 60px;
+    height: 6px;
+    background: #2a2a4a;
+    outline: none;
+    border: 1px solid #3a3a5a;
+  }
+
+  .volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 14px;
+    background: var(--text-green);
+    cursor: pointer;
+    box-shadow: 0 0 4px var(--text-green);
+  }
+
+  .mute-btn {
+    background: none;
+    border: 2px solid #3a3a5a;
+    color: var(--text-green);
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    padding: 3px 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .mute-btn:hover { border-color: var(--text-green); }
+  .mute-btn.muted { color: var(--text-dim); border-color: var(--red-alert); }
+  .mute-btn.muted::after { content: ' OFF'; }
+
+  /* ===== AGENT HOVER EFFECTS ===== */
+  .station {
+    cursor: pointer;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+
+  .station:hover {
+    box-shadow: 0 0 12px rgba(0, 255, 136, 0.15), inset 0 0 8px rgba(0, 255, 136, 0.05);
+  }
+
+  .station:hover .agent-nameplate {
+    color: var(--text-green);
+    text-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+  }
+
+  /* Thought bubble for idle agents on hover */
+  .thought-bubble {
+    display: none;
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0c0c20;
+    border: 2px solid var(--text-dim);
+    padding: 3px 6px;
+    font-size: 5px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    z-index: 30;
+    pointer-events: none;
+  }
+
+  .thought-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid var(--text-dim);
+  }
+
+  .station.idle:hover .thought-bubble { display: block; }
+
+  /* ===== AGENT DETAIL PANEL ===== */
+  .detail-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 500;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .detail-overlay.open { display: flex; }
+
+  .detail-panel {
+    background: #0a0a1a;
+    border: 3px solid var(--text-green);
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.3), inset 0 0 30px rgba(0, 255, 136, 0.05);
+    width: 380px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 16px;
+    position: relative;
+    animation: crt-flicker-in 0.3s steps(4) forwards;
+  }
+
+  @keyframes crt-flicker-in {
+    0% { opacity: 0; transform: scaleY(0.01); }
+    25% { opacity: 0.5; transform: scaleY(0.3); }
+    50% { opacity: 0.8; transform: scaleY(0.7); }
+    75% { opacity: 1; transform: scaleY(1.02); }
+    100% { opacity: 1; transform: scaleY(1); }
+  }
+
+  .detail-close {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: none;
+    border: 2px solid var(--text-green);
+    color: var(--text-green);
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+
+  .detail-close:hover { background: rgba(0, 255, 136, 0.1); }
+
+  .detail-header {
+    font-size: 12px;
+    color: var(--text-green);
+    margin-bottom: 4px;
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.4);
+  }
+
+  .detail-role {
+    font-size: 7px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    letter-spacing: 1px;
+  }
+
+  .detail-section {
+    margin-bottom: 10px;
+  }
+
+  .detail-label {
+    font-size: 6px;
+    color: var(--text-amber);
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  .detail-value {
+    font-size: 7px;
+    color: var(--text-green);
+    line-height: 1.8;
+    word-break: break-word;
+  }
+
+  .detail-status-badge {
+    display: inline-block;
+    font-size: 7px;
+    padding: 2px 8px;
+    border: 2px solid;
+    letter-spacing: 1px;
+  }
+
+  .detail-status-badge.active {
+    color: var(--text-green);
+    border-color: var(--text-green);
+    box-shadow: 0 0 6px rgba(0, 255, 136, 0.3);
+  }
+
+  .detail-status-badge.idle {
+    color: var(--text-dim);
+    border-color: var(--text-dim);
+  }
+
+  .detail-progress-bar {
+    width: 100%;
+    height: 10px;
+    background: #0a0a1a;
+    border: 2px solid #2a2a4a;
+    margin-top: 4px;
+  }
+
+  .detail-progress-fill {
+    height: 100%;
+    background: var(--text-green);
+    box-shadow: 0 0 6px var(--text-green);
+    transition: width 0.5s steps(10);
+  }
+
+  /* ===== HAROLD STATUS MODAL ===== */
+  .harold-station { cursor: pointer; transition: box-shadow 0.3s; }
+  .harold-station:hover { box-shadow: inset 0 0 12px rgba(0, 204, 255, 0.1); }
+
+  /* ===== SPOTIFY JUKEBOX ===== */
+  .jukebox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    padding-left: 12px;
+    border-left: 2px solid #2a2a4a;
+  }
+
+  .jukebox-radio {
+    width: 40px;
+    height: 28px;
+    background: #1a1a2a;
+    border: 2px solid #3a3a5a;
+    border-radius: 3px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .jukebox-radio.connected {
+    border-color: #1DB954;
+    box-shadow: 0 0 6px rgba(29, 185, 84, 0.2);
+  }
+
+  .jukebox-speaker-grill {
+    display: flex;
+    gap: 2px;
+  }
+
+  .jukebox-speaker-line {
+    width: 2px;
+    height: 14px;
+    background: #2a2a3a;
+  }
+
+  .jukebox-radio.connected .jukebox-speaker-line {
+    background: rgba(29, 185, 84, 0.4);
+    animation: speaker-pulse 1s ease-in-out infinite alternate;
+  }
+
+  .jukebox-speaker-line:nth-child(2) { animation-delay: 0.1s; }
+  .jukebox-speaker-line:nth-child(3) { animation-delay: 0.2s; }
+  .jukebox-speaker-line:nth-child(4) { animation-delay: 0.3s; }
+
+  @keyframes speaker-pulse {
+    0% { height: 8px; }
+    100% { height: 14px; }
+  }
+
+  .jukebox-led {
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #333;
+  }
+
+  .jukebox-radio.connected .jukebox-led {
+    background: #1DB954;
+    box-shadow: 0 0 4px #1DB954;
+  }
+
+  .jukebox-marquee {
+    max-width: 160px;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 6px;
+    color: #1DB954;
+    display: none;
+  }
+
+  .jukebox-marquee.visible { display: block; }
+
+  .jukebox-marquee-text {
+    display: inline-block;
+    animation: marquee-scroll 12s linear infinite;
+  }
+
+  @keyframes marquee-scroll {
+    0% { transform: translateX(100%); }
+    100% { transform: translateX(-100%); }
+  }
+
+  .jukebox-controls {
+    display: none;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .jukebox-controls.visible { display: flex; }
+
+  .jukebox-btn {
+    background: none;
+    border: 1px solid #3a3a5a;
+    color: var(--text-dim);
+    font-family: 'Press Start 2P', monospace;
+    font-size: 6px;
+    padding: 2px 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .jukebox-btn:hover {
+    border-color: #1DB954;
+    color: #1DB954;
+  }
+
+  .jukebox-connect-btn {
+    background: none;
+    border: 2px solid #1DB954;
+    color: #1DB954;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 6px;
+    padding: 3px 6px;
+    cursor: pointer;
+    letter-spacing: 1px;
+  }
+
+  .jukebox-connect-btn:hover {
+    background: rgba(29, 185, 84, 0.1);
+  }
+
+  .jukebox-device-picker {
+    position: relative;
+  }
+
+  .jukebox-device-menu {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    background: #0a0a1a;
+    border: 2px solid #3a3a5a;
+    min-width: 160px;
+    z-index: 200;
+    margin-bottom: 4px;
+  }
+
+  .jukebox-device-menu.open { display: block; }
+
+  .jukebox-device-item {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    border-bottom: 1px solid #1a1a2a;
+    color: var(--text-dim);
+    font-family: 'Press Start 2P', monospace;
+    font-size: 5px;
+    padding: 6px 8px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .jukebox-device-item:hover { background: rgba(29, 185, 84, 0.1); color: #1DB954; }
+  .jukebox-device-item.active-device { color: #1DB954; }
+  .jukebox-device-item:last-child { border-bottom: none; }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 900px) {
+    .agent-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 500px) {
+    .agent-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+    .hud-bar { padding: 8px 10px; flex-wrap: wrap; gap: 6px; }
+    .hud-title { font-size: 8px; }
+    .hud-clock { font-size: 10px; }
+    .back-wall { min-height: 80px; padding: 10px; gap: 10px; }
+    .wall-map { width: 130px; height: 60px; }
+    .wall-monitor { width: 70px; height: 60px; }
+    .wall-monitor-value { font-size: 14px; }
+    .room { padding: 6px; }
+    .desk-scene { height: 70px; }
+    .pixel-char { width: 46px; height: 40px; bottom: 16px; }
+    .char-head { width: 22px; height: 18px; }
+    .char-eyes { width: 16px; }
+    .char-eye { width: 4px; height: 4px; }
+    .char-body { width: 26px; height: 12px; }
+    .char-arms { width: 36px; height: 6px; }
+    .char-arm { width: 10px; height: 6px; }
+    .desk-items { top: -28px; height: 28px; }
+    .item-monitor { width: 26px; height: 22px; }
+    .item-monitor-screen { width: 26px; height: 18px; }
+    .item-lamp { width: 14px; height: 22px; }
+    .task-bubble { font-size: 5px; max-width: 130px; }
+    .task-bubble-multi { max-width: 150px; }
+    .task-text { font-size: 5px; }
+    .task-session-label { font-size: 3.5px; }
+    .agent-role { font-size: 5px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hud-bar">
+  <div class="hud-left">
+    <div class="hud-title">HAROLD // COMMAND CENTER</div>
+    <div class="hud-live">
+      <div class="hud-live-dot"></div>
+      <span id="poll-status">LIVE</span>
+    </div>
+  </div>
+  <div class="hud-right">
+    <div class="sound-controls">
+      <input type="range" class="volume-slider" id="volume-slider" min="0" max="100" value="50">
+      <button class="mute-btn" id="mute-btn">SND</button>
+    </div>
+    <div class="hud-poll" id="last-poll">&mdash;</div>
+    <div class="hud-clock" id="mission-clock">00:00:00</div>
+  </div>
+</div>
+
+<div class="room">
+  <!-- Back wall -->
+  <div class="back-wall" id="back-wall">
+    <div class="wall-poster"></div>
+
+    <div class="wall-map">
+      <div class="map-dot" style="width:20px;height:12px;top:16px;left:16px;border-radius:2px;"></div>
+      <div class="map-dot" style="width:10px;height:16px;top:42px;left:36px;border-radius:2px;"></div>
+      <div class="map-dot" style="width:16px;height:8px;top:14px;left:86px;border-radius:2px;"></div>
+      <div class="map-dot active-dot" style="width:14px;height:18px;top:28px;left:88px;border-radius:2px;"></div>
+      <div class="map-dot" style="width:24px;height:14px;top:16px;left:120px;border-radius:2px;"></div>
+      <div class="map-dot" style="width:12px;height:8px;top:50px;left:150px;border-radius:2px;"></div>
+      <div class="wall-map-label">GLOBAL OPS</div>
+    </div>
+
+    <div class="wall-monitor" id="wm-sessions">
+      <div class="wall-monitor-value">0</div>
+      <div class="wall-monitor-label">Sessions</div>
+    </div>
+
+    <div class="wall-monitor" id="wm-agents">
+      <div class="wall-monitor-value">0</div>
+      <div class="wall-monitor-label">Agents</div>
+    </div>
+
+    <div class="wall-clock"></div>
+  </div>
+
+  <!-- Harold's desk -->
+  <div class="harold-station" id="command-desk"></div>
+
+  <!-- Operations floor -->
+  <div class="floor-area">
+    <div class="floor-label">--- OPERATIONS FLOOR ---</div>
+    <div class="agent-grid" id="bullpen"></div>
+    <div class="water-cooler">
+      <div class="water-bottle"></div>
+      <div class="water-base"></div>
+    </div>
+  </div>
+
+  <!-- Ticker -->
+  <div class="ticker-bar" id="ticker-bar">
+    <span class="ticker-label">SYS&gt;</span>
+    <span id="ticker-text">INITIALIZING...</span>
+  </div>
+</div>
+
+<!-- Agent Detail Overlay -->
+<div class="detail-overlay" id="detail-overlay">
+  <div class="detail-panel" id="detail-panel"></div>
+</div>
+
+<script>
+// ===== Agent definitions =====
+const AGENTS = [
+  { key: 'research',  codename: 'ARCHIE',  role: 'Intel Analyst',     accessory: 'glasses',    deskItems: ['lamp','monitor','papers','coffee'] },
+  { key: 'strategy',  codename: 'COMPASS', role: 'Strategist',        accessory: 'beret',      deskItems: ['monitor','lamp','filing','coffee'] },
+  { key: 'writing',   codename: 'QUILL',   role: 'Comms Specialist',  accessory: 'pencil',     deskItems: ['lamp','monitor','papers','papers'] },
+  { key: 'coding',    codename: 'BYTE',    role: 'Systems Engineer',  accessory: 'headphones', deskItems: ['monitor','monitor','coffee','lamp'] },
+  { key: 'data',      codename: 'LEDGER',  role: 'Data Analyst',      accessory: 'visor',      deskItems: ['monitor','lamp','coffee','filing'] },
+  { key: 'comms',     codename: 'MERCURY', role: 'Liaison Officer',   accessory: 'headset',    deskItems: ['lamp','monitor','plant','coffee'] },
+  { key: 'design',    codename: 'SKETCH',  role: 'Design Specialist', accessory: 'beret',      deskItems: ['monitor','lamp','plant','papers'] },
+  { key: 'ops',       codename: 'GEARS',   role: 'Ops Manager',       accessory: 'hardhat',    deskItems: ['monitor','filing','lamp','coffee'] }
+];
+
+const ACTIVITY_ALIASES = { editing: 'ops', finance: 'data', financials: 'data' };
+const POLL_INTERVAL = 3000;
+const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 min — survives normal work pauses, catches abandoned sessions
+let sessions = {};
+
+// Mission clock
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  document.getElementById('mission-clock').textContent = h + ':' + m + ':' + s;
+  const mins = now.getMinutes() + now.getSeconds() / 60;
+  document.querySelector('.wall-clock').style.setProperty('--clock-angle', (mins / 60 * 360) + 'deg');
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Rotating continent highlight on wall map
+(function initContinentRotation() {
+  const dots = document.querySelectorAll('.map-dot');
+  if (dots.length === 0) return;
+  let currentIdx = -1;
+  // Find which dot starts with active-dot
+  dots.forEach((d, i) => { if (d.classList.contains('active-dot')) currentIdx = i; });
+  if (currentIdx === -1) currentIdx = 0;
+
+  setInterval(() => {
+    dots[currentIdx].classList.remove('active-dot');
+    // Pick a random different index
+    let next;
+    do { next = Math.floor(Math.random() * dots.length); } while (next === currentIdx && dots.length > 1);
+    currentIdx = next;
+    dots[currentIdx].classList.add('active-dot');
+  }, 4000);
+})();
+
+async function fetchSessions() {
+  try {
+    const resp = await fetch('/api/sessions');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    sessions = await resp.json();
+    render();
+    document.getElementById('last-poll').textContent = 'POLL ' + new Date().toLocaleTimeString();
+    document.getElementById('poll-status').textContent = 'LIVE';
+  } catch (err) {
+    document.getElementById('poll-status').textContent = 'ERROR';
+    console.error('Poll error:', err);
+  }
+}
+
+function isStale(data) {
+  if (!data._mtime) return true; // no mtime = can't verify freshness
+  // Never hide a session that explicitly has a working activity — trust the JSON content
+  const activities = data.activities || {};
+  if (Object.values(activities).some(a => a && a.status === 'working')) return false;
+  return (Date.now() - new Date(data._mtime).getTime()) > STALE_THRESHOLD_MS;
+}
+
+function aggregateActivities() {
+  const agg = {};
+  AGENTS.forEach(a => {
+    agg[a.key] = { status: 'sleeping', tasks: [], progress: 0, sessions: [] };
+  });
+
+  Object.entries(sessions).forEach(([filename, data]) => {
+    if (isStale(data)) return; // mtime alone determines activity — no manual session toggle
+    const sessionName = filename.replace(/\.json$/, '').replace(/-/g, ' ');
+    const activities = data.activities || {};
+
+    Object.entries(activities).forEach(([rawKey, val]) => {
+      const key = ACTIVITY_ALIASES[rawKey] || rawKey;
+      if (!agg[key]) return;
+      if (val.status === 'working') {
+        agg[key].status = 'working';
+        if (val.task) agg[key].tasks.push(val.task);
+        agg[key].progress = Math.max(agg[key].progress, val.progress || 0);
+        agg[key].sessions.push(sessionName);
+      }
+    });
+  });
+
+  return agg;
+}
+
+function render() {
+  const entries = Object.entries(sessions);
+  const activeEntries = entries.filter(([, s]) => !isStale(s));
+  const staleEntries = entries.filter(([, s]) => isStale(s));
+
+  const activeSessions = activeEntries.length;
+  const agg = aggregateActivities();
+  const activeAgents = Object.values(agg).filter(a => a.status === 'working').length;
+
+  // Wall monitors
+  document.querySelector('#wm-sessions .wall-monitor-value').textContent = activeSessions;
+  document.querySelector('#wm-agents .wall-monitor-value').textContent = activeAgents;
+
+  renderCommandDesk(activeSessions, activeAgents, staleEntries.length);
+  renderBullpen(agg);
+}
+
+function renderAccessory(agent) {
+  switch (agent.accessory) {
+    case 'glasses':
+      return '<div class="acc-glasses"></div>';
+    case 'headphones':
+      return '<div class="acc-headphones"></div>';
+    case 'headset':
+      return '<div class="acc-headset"></div>';
+    case 'beret':
+      return '<div class="acc-beret"></div>';
+    case 'visor':
+      return '<div class="acc-visor"></div>';
+    case 'pencil':
+      return '<div class="acc-pencil"></div>';
+    case 'hardhat':
+      return '<div class="acc-hardhat"></div>';
+    default:
+      return '';
+  }
+}
+
+function renderDeskItem(type) {
+  switch (type) {
+    case 'monitor':
+      return '<div class="item-monitor"><div class="item-monitor-screen"><div class="item-monitor-text">&gt;_</div></div><div class="item-monitor-stand"></div></div>';
+    case 'lamp':
+      return '<div class="item-lamp"><div class="item-lamp-shade"></div><div class="item-lamp-pole"></div><div class="item-lamp-base"></div></div>';
+    case 'papers':
+      return '<div class="item-papers"><div class="paper-sheet"></div><div class="paper-sheet"></div><div class="paper-sheet"></div></div>';
+    case 'coffee':
+      return '<div class="item-coffee"><div class="coffee-cup"></div><div class="coffee-handle"></div><div class="coffee-steam">~</div></div>';
+    case 'filing':
+      return '<div class="item-filing"><div class="filing-drawer"></div><div class="filing-drawer"></div><div class="filing-drawer"></div><div class="filing-handle"></div><div class="filing-handle"></div><div class="filing-handle"></div></div>';
+    case 'plant':
+      return '<div class="item-plant"><div class="plant-leaves"><div class="plant-leaf-detail"></div><div class="plant-leaf-detail"></div></div><div class="plant-pot"></div></div>';
+    default:
+      return '';
+  }
+}
+
+function renderCommandDesk(activeSessions, activeAgents, staleCount) {
+  const desk = document.getElementById('command-desk');
+
+  let statusText;
+  if (activeSessions === 0) {
+    statusText = 'ALL STATIONS IDLE. NO ACTIVE OPS.';
+  } else {
+    statusText = activeSessions + ' SESSION' + (activeSessions !== 1 ? 'S' : '') + ' ACTIVE // ' +
+                 activeAgents + ' AGENT' + (activeAgents !== 1 ? 'S' : '') + ' DEPLOYED' +
+                 (staleCount > 0 ? ' // ' + staleCount + ' UNRESPONSIVE' : '');
+  }
+
+  desk.innerHTML =
+    '<div class="harold-char">' +
+      '<div class="harold-hat"></div>' +
+      '<div class="harold-head">' +
+        '<div class="harold-eyes"><div class="harold-eye"></div><div class="harold-eye"></div></div>' +
+      '</div>' +
+      '<div class="harold-body"></div>' +
+    '</div>' +
+    '<div class="harold-info">' +
+      '<div class="harold-name-text">HAROLD</div>' +
+      '<div class="harold-role-text">DIRECTOR // OPERATIONS COMMAND</div>' +
+      '<div class="harold-status-text">' + escapeHtml(statusText) + '</div>' +
+    '</div>';
+
+  document.getElementById('ticker-text').textContent = statusText;
+}
+
+function renderBullpen(agg) {
+  const bullpen = document.getElementById('bullpen');
+
+  bullpen.innerHTML = AGENTS.map(agent => {
+    const state = agg[agent.key];
+    const isActive = state.status === 'working';
+    const deskItemsHtml = agent.deskItems.map(item => renderDeskItem(item)).join('');
+    const accessoryHtml = renderAccessory(agent);
+
+    // Build task bubble content: stack multiple tasks when agent serves multiple sessions
+    let taskBubbleHtml = '';
+    if (isActive) {
+      if (state.tasks.length > 1) {
+        taskBubbleHtml = '<div class="task-bubble task-bubble-multi">' +
+          state.tasks.map((task, i) => {
+            const session = state.sessions[i] || '';
+            return '<div class="task-entry">' +
+              '<span class="task-session-label">' + escapeHtml(session) + '</span>' +
+              '<span class="task-text">' + escapeHtml(task) + '</span>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+      } else {
+        taskBubbleHtml = '<div class="task-bubble">' + escapeHtml(state.tasks[0] || 'ACTIVE...') + '</div>';
+      }
+    }
+
+    return '<div class="station ' + (isActive ? 'active' : 'idle') + ' agent-' + agent.key + '">' +
+
+      // Task bubble (active) or idle label
+      (isActive
+        ? taskBubbleHtml
+        : '<div class="idle-label">STANDBY</div>') +
+
+      // Desk scene
+      '<div class="desk-scene">' +
+
+        // Character
+        '<div class="pixel-char">' +
+          '<div class="zzz">' +
+            '<span class="zzz-letter">z</span>' +
+            '<span class="zzz-letter">Z</span>' +
+            '<span class="zzz-letter">z</span>' +
+          '</div>' +
+          '<div class="char-head">' +
+            accessoryHtml +
+            '<div class="char-eyes"><div class="char-eye"></div><div class="char-eye"></div></div>' +
+          '</div>' +
+          '<div class="char-body"></div>' +
+          '<div class="char-arms"><div class="char-arm"></div><div class="char-arm"></div></div>' +
+        '</div>' +
+
+        // Chair
+        '<div class="pixel-chair">' +
+          '<div class="chair-back"></div>' +
+          '<div class="chair-seat"></div>' +
+        '</div>' +
+
+        // Desk with items
+        '<div class="desk">' +
+          '<div class="desk-top">' +
+            '<div class="desk-items">' + deskItemsHtml + '</div>' +
+          '</div>' +
+          '<div class="desk-front"></div>' +
+          '<div class="desk-legs"><div class="desk-leg"></div><div class="desk-leg"></div></div>' +
+        '</div>' +
+
+      '</div>' +
+
+      // Nameplate + role
+      '<div class="agent-nameplate">' + agent.codename + '</div>' +
+      '<div class="agent-role">' + agent.role + '</div>' +
+
+      // Progress
+      '<div class="pixel-progress">' +
+        '<div class="pixel-progress-fill" style="width:' + state.progress + '%"></div>' +
+      '</div>' +
+      '<div class="pixel-progress-text">' + state.progress + '%</div>' +
+
+      // Session tags (only for single-task agents; multi-task shows session names inline)
+      (isActive && state.tasks.length === 1 && state.sessions.length > 0
+        ? '<div class="session-tags">' + state.sessions.map(s =>
+            '<span class="session-tag">' + escapeHtml(s) + '</span>'
+          ).join('') + '</div>'
+        : '') +
+
+    '</div>';
+  }).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Start polling
+fetchSessions();
+setInterval(fetchSessions, POLL_INTERVAL);
+</script>
+
+</body>
+</html>

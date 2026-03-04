@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "harold-mcp": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/harold-mcp/server.js"],
+      "env": {
+        "SUPABASE_URL": "YOUR_SUPABASE_PROJECT_URL",
+        "SUPABASE_SERVICE_ROLE_KEY": "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+.env
+.venv/
+dist/
+__pycache__/
+*.pyc
+harold/active-sessions/*.json

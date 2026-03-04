@@ -1,0 +1,14 @@
+{
+  "name": "harold-mcp",
+  "version": "1.0.0",
+  "description": "Harold Memory Sync — MCP server for persistent knowledge base writes",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@supabase/supabase-js": "^2.96.0"
+  }
+}
