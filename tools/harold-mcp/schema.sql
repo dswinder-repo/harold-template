@@ -269,8 +269,36 @@ CREATE INDEX idx_contact_categories_contact ON public.contact_categories(contact
 CREATE INDEX idx_contact_categories_category ON public.contact_categories(category_name);
 
 -- ============================================================
--- 8. PIPELINE STAGES (stage definitions per pipeline)
+-- 8. CONTACT PIPELINES (multi-pipeline junction table)
 -- ============================================================
+-- A contact can exist in multiple pipelines simultaneously.
+-- Example: a government affairs firm that is also an investor
+-- would have entries in both the partner and investor pipelines.
+
+CREATE TABLE public.contact_pipelines (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  contact_id UUID NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
+  pipeline TEXT NOT NULL,
+  pipeline_stage TEXT NOT NULL,
+  stage_entered_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(contact_id, pipeline)
+);
+
+CREATE INDEX idx_contact_pipelines_contact ON public.contact_pipelines(contact_id);
+CREATE INDEX idx_contact_pipelines_pipeline ON public.contact_pipelines(pipeline);
+
+CREATE TRIGGER contact_pipelines_updated_at
+  BEFORE UPDATE ON public.contact_pipelines
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================
+-- 9. PIPELINE STAGES (stage definitions per pipeline)
+-- ============================================================
+-- Note: The legacy pipeline/pipeline_stage columns on contacts are kept
+-- for backward compatibility. The contact_pipelines junction table is
+-- the source of truth for multi-pipeline tracking.
 
 CREATE TABLE public.pipeline_stages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -287,7 +315,7 @@ CREATE TABLE public.pipeline_stages (
 CREATE INDEX idx_pipeline_stages_pipeline ON public.pipeline_stages(pipeline);
 
 -- ============================================================
--- 9. STAGE CHANGES (history of every stage transition)
+-- 10. STAGE CHANGES (history of every stage transition)
 -- ============================================================
 
 CREATE TABLE public.stage_changes (
@@ -306,7 +334,7 @@ CREATE INDEX idx_stage_changes_pipeline ON public.stage_changes(pipeline);
 CREATE INDEX idx_stage_changes_changed_at ON public.stage_changes(changed_at DESC);
 
 -- ============================================================
--- 10. ROW LEVEL SECURITY
+-- 11. ROW LEVEL SECURITY
 -- ============================================================
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -345,23 +373,30 @@ CREATE POLICY "Pipeline stages viewable by authenticated" ON public.pipeline_sta
 CREATE POLICY "Pipeline stages insertable by authenticated" ON public.pipeline_stages FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "Pipeline stages updatable by authenticated" ON public.pipeline_stages FOR UPDATE TO authenticated USING (true);
 
+ALTER TABLE public.contact_pipelines ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Contact pipelines viewable by authenticated" ON public.contact_pipelines FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Contact pipelines insertable by authenticated" ON public.contact_pipelines FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Contact pipelines updatable by authenticated" ON public.contact_pipelines FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "Contact pipelines deletable by authenticated" ON public.contact_pipelines FOR DELETE TO authenticated USING (true);
+
 ALTER TABLE public.stage_changes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Stage changes viewable by authenticated" ON public.stage_changes FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Stage changes insertable by authenticated" ON public.stage_changes FOR INSERT TO authenticated WITH CHECK (true);
 
 -- ============================================================
--- 11. REALTIME
+-- 12. REALTIME
 -- ============================================================
 
 ALTER PUBLICATION supabase_realtime ADD TABLE public.contacts;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.interactions;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.tasks;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.contact_categories;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.contact_pipelines;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.stage_changes;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.audit_log;
 
 -- ============================================================
--- 12. SEED: DEFAULT PIPELINE STAGES
+-- 13. SEED: DEFAULT PIPELINE STAGES
 -- ============================================================
 -- Customize these pipelines to match your relationship types.
 -- Delete pipelines you don't need. Add new ones with the same pattern.
