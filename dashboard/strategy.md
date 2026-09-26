@@ -1,56 +1,55 @@
-# Dashboard — Strategy & Context
+# Dashboard: Strategy & Numbers
 
-*Strategic context that should inform Harold's work. Load this during morning briefs and strategy sessions.*
-
----
-
-## Mission
-
-[One sentence: what you're building and why it matters]
+*Positioning, the numbers that matter, and the format of the daily brief. Load it for briefs, strategy work, or anything that quotes a figure. Figures here must match `harold/facts.md` (authoritative, with sources).*
 
 ---
 
-## Current Stage & Goals
+## Positioning
 
-**Stage:** [e.g., Pre-seed, Seed, Series A, Growth, etc.]
-
-**6-month goal:** [What does success look like?]
-
-**This quarter's goal:** [More specific]
-
----
-
-## Strategic Priorities
-
-1. [Priority 1 — e.g., "Close seed round by Q2"]
-2. [Priority 2]
-3. [Priority 3]
+- **What you (or your company) do, in one sentence:** [ ]
+- **For whom:** [ ]
+- **Why now:** [ ]
+- **Content pillars / themes you speak on:** [THEME 1], [THEME 2], [THEME 3]
 
 ---
 
-## Key Assumptions
+## Key Numbers
 
-*Things we believe to be true that drive our strategy. Harold should flag when new intel challenges these.*
-
-- [Assumption 1]
-- [Assumption 2]
-
----
-
-## Competitive Context
-
-*Brief positioning — who else is in this space and how you're differentiated.*
+| Metric | Value | As Of | Source |
+|--------|-------|-------|--------|
+| [e.g. ARR] | [ ] | [DATE] | `harold/facts.md` |
 
 ---
 
-## Model Selection Guide
+## Strategic Bets
 
-*When to use which Claude model:*
-
-- **Opus:** Strategic judgment, synthesis, complex writing, investor materials
-- **Sonnet:** Established playbooks, research, drafting, most daily work
-- **Haiku:** Batch updates, simple lookups, mechanical tasks
+| Bet | Why | How we'll know | Review date |
+|-----|-----|----------------|-------------|
+| [ ] | [ ] | [ ] | [ ] |
 
 ---
 
-*Update this quarterly or when strategy meaningfully shifts.*
+## Competitors & Landscape
+
+*Per project, competitors live in `harold/projects.md` (`competitors:`), where the analyst protocol reads them. Cross-project landscape notes go here.*
+
+- [ ]
+
+---
+
+## Daily Brief Format
+
+The morning brief (`playbook/core/morning-brief.md`) is a three-step conversation with two pauses. Its sections, in order:
+
+1. **URGENT**: anything that cannot wait (from `harold/alerts.md`)
+2. **PRIORITIES**: today's top three, each with a one-line why
+3. **INTEL**: what changed overnight, with 📌 notes on what it means for you
+4. **PLAN**: one ready-to-run prompt per priority, with the model tier to use
+
+Optional sections you can switch on in the playbook's config table: weather for [YOUR CITY], a markets table for [YOUR MARKETS WATCHLIST], news beats.
+
+---
+
+## Model Selection
+
+See `playbook/core/model-routing.md`: fast tier for lookups, mid tier for drafting and structured work, top tier for strategy and anything high-stakes.

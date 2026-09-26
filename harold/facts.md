@@ -1,55 +1,57 @@
-# Harold — Facts & Reference Data
+# Harold Facts Repository
 
-*Master fact store. Authoritative source for key data points.*
-
----
-
-## Company / Organization
-
-- **Name:** [Your company/org name]
-- **Founded:** [Year]
-- **Stage:** [Current stage]
-- **Headquarters:** [Location]
-- **Team size:** [Number]
-- **Website:** [URL]
+*Discrete, queryable facts: who is who, what the numbers are, who promised what. The single place Harold checks before stating a name, a title or a figure. `playbook/core/pre-flight-verification.md` and `playbook/core/document-qc.md` verify output against this file.*
 
 ---
 
-## Key Metrics
+## How This Works
 
-*The numbers Harold should always know.*
-
-| Metric | Value | As of |
-|--------|-------|-------|
-| [e.g., Revenue] | [Value] | [Date] |
-| [e.g., Customers] | [Value] | [Date] |
+- One fact per table row. Each row carries its source and the date it was last verified.
+- When a fact changes, update the row (do not add a second one) and cascade it per `harold/sync-map.md`.
+- The `harold_fact` MCP tool upserts rows by section and key, and refreshes the footer date.
+- Relationship state (warmth, pipeline stage, last contact) lives in the CRM, not here. This file holds the facts you would be embarrassed to get wrong.
 
 ---
 
-## Key Contacts
+## People — Key Contacts
 
-*High-level reference. Full profiles live in `vault/people/`.*
+| Person | Role | Organization | Source | Last Verified |
+|--------|------|--------------|--------|---------------|
+| Jane Doe (example) | VP Partnerships | Acme Corp | Intro call, starter example | 2026-09-26 |
 
-### Internal Team
+## Companies — Partners & Prospects
 
-| Name | Role | Email |
-|------|------|-------|
-| [Name] | [Title] | [Email] |
+| Company | Type | What They Do | Source | Last Verified |
+|---------|------|--------------|--------|---------------|
+| Acme Corp (example) | partner | Fictional example company | Starter example | 2026-09-26 |
 
-### Key External
+## Numbers — Key Metrics & Figures
 
-| Name | Org | Category | Email |
-|------|-----|---------|-------|
-| [Name] | [Company] | [investor/partner/customer] | [Email] |
+| Metric | Value | As Of | Source | Last Verified |
+|--------|-------|-------|--------|---------------|
+
+## Commitments — Who Promised What
+
+| Who | Committed To | Due | Given Where | Status |
+|-----|--------------|-----|-------------|--------|
+
+## Preferences — Communication & Working Style
+
+| Preference | Details | Source | Last Verified |
+|------------|---------|--------|---------------|
+| [YOUR NAME]'s time zone | [YOUR TIMEZONE] | Setup | [DATE] |
+
+## Constraints — Things That Can't or Won't Happen
+
+| Constraint | Reason | Source | Last Verified |
+|------------|--------|--------|---------------|
+
+## Terminology — Correct Names & Spellings
+
+| Correct | Common Mistakes | Notes |
+|---------|-----------------|-------|
+| Acme Corp (example) | ACME, Acme Corporation | Starter example row |
 
 ---
 
-## Recurring Events
-
-| Event | Frequency | Next |
-|-------|-----------|------|
-| [e.g., Team standup] | Weekly | [Date] |
-
----
-
-*Update facts via `harold_fact` MCP tool. This file is the reference layer — CRM is the relationship layer.*
+*Last updated: September 26, 2026 (starter template)*

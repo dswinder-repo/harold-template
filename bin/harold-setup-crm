@@ -1,0 +1,99 @@
+#!/bin/bash
+# One command to finish connecting Harold's CRM.
+# Asks for your Supabase project URL and service_role key, writes them to ~/.harold/env with the
+# right permissions (never into the repo), and then actually tests the connection instead of
+# assuming it worked. Run tools/harold-mcp/schema.sql in the Supabase SQL editor first.
+#
+#   bin/harold-setup-crm
+set -u
+
+ENVFILE="$HOME/.harold/env"
+
+echo
+echo "Harold CRM setup"
+echo "────────────────"
+echo
+echo "Your project URL is on the Supabase dashboard (Project Settings → API / Data API)."
+echo "It looks like https://<project-ref>.supabase.co"
+echo
+printf "Project URL: "
+IFS= read -r URL
+URL="$(printf '%s' "$URL" | tr -d '[:space:]' | sed 's:/*$::')"
+case "$URL" in
+  https://*.supabase.co|http://localhost:*|http://127.0.0.1:*) ;;
+  *) echo "That does not look like a Supabase project URL (expected https://<project-ref>.supabase.co)."; exit 1 ;;
+esac
+PROJECT_REF="$(printf '%s' "$URL" | sed -E 's#https?://([^.]+)\..*#\1#')"
+echo
+echo "1. Open this page in your browser (Cmd-click the link, or copy it):"
+echo
+echo "   https://supabase.com/dashboard/project/${PROJECT_REF}/settings/api-keys"
+echo
+echo "2. Find the key labelled 'service_role' (it may say 'secret' and be hidden behind a Reveal button)."
+echo "3. Click Reveal, then Copy."
+echo "4. Come back here and paste it at the prompt below, then press Enter."
+echo "   Nothing will appear on screen as you paste. That is deliberate."
+echo
+
+printf "Paste the service_role key: "
+stty -echo 2>/dev/null
+IFS= read -r RAW
+stty echo 2>/dev/null
+echo
+
+# A terminal paste arrives wrapped in bracketed-paste escape codes, and a second paste
+# concatenates onto the first. Keep only the characters a Supabase key can contain.
+KEY="$(printf '%s' "$RAW" | LC_ALL=C tr -cd 'A-Za-z0-9._-')"
+# If several keys got pasted in a row, keep the last complete one.
+case "$KEY" in
+  *sb_secret_*) KEY="sb_secret_${KEY##*sb_secret_}" ;;
+esac
+
+if [ -z "${KEY:-}" ]; then
+  echo "Nothing was pasted. Run this again when you have the key."
+  exit 1
+fi
+case "$KEY" in
+  eyJ*|sb_secret_*) ;;
+  *) echo "That does not look like a Supabase key (expected it to start with 'eyJ' or 'sb_secret_')."
+     echo "Got ${#KEY} characters after cleaning. Check you copied the service_role key, and run this again."
+     exit 1 ;;
+esac
+
+mkdir -p "$HOME/.harold"; chmod 700 "$HOME/.harold"
+touch "$ENVFILE"; chmod 600 "$ENVFILE"
+# Replace any existing Supabase lines rather than stacking duplicates.
+TMP="$(mktemp)"
+grep -v -E '^export (SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY)=' "$ENVFILE" > "$TMP" 2>/dev/null || true
+{
+  echo "export SUPABASE_URL=\"$URL\""
+  echo "export SUPABASE_SERVICE_ROLE_KEY=\"$KEY\""
+} >> "$TMP"
+mv "$TMP" "$ENVFILE"; chmod 600 "$ENVFILE"
+echo "Saved to ~/.harold/env (readable only by you), ${#KEY} characters. The key is not in the repo."
+echo
+
+echo "Testing the connection..."
+CODE=$(curl -s -o /tmp/harold-crm-test.json -w '%{http_code}' \
+  "$URL/rest/v1/contacts?select=name,org,category&limit=3" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+
+if [ "$CODE" = "200" ]; then
+  COUNT=$(curl -s -o /dev/null -D - "$URL/rest/v1/contacts?select=id" \
+    -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Prefer: count=exact" -H "Range: 0-0" \
+    | tr -d '\r' | awk -F'/' '/content-range/ {print $2}')
+  echo
+  echo "✓ Connected. ${COUNT:-?} contacts in your CRM. Sample:"
+  python3 -c "import json;[print('   -',c['name'],'·',c['org'] or 'no org','·',c['category']) for c in json.load(open('/tmp/harold-crm-test.json'))]" 2>/dev/null
+  rm -f /tmp/harold-crm-test.json
+  echo
+  echo "Done. Restart Claude Code (or your Cowork session) so Harold picks up the new key."
+else
+  echo
+  echo "✗ Connection failed (HTTP $CODE)."
+  [ "$CODE" = "401" ] && echo "  A 401 usually means that was the anon/publishable key, not the service_role one."
+  [ "$CODE" = "404" ] && echo "  A 404 usually means the schema has not been applied yet: run tools/harold-mcp/schema.sql in the SQL editor."
+  echo "  Go back to the dashboard page above and copy the key labelled service_role, then run this again."
+  rm -f /tmp/harold-crm-test.json
+  exit 1
+fi

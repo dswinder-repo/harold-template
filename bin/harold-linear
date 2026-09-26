@@ -1,0 +1,102 @@
+#!/usr/bin/env node
+/*
+ * harold-linear — Linear as Harold's task layer (due dates and task state, which markdown handles badly).
+ *
+ *   harold-linear tasks            open issues for your team: overdue, due today, due this week, in progress,
+ *                                  high priority → prints markdown, writes harold/linear-snapshot.md
+ *   harold-linear done <ID-n>      mark Done         harold-linear start <ID-n>    mark In Progress
+ *   harold-linear create "<title>" [--project <name>] [--due YYYY-MM-DD] [--priority 1-4] [--desc "<text>"]
+ *   harold-linear comment <ID-n> "<text>"
+ *   harold-linear projects         list projects in your team
+ *
+ * Config: LINEAR_API_KEY and LINEAR_TEAM_KEY (your team's issue prefix, e.g. ENG for ENG-123), from the
+ * environment, then ~/.harold/env, then <root>/.env (gitignored). Never commit either. Without a key,
+ * `tasks` prints the committed snapshot with its age and exits 3 so callers can tell the difference.
+ * Optional: Harold works without Linear. Boot shows the task layer as unavailable until this is configured.
+ */
+'use strict';
+const fs = require('fs'); const path = require('path'); const os = require('os');
+const ROOT = path.dirname(path.dirname(fs.realpathSync(__filename)));
+const SNAP = path.join(ROOT, 'harold/linear-snapshot.md');
+const TZ = process.env.HAROLD_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+function loadVar(name) {
+  if (process.env[name]) return process.env[name];
+  for (const f of [path.join(os.homedir(), '.harold/env'), path.join(ROOT, '.env')]) {
+    try { const m = fs.readFileSync(f, 'utf8').match(new RegExp(name + '\\s*=\\s*"?([^"\\n]+)"?')); if (m) return m[1].trim(); } catch (_) {}
+  }
+  return null;
+}
+function loadKey() { return loadVar('LINEAR_API_KEY'); }
+const TEAM = loadVar('LINEAR_TEAM_KEY');
+async function gql(key, query, variables = {}) {
+  const r = await fetch('https://api.linear.app/graphql', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: key }, body: JSON.stringify({ query, variables }) });
+  const j = await r.json();
+  if (j.errors) throw new Error(j.errors.map(e => e.message).join('; '));
+  return j.data;
+}
+function today() { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map(x => [x.type, x.value])); return `${p.year}-${p.month}-${p.day}`; }
+function addDays(iso, n) { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+const PRI = { 0: '—', 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' };
+
+async function tasks(key, opts) {
+  const t = today(), week = addDays(t, 7);
+  const q = `query($team:String!){ issues(first: 200, filter: { team: { key: { eq: $team } }, state: { type: { nin: ["completed","canceled"] } } }, orderBy: updatedAt) { nodes { identifier title dueDate priority url state { name type } project { name } assignee { name } updatedAt } } }`;
+  const d = await gql(key, q, { team: TEAM });
+  const all = d.issues.nodes;
+  const overdue = all.filter(i => i.dueDate && i.dueDate < t).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const dueToday = all.filter(i => i.dueDate === t);
+  const dueWeek = all.filter(i => i.dueDate && i.dueDate > t && i.dueDate <= week).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const inProg = all.filter(i => i.state.type === 'started');
+  const high = all.filter(i => (i.priority === 1 || i.priority === 2) && !(i.dueDate && i.dueDate <= week));
+  const row = i => `| ${i.identifier} | ${i.title.replace(/\|/g, '/')} | ${i.project ? i.project.name : '—'} | ${i.state.name} | ${i.dueDate || '—'} | ${PRI[i.priority] || '—'} |`;
+  const table = (title, rows) => rows.length ? `### ${title} (${rows.length})\n| ID | Title | Project | State | Due | Priority |\n|---|---|---|---|---|---|\n${rows.map(row).join('\n')}\n` : `### ${title} (0)\n_none_\n`;
+  const byProject = {}; all.forEach(i => { const k = i.project ? i.project.name : '(no project)'; byProject[k] = (byProject[k] || 0) + 1; });
+  const md = `# Linear snapshot — team ${TEAM}\n\n*Pulled ${new Date().toISOString()} (${t} ${TZ}). ${all.length} open issues. Regenerate: \`bin/harold-linear tasks\`. Linear is the source of truth; this file is a derived view so sessions without the API key (cloud, phone) can still see the task layer.*\n\n${table('Overdue', overdue)}\n${table('Due today', dueToday)}\n${table('Due this week', dueWeek)}\n${table('In progress', inProg)}\n${table('High priority (not already listed)', high)}\n### Open issues by project\n${Object.entries(byProject).sort((a, b) => b[1] - a[1]).map(([k, v]) => `- ${k}: ${v}`).join('\n')}\n`;
+  fs.writeFileSync(SNAP, md);
+  if (opts.json) console.log(JSON.stringify({ today: t, overdue, dueToday, dueWeek, inProg, high, total: all.length }, null, 1)); else console.log(md);
+  return 0;
+}
+async function ids(key) {
+  const d = await gql(key, `query($team:String!){ teams(filter:{key:{eq:$team}}){ nodes { id states { nodes { id name type } } projects { nodes { id name state } } } } }`, { team: TEAM });
+  const team = d.teams.nodes[0]; if (!team) throw new Error(`team ${TEAM} not found`);
+  return { teamId: team.id, states: team.states.nodes, projects: team.projects.nodes };
+}
+async function issueId(key, ident) { const d = await gql(key, `query($id:String!){ issue(id:$id){ id identifier title } }`, { id: ident }); return d.issue; }
+async function setState(key, ident, type) {
+  const { states } = await ids(key); const st = states.find(s => s.type === type); const issue = await issueId(key, ident);
+  await gql(key, `mutation($id:String!,$s:String!){ issueUpdate(id:$id, input:{stateId:$s}){ success } }`, { id: issue.id, s: st.id });
+  console.log(`✓ ${issue.identifier} → ${st.name}: ${issue.title}`); return 0;
+}
+async function create(key, title, o) {
+  const { teamId, projects } = await ids(key);
+  if (!o.due) { console.error('every task needs a due date (--due YYYY-MM-DD)'); return 2; }
+  const proj = o.project ? projects.find(p => p.name.toLowerCase().includes(o.project.toLowerCase())) : null;
+  if (o.project && !proj) { console.error(`project "${o.project}" not found. Projects: ${projects.map(p => p.name).join(', ')}`); return 2; }
+  if (!proj) { console.error('every task must be attached to a project (--project <name>). Projects: ' + projects.map(p => p.name).join(', ')); return 2; }
+  const d = await gql(key, `mutation($in: IssueCreateInput!){ issueCreate(input:$in){ success issue { identifier url } } }`, { in: { teamId, title, projectId: proj.id, dueDate: o.due, priority: o.priority ? +o.priority : 3, description: o.desc || undefined } });
+  console.log(`✓ created ${d.issueCreate.issue.identifier} in ${proj.name}, due ${o.due}: ${title}\n${d.issueCreate.issue.url}`); return 0;
+}
+async function comment(key, ident, text) { const issue = await issueId(key, ident); await gql(key, `mutation($id:String!,$b:String!){ commentCreate(input:{issueId:$id, body:$b}){ success } }`, { id: issue.id, b: text }); console.log(`✓ commented on ${issue.identifier}`); return 0; }
+
+(async () => {
+  const argv = process.argv.slice(2); const cmd = argv[0]; const opts = {}; const pos = [];
+  for (let i = 1; i < argv.length; i++) { if (argv[i].startsWith('--')) { const k = argv[i].slice(2); if (k === 'json') opts.json = true; else opts[k] = argv[++i]; } else pos.push(argv[i]); }
+  const key = loadKey();
+  if (key && !TEAM) { console.error('LINEAR_TEAM_KEY is not set (your team\'s issue prefix, e.g. ENG). Add it to ~/.harold/env.'); process.exit(2); }
+  if (!key) {
+    if (cmd === 'tasks' && fs.existsSync(SNAP)) { const age = Math.round((Date.now() - fs.statSync(SNAP).mtimeMs) / 3600000); console.log(`(no LINEAR_API_KEY in this harness — showing committed snapshot, ${age}h old)\n`); console.log(fs.readFileSync(SNAP, 'utf8')); process.exit(3); }
+    console.error('LINEAR_API_KEY not found (~/.harold/env, <root>/.env, or environment)'); process.exit(2);
+  }
+  try {
+    let code = 0;
+    if (cmd === 'tasks') code = await tasks(key, opts);
+    else if (cmd === 'done') code = await setState(key, pos[0], 'completed');
+    else if (cmd === 'start') code = await setState(key, pos[0], 'started');
+    else if (cmd === 'create') code = await create(key, pos[0], opts);
+    else if (cmd === 'comment') code = await comment(key, pos[0], pos.slice(1).join(' '));
+    else if (cmd === 'projects') { const { projects } = await ids(key); projects.forEach(p => console.log(`${p.state.padEnd(10)} ${p.name}`)); }
+    else { console.log('usage: harold-linear tasks [--json] | done <id> | start <id> | create "<title>" --project <name> --due YYYY-MM-DD [--priority 1-4] [--desc "<text>"] | comment <id> "<text>" | projects'); code = cmd ? 2 : 0; }
+    process.exit(code);
+  } catch (e) { console.error(`Linear error: ${e.message}`); process.exit(1); }
+})();

@@ -1,17 +1,20 @@
 ---
 tags: [daily]
 date: {{date}}
+session: {{slug}}
 ---
-# {{date}}
+# {{date}} — {{slug}}
+
+<!-- One file per session: vault/daily/YYYY-MM-DD-<slug>.md. bin/harold close requires one whenever knowledge changed, and at final close appends a **Maintenance** line recording which scheduled work was due and whether it ran. -->
+
+## What Was Done
 
 ## Key Decisions
-<!-- Major decisions made this session, with [[links]] to decision notes -->
+<!-- With [[links]] to decision notes -->
 
-## Interactions
-<!-- People contacted, meetings, calls — link to [[person]] notes -->
+## Contacts Touched
+<!-- [[person]] links, and what was filed to the CRM for each (or queued with bin/harold file crm). Team members: record only, no interaction -->
 
-## Work Completed
-<!-- What got done — tasks, deliverables, updates -->
+## Files Created / Modified
 
-## Notes
-<!-- Anything else worth capturing -->
+## Pending for Next Session

@@ -1,12 +1,27 @@
 # Working Memory
 
-*This is the single source of truth for session context. Keep it current. Every session reads this first.*
+*The single source of truth for session context. `bin/harold boot` verifies it is readable and `AGENTS.md` has every session read it first. Keep it short and current: this is what Harold must know before your first sentence, not an archive. History belongs in `vault/`.*
+
+**Operator:** [YOUR NAME], [YOUR ROLE] at [YOUR COMPANY]
+**Time zone:** [YOUR TIMEZONE] (set `HAROLD_TZ` in `~/.harold/env` or your shell to the IANA name, e.g. `America/Chicago`, so boot prints the right date)
 
 ---
 
-## Current Priorities
+## Tool Access Rules
 
-1. [Your top priority — be specific]
+*Which tools Harold may use in which harness, and anything that must be initialized first. Examples:*
+
+- Calendar: [how Harold reads your calendar, e.g. the calendar connector, or "ask me"]
+- Task manager: [Linear by default; team key `[TEAM]`]
+- CRM: harold-mcp (`harold_*` tools). If it is unreachable, queue with `bin/harold file crm` and say so.
+
+---
+
+## Current Priority
+
+*One to three items. Specific enough that Harold can tell whether a request serves them.*
+
+1. [Your top priority, with its deadline]
 2. [Second priority]
 3. [Third priority]
 
@@ -14,49 +29,81 @@
 
 ## Active Blockers
 
-- [Describe blocker] — waiting on [person/thing] since [date]
+*Mirror of `harold/blockers.md` (authoritative). Updated per `harold/sync-map.md`.*
 
-*Clear blockers here once resolved. Mirror with `harold/blockers.md`.*
-
----
-
-## Key Context
-
-*Standing context every session should know:*
-
-- **Company/Project:** [What you're working on]
-- **Stage:** [Where you are — e.g., pre-seed, Series A, launch, growth]
-- **Key relationships:** [2-3 most important people Harold should always know about]
-- **Current focus:** [What matters most this week/month]
+- B001 (example): mutual NDA with Acme Corp, waiting on Jane Doe since Sep 26, 2026
 
 ---
 
-## People to Know
+## Upcoming Events (Next 30 Days)
 
-| Name | Role | Notes |
-|------|------|-------|
-| [Name] | [Title/Relationship] | [One key thing to remember] |
+*Mirror of `harold/events.md` (authoritative).*
 
----
-
-## Protocol Violations — Do Not Repeat
-
-*Log corrections here immediately when errors occur. Future sessions inherit these lessons.*
-
-| Date | What went wrong | The lesson |
-|------|----------------|-----------|
-| | | |
+- [Event, date, prep status]
 
 ---
 
-## Standing Rules
+## Pending Conversations
 
-*Rules that apply to every session, specific to your workflow:*
+*Things to raise the next time you talk to someone. Cleared once raised.*
 
-- [e.g., "Always check Linear before creating new tasks"]
-- [e.g., "Investor emails come from [Name], not me"]
-- [e.g., "Never approximate financial data — verify or say you don't have it"]
+| With | Topic | Since |
+|------|-------|-------|
+| [Name] | [What to raise] | [Date] |
 
 ---
 
-*Last updated: [date]*
+## Key Relationships
+
+*The handful of people Harold should always recognize without searching. Everyone else lives in the CRM and `vault/people/`.*
+
+| Name | Role | Type | Why they matter |
+|------|------|------|-----------------|
+| Jane Doe (example) | VP Partnerships, Acme Corp | partner | Example row |
+
+---
+
+## Isolated Projects
+
+*Projects whose knowledge must never cross into others (e.g. a confidential side venture, a client under NDA). Harold does not cross-reference them in briefs or analyst sweeps.*
+
+- [Project name]: [the isolation rule]
+
+---
+
+## Key Versions & Files
+
+*The canonical version of each important document, so Harold never works from a stale copy.*
+
+| Document | Canonical file | Notes |
+|----------|----------------|-------|
+| [e.g. company deck] | [path relative to the workspace] | [e.g. locked, do not edit] |
+
+---
+
+## Task Management Rules
+
+- Every task has a due date and a project.
+- [Your rules, e.g. "No tasks for meetings themselves; tasks are for the follow-ups."]
+
+---
+
+## Process Notes (Learned the Hard Way)
+
+*Standing rules that come from real mistakes. Individual corrections go to `harold/learnings.jsonl` via `bin/harold file learning`; promote a lesson here only when it shapes every session.*
+
+- [Rule]
+
+---
+
+## Session Handoff
+
+*Written at the end of a long session so the next one can pick up. Replace, do not append.*
+
+- **Last session:** [date, what was done]
+- **Next:** [what is left]
+- **Gotchas:** [anything the next session must not trip on]
+
+---
+
+*Last updated: [DATE]*

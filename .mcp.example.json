@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy to .mcp.json (gitignored) and replace the path. Credentials live in ~/.harold/env, read by bin/harold-mcp. Never put keys in this file.",
+  "mcpServers": {
+    "harold-mcp": {
+      "type": "stdio",
+      "command": "/ABSOLUTE/PATH/TO/your-harold-workspace/bin/harold-mcp",
+      "args": []
+    }
+  }
+}

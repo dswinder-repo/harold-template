@@ -20,7 +20,15 @@
  *   harold_upsert_contact   — Create or update a CRM contact
  *   harold_search_contacts  — Search/filter CRM contacts by any field combination
  *   harold_get_contact      — Full contact profile + interaction history + tasks
+ *   harold_pipeline         — One generic pipeline: add/move/close/list, purpose-bound
  *   harold_crm_task         — Create/update/complete/cancel/list CRM tasks
+ *
+ * Configuration (environment only; bin/harold-mcp loads ~/.harold/env for you):
+ *   SUPABASE_URL                https://<project-ref>.supabase.co
+ *   SUPABASE_SERVICE_ROLE_KEY   the service_role key (never commit it)
+ *   HAROLD_ROOT / HAROLD_BASE   workspace root (default: two levels above this file)
+ *   HAROLD_NO_CADENCE_TYPES     contact types that never get staleness alerts (default: team,other)
+ * Database: tools/harold-mcp/schema.sql creates exactly the tables and columns this file uses.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -28,19 +36,30 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
 
-// Harold base directory — resolve from env or default
-const HAROLD_BASE = process.env.HAROLD_BASE || path.join(process.env.HOME, "Documents", "Claude");
+// Harold workspace root — env, else the workspace this server lives in (tools/harold-mcp/ → ../..)
+const HAROLD_BASE = process.env.HAROLD_ROOT || process.env.HAROLD_BASE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HAROLD_DIR = path.join(HAROLD_BASE, "harold");
 
 // ── CRM (Supabase) Connection ───────────────────────────────────
-const SUPABASE_URL = process.env.SUPABASE_URL || "YOUR_SUPABASE_PROJECT_URL";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+// No fallback values: a wrong URL fails silently, a missing one says so, loudly.
+const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim();
+const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+const CRM_MISSING = [!SUPABASE_URL && "SUPABASE_URL", !SUPABASE_KEY && "SUPABASE_SERVICE_ROLE_KEY"].filter(Boolean);
+const CRM_NOT_CONFIGURED = `Error: CRM not configured — ${CRM_MISSING.join(" and ")} ${CRM_MISSING.length > 1 ? "are" : "is"} not set. ` +
+  "Put them in ~/.harold/env (run bin/harold-setup-crm) and launch this server through bin/harold-mcp, then restart the session. " +
+  "Until then, queue CRM work with: bin/harold file crm '<json>'. The markdown tools (harold_log, harold_fact, harold_alert, harold_blocker, harold_event, harold_read) still work.";
+if (CRM_MISSING.length) {
+  console.error("\n" + "!".repeat(78) + "\n!! harold-mcp: CRM DISABLED. Missing: " + CRM_MISSING.join(", ") + "\n!! Set them in ~/.harold/env (bin/harold-setup-crm) and start the server via bin/harold-mcp.\n" + "!".repeat(78) + "\n");
+}
+// Contact types that are not outreach relationships and never get staleness alerts.
+const NO_CADENCE_TYPES = (process.env.HAROLD_NO_CADENCE_TYPES || "team,other").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 
 let _supabase = null;
 function getSupabase() {
-  if (!_supabase && SUPABASE_KEY) {
+  if (!_supabase && !CRM_MISSING.length) {
     _supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   }
   return _supabase;
@@ -75,15 +94,15 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
 
   try {
     // Load pipeline stage cadence thresholds (pipeline-aware freshness)
-    const cadenceMap = {}; // { "investor:Outreach": 7, "edo:Engaged": 14, ... }
+    const cadenceMap = {}; // { "Reached Out": 7, "Committed": 14, ... } — keyed by stage name
     const cadenceToDays = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 90 };
     const { data: stages } = await supabase
       .from("pipeline_stages")
-      .select("pipeline, stage_name, default_cadence");
+      .select("stage_name, default_cadence");
     if (stages) {
       for (const s of stages) {
         if (s.default_cadence && cadenceToDays[s.default_cadence]) {
-          cadenceMap[`${s.pipeline}:${s.stage_name}`] = cadenceToDays[s.default_cadence];
+          cadenceMap[s.stage_name] = cadenceToDays[s.default_cadence];
         }
       }
     }
@@ -92,8 +111,9 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
     const { data: contacts, error: contactsErr } = await supabase
       .from("contacts")
       .select(`
-        id, name, org, category, warmth, status, priority, pipeline, pipeline_stage,
+        id, name, org, category, warmth, status, priority,
         contact_categories ( category_name ),
+        contact_pipelines ( stage, purpose, project ),
         interactions ( occurred_at, type, subject )
       `)
       .in("status", ["active", "pending"])
@@ -112,8 +132,8 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
         categories.push(contact.category);
       }
 
-      // Skip team/other categories — we only track outreach relationships
-      if (categories.every(c => c === "team" || c === "other")) continue;
+      // Skip non-outreach types (HAROLD_NO_CADENCE_TYPES, default team + other) — we only track outreach relationships
+      if (categories.every(c => NO_CADENCE_TYPES.includes(String(c).toLowerCase()))) continue;
 
       const warmth = (contact.warmth || "").toLowerCase();
 
@@ -137,18 +157,26 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
         : null; // null = never contacted (in CRM)
 
       // Freshness thresholds — pipeline cadence takes priority, then warmth-based:
-      //   1. If contact has a pipeline stage with default_cadence → use that
+      //   1. If contact has pipeline stages with default_cadence → use the tightest one
       //   2. Otherwise fall back to warmth-based thresholds:
-      //      Hot/Strategic → hotDays (default 7)
+      //      Hot → hotDays (default 7)
       //      Warm → staleDays (default 14)
       //      Lukewarm → staleDays * 2 (default 28)
       let threshold;
-      const pipelineKey = contact.pipeline && contact.pipeline_stage
-        ? `${contact.pipeline}:${contact.pipeline_stage}` : null;
 
-      if (pipelineKey && cadenceMap[pipelineKey]) {
-        threshold = cadenceMap[pipelineKey];
-      } else if (warmth === "hot" || warmth === "strategic") {
+      // Check junction table pipelines first, then legacy column
+      const pipelines = (contact.contact_pipelines || []);
+      let tightestCadence = null;
+      for (const cp of pipelines) {
+        const key = cp.stage;
+        if (cadenceMap[key] && (tightestCadence === null || cadenceMap[key] < tightestCadence)) {
+          tightestCadence = cadenceMap[key];
+        }
+      }
+
+      if (tightestCadence !== null) {
+        threshold = tightestCadence;
+      } else if (warmth === "hot") {
         threshold = hotDays;
       } else if (warmth === "warm") {
         threshold = staleDays;
@@ -160,18 +188,22 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
       // If daysSince is null (never contacted in CRM), flag hot/warm contacts
       // because we have a relationship but no recorded interactions — likely a data gap.
       const isStale = daysSince === null
-        ? (warmth === "hot" || warmth === "strategic" || warmth === "warm")
+        ? (warmth === "hot" || warmth === "warm")
         : daysSince >= threshold;
 
       if (isStale) {
+        const pipelineEntries = pipelines.length > 0
+          ? pipelines.map(cp => ({ stage: cp.stage, purpose: cp.purpose, project: cp.project }))
+          : [];
+
         staleContacts.push({
           id: contact.id,
           name: contact.name,
           org: contact.org || "",
           categories,
           warmth: contact.warmth || "",
-          pipeline: contact.pipeline || null,
-          pipelineStage: contact.pipeline_stage || null,
+          pipelines: pipelineEntries,
+          pipelineEntries: pipelines.map(cp => ({ stage: cp.stage, purpose: cp.purpose, project: cp.project })),
           priority: contact.priority || "medium",
           status: contact.status,
           daysSinceContact: daysSince,
@@ -374,8 +406,8 @@ function upsertTableRow(filePath, sectionPattern, columns, keyColumn, keyValue) 
     return `Appended new row for "${keyValue}" to end of ${filePath} (section "${sectionPattern}" not found)`;
   }
 
-  // Find the table in this section (look for |---|)
-  const afterSection = content.indexOf("|---|", sectionIdx);
+  // Find the table in this section: its separator row starts with "|---" (any number of dashes)
+  const afterSection = content.indexOf("|---", sectionIdx);
   if (afterSection === -1) {
     appendToFile(full, "\n" + row + "\n");
     return `Appended new row for "${keyValue}" to end of ${filePath} (no table found in section)`;
@@ -413,9 +445,9 @@ server.tool(
   "harold_log",
   "Append an entry to the Harold context log (context-log.md). Use for decisions, confirmations, meeting notes, corrections, or any context worth preserving across sessions.",
   {
-    title: z.string().describe("Short title for the log entry (e.g., 'Gulf VC Emails Confirmed Sent')"),
+    title: z.string().describe("Short title for the log entry (e.g., 'Partner intro emails confirmed sent')"),
     body: z.string().describe("Full content of the log entry. Markdown supported. Include who, what, when, source."),
-    tags: z.array(z.string()).optional().describe("Optional tags for searchability (e.g., ['investor', 'outreach', 'your-contact'])"),
+    tags: z.array(z.string()).optional().describe("Optional tags for searchability (e.g., ['investor', 'outreach', 'acme'])"),
   },
   async ({ title, body, tags }) => {
     try {
@@ -559,95 +591,80 @@ server.tool(
 );
 
 // ── Tool: harold_blocker ──────────────────────────────────────────
+// Rows are written in the format bin/harold boot parses (and parseBlockersTable below):
+//   ## Current Blockers
+//   | ID | Project | Blocker | Waiting On | Raised | Last Update |
+// IDs are plain (B004, not **B004**) and Raised is kept on update, because boot measures a
+// blocker's age from it. Resolved rows go under ## Resolved: | ID | Project | Blocker | Resolution | Resolved |
+function blockerDate(d = new Date()) {
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }); // "Sep 26, 2026"
+}
+function findBlockerRow(lines, blockerId) {
+  const re = new RegExp("^\\|\\s*\\**" + blockerId.replace(/[^A-Za-z0-9]/g, "") + "\\**\\s*\\|");
+  return lines.findIndex(line => re.test(line));
+}
 server.tool(
   "harold_blocker",
-  "Add, update, or resolve a blocker in Harold blockers (blockers.md). Use when something is stuck, waiting on someone, or when a blocker is cleared.",
+  "Add, update, or resolve a blocker in Harold blockers (blockers.md). Use when something is stuck, waiting on someone, or when a blocker is cleared. Rows are written in the format bin/harold boot reads (ID | Project | Blocker | Waiting On | Raised | Last Update); boot computes each blocker's age from Raised and makes escalation due after 7 days.",
   {
-    action: z.enum(["add", "update", "resolve"]).describe("add = new blocker, update = modify, resolve = mark resolved"),
-    blocker_id: z.string().describe("Blocker ID (e.g., 'B011'). For new blockers, assign the next sequential ID."),
+    action: z.enum(["add", "update", "resolve"]).describe("add = new blocker, update = modify, resolve = move to ## Resolved"),
+    blocker_id: z.string().describe("Blocker ID (e.g., 'B011'). For new blockers, assign the next sequential ID (one higher than any ID in either table)."),
     description: z.string().describe("What's blocked and why"),
-    owner: z.string().optional().describe("Who owns resolving this blocker"),
+    project: z.string().optional().describe("Project name from harold/projects.md"),
     dependency: z.string().optional().describe("What/who this is waiting on"),
+    update: z.string().optional().describe("Latest status note (the Last Update column)"),
     resolution: z.string().optional().describe("For resolve action: how it was resolved"),
   },
-  async ({ action, blocker_id, description, owner, dependency, resolution }) => {
+  async ({ action, blocker_id, description, project, dependency, update, resolution }) => {
     try {
       const blockerPath = path.join(HAROLD_DIR, "blockers.md");
       let content = readFile(blockerPath);
       if (!content) return { content: [{ type: "text", text: "Error: blockers.md not found" }], isError: true };
+      const id = blocker_id.replace(/\*/g, "").trim();
+      const lines = content.split("\n");
+      const idx = findBlockerRow(lines, id);
+      const cellsOf = i => lines[i].split("|").slice(1, -1).map(c => c.trim());
 
       if (action === "resolve") {
-        // Move from Active to Resolved section
-        const lines = content.split("\n");
-        let removedLine = "";
-        const filtered = lines.filter(line => {
-          if (line.includes(blocker_id) && line.startsWith("|")) {
-            removedLine = line;
-            return false;
-          }
-          return true;
-        });
-        content = filtered.join("\n");
-
-        // Add to resolved section
-        const resolvedSection = "## Resolved";
-        const resolvedIdx = content.indexOf(resolvedSection);
+        if (idx === -1) return { content: [{ type: "text", text: `Blocker ${id} not found.` }], isError: true };
+        const old = cellsOf(idx);
+        lines.splice(idx, 1);
+        content = lines.join("\n");
+        const resolvedIdx = content.search(/^##\s*Resolved/m);
         if (resolvedIdx !== -1) {
           const tableStart = content.indexOf("|---", resolvedIdx);
           if (tableStart !== -1) {
             const endOfSep = content.indexOf("\n", tableStart) + 1;
-            const resolvedRow = `| ${blocker_id} | ${description} | ${today()} | ${resolution || "Resolved"} |\n`;
+            const resolvedRow = `| ${id} | ${project || old[1] || "—"} | ${description || old[2] || "—"} | ${resolution || "Resolved"} | ${blockerDate()} |\n`;
             content = content.slice(0, endOfSep) + resolvedRow + content.slice(endOfSep);
           }
         }
-
         writeFile(blockerPath, content);
-        return { content: [{ type: "text", text: `Resolved blocker ${blocker_id}: ${resolution || description}` }] };
+        return { content: [{ type: "text", text: `Resolved blocker ${id}: ${resolution || description}` }] };
+      }
 
-      } else if (action === "add") {
-        const activeSection = "## Active Blockers";
-        const sectionIdx = content.indexOf(activeSection);
-        if (sectionIdx === -1) {
-          return { content: [{ type: "text", text: "Error: 'Active Blockers' section not found" }], isError: true };
-        }
-
+      if (action === "add") {
+        if (idx !== -1) return { content: [{ type: "text", text: `Blocker ${id} already exists. Use action="update", or pick the next free ID.` }], isError: true };
+        const sectionIdx = content.indexOf("## Current Blockers");
+        if (sectionIdx === -1) return { content: [{ type: "text", text: "Error: '## Current Blockers' section not found in blockers.md" }], isError: true };
         const tableStart = content.indexOf("|---", sectionIdx);
-        if (tableStart === -1) {
-          return { content: [{ type: "text", text: "Error: No table found in Active Blockers section" }], isError: true };
-        }
-
+        if (tableStart === -1) return { content: [{ type: "text", text: "Error: No table found in Current Blockers section" }], isError: true };
         let tableEnd = content.indexOf("\n", tableStart) + 1;
-        const rest = content.slice(tableEnd).split("\n");
-        for (const line of rest) {
-          if (line.startsWith("|")) {
-            tableEnd += line.length + 1;
-          } else {
-            break;
-          }
+        for (const line of content.slice(tableEnd).split("\n")) {
+          if (line.startsWith("|")) tableEnd += line.length + 1; else break;
         }
-
-        const newRow = `| **${blocker_id}** | ${description} | ${owner || "—"} | ${dependency || "—"} | ${today()} | Active |\n`;
+        const newRow = `| ${id} | ${project || "—"} | ${description} | ${dependency || "—"} | ${blockerDate()} | ${update || "—"} |\n`;
         content = content.slice(0, tableEnd) + newRow + content.slice(tableEnd);
         writeFile(blockerPath, content);
-        return { content: [{ type: "text", text: `Added blocker ${blocker_id}: "${description}"` }] };
-
-      } else {
-        // update
-        const lines = content.split("\n");
-        let updated = false;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(blocker_id) && lines[i].startsWith("|")) {
-            lines[i] = `| **${blocker_id}** | ${description} | ${owner || "—"} | ${dependency || "—"} | ${today()} | Active |`;
-            updated = true;
-            break;
-          }
-        }
-        if (updated) {
-          writeFile(blockerPath, lines.join("\n"));
-          return { content: [{ type: "text", text: `Updated blocker ${blocker_id}` }] };
-        }
-        return { content: [{ type: "text", text: `Blocker ${blocker_id} not found. Use action="add".` }] };
+        return { content: [{ type: "text", text: `Added blocker ${id}: "${description}"` }] };
       }
+
+      // update — keep the Raised date (the age is measured from it)
+      if (idx === -1) return { content: [{ type: "text", text: `Blocker ${id} not found. Use action="add".` }] };
+      const old = cellsOf(idx);
+      lines[idx] = `| ${id} | ${project || old[1] || "—"} | ${description || old[2] || "—"} | ${dependency || old[3] || "—"} | ${old[4] || blockerDate()} | ${update || old[5] || "—"} |`;
+      writeFile(blockerPath, lines.join("\n"));
+      return { content: [{ type: "text", text: `Updated blocker ${id}` }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
     }
@@ -758,7 +775,7 @@ server.tool(
   {
     file: z.enum([
       "context-log.md", "facts.md", "alerts.md", "blockers.md",
-      "events.md", "strategic-intel.md", "sync-map.md"
+      "events.md", "projects.md", "sync-map.md"
     ]).describe("Which Harold file to read"),
     search: z.string().optional().describe("Optional: search for lines containing this text (case-insensitive)"),
     lines: z.number().default(50).describe("Max lines to return (default 50, from start of file or search results)"),
@@ -880,7 +897,10 @@ function parseBlockersTable(content) {
 }
 
 /**
- * Parse investor cadence tracking table from alerts.md.
+ * Parse an outreach cadence table from alerts.md. Only used as a fallback when the CRM is not
+ * configured or unreachable. Optional: add a section to alerts.md like
+ *   ### Outreach Cadence
+ *   | Contact | Org | Warmth | Day 0 | Next Action | Due | Task |
  */
 function parseCadenceTable(content, sectionHeader) {
   const entries = [];
@@ -912,43 +932,11 @@ function parseCadenceTable(content, sectionHeader) {
   return entries;
 }
 
-/**
- * Parse EDO follow-up table (different column structure).
- */
-function parseEdoCadenceTable(content) {
-  const entries = [];
-  const idx = content.indexOf("### EDO Follow-Up Reminders");
-  if (idx === -1) return entries;
-  const sep = content.indexOf("|---", idx);
-  if (sep === -1) return entries;
-  const afterSep = content.indexOf("\n", sep) + 1;
-  const lines = content.slice(afterSep).split("\n");
-  for (const line of lines) {
-    if (!line.startsWith("|")) break;
-    const cells = line.split("|").map(c => c.trim()).filter(c => c);
-    if (cells.length >= 5) {
-      const reminderCell = (cells[4] || "").replace(/\*+/g, "");
-      const dateMatch = reminderCell.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+(?:,?\s*\d{4})?/);
-      let parsedDate = dateMatch ? parseEventDate(dateMatch[0]) : null;
-      entries.push({
-        contact: cells[0].replace(/\*+/g, ""),
-        org: cells[1].replace(/\*+/g, ""),
-        stage: cells[2].replace(/\*+/g, ""),
-        lastAction: cells[3].replace(/\*+/g, ""),
-        followUpReminder: reminderCell,
-        followUpDate: parsedDate,
-        notes: cells[5] || "",
-      });
-    }
-  }
-  return entries;
-}
-
 // ── Tool: harold_alerts_sync ─────────────────────────────────────
 
 server.tool(
   "harold_alerts_sync",
-  "Run the Alerts Engine — compute derived alerts from events.md, blockers.md, CRM relationship data, and optionally Linear tasks. Returns structured alert summary with severity levels. Use at session start instead of manually reading and computing.\n\nSources:\n- Events (events.md) → prep deadlines, debrief reminders\n- Blockers (blockers.md) → stale blockers\n- CRM (Supabase) → stale relationships across ALL categories (investor, EDO, sales, partner, etc.)\n- CRM Tasks → contact-specific follow-ups with due dates\n- Linear (optional input) → overdue/upcoming project tasks\n- Legacy cadence tables (alerts.md) → fallback until fully migrated to CRM interactions",
+  "Run the Alerts Engine — compute derived alerts from events.md, blockers.md, CRM relationship data, and optionally Linear tasks. Returns structured alert summary with severity levels. Use at session start instead of manually reading and computing.\n\nSources:\n- Events (events.md) → prep deadlines, debrief reminders\n- Blockers (blockers.md) → stale blockers\n- CRM (Supabase) → stale relationships across ALL contact types\n- CRM Tasks → contact-specific follow-ups with due dates\n- Linear (optional input) → overdue/upcoming project tasks\n- Outreach cadence table (alerts.md, optional) → fallback when the CRM is not configured or unreachable",
   {
     linear_overdue: z.array(z.object({
       id: z.string(),
@@ -1056,11 +1044,11 @@ server.tool(
           }
         }
       } else if (crmResult.source === "crm_unavailable" || crmResult.source === "crm_error") {
-        // CRM unavailable — fall back to legacy markdown cadence tables
-        dataSources.push("cadence tables (legacy)");
+        // CRM unavailable — fall back to the optional markdown cadence table
+        dataSources.push("cadence table (alerts.md fallback)");
         const alertsContent = readFile(path.join(HAROLD_DIR, "alerts.md"));
         if (alertsContent) {
-          const investorCadence = parseCadenceTable(alertsContent, "### Investor Cadence");
+          const investorCadence = parseCadenceTable(alertsContent, "### Outreach Cadence");
           for (const e of investorCadence) {
             if (!e.dueDateParsed) continue;
             const diff = Math.ceil((e.dueDateParsed - refDate) / (1000 * 60 * 60 * 24));
@@ -1068,13 +1056,6 @@ server.tool(
             else if (diff === 0) urgent.push({ source: "cadence", alert: `DUE TODAY: ${e.contact} (${e.org}) — ${e.nextAction}`, context: `${e.warmth}`, action: `Execute today. ${e.linear}` });
             else if (diff <= 2) warning.push({ source: "cadence", alert: `${e.contact} (${e.org}) — ${e.nextAction} in ${diff}d`, context: `Due ${e.dueDate} | ${e.warmth}`, action: `Prepare. ${e.linear}` });
             else if (diff <= 7) watch.push({ source: "cadence", alert: `${e.contact} (${e.org}) — ${e.nextAction} in ${diff}d`, context: `Due ${e.dueDate} | ${e.warmth}`, action: `Coming up. ${e.linear}` });
-          }
-          const edoCadence = parseEdoCadenceTable(alertsContent);
-          for (const e of edoCadence) {
-            if (!e.followUpDate) continue;
-            const diff = Math.ceil((e.followUpDate - refDate) / (1000 * 60 * 60 * 24));
-            if (diff < 0) warning.push({ source: "cadence", alert: `OVERDUE EDO: ${e.contact} (${e.org})`, context: `Due ${e.followUpReminder} (${Math.abs(diff)}d ago) | ${e.stage}`, action: "Check in or close" });
-            else if (diff <= 7) watch.push({ source: "cadence", alert: `EDO check-in: ${e.contact} (${e.org}) in ${diff}d`, context: `${e.stage} | ${e.followUpReminder}`, action: "Follow up if silent" });
           }
         }
       }
@@ -1134,9 +1115,9 @@ server.tool(
 
 server.tool(
   "harold_cadence_check",
-  "Quick cadence review — stale relationships, overdue CRM tasks, and contacts needing attention. Works across ALL contact categories (investor, EDO, sales, partner, etc.). Uses CRM as primary source with markdown cadence tables as fallback.",
+  "Quick cadence review — stale relationships, overdue CRM tasks, and contacts needing attention. Works across ALL contact types. Uses the CRM as primary source, with the optional Outreach Cadence table in alerts.md as a fallback.",
   {
-    category: z.string().optional().describe("Filter to a specific category (e.g., 'investor', 'edo', 'partner'). Omit for all."),
+    category: z.string().optional().describe("Filter to one contact type or label from your own list (e.g. 'investor', 'partner', 'founder'). Omit for all."),
     stale_days: z.number().default(14).describe("Base freshness threshold — days without contact before flagging warm contacts as stale (default 14)"),
     warm_days: z.number().default(7).describe("Freshness threshold for hot/actively-engaged contacts (default 7)"),
     reference_date: z.string().optional().describe("Override today (YYYY-MM-DD)"),
@@ -1200,30 +1181,19 @@ server.tool(
         return { content: [{ type: "text", text: `## Cadence Check — ${refDate.toLocaleDateString("en-CA")}\n\n${sections.join("\n\n")}\n\n---\n*Source: CRM (${contacts.length} stale contacts)*` }] };
       }
 
-      // Fallback: legacy markdown cadence tables
-      source = "legacy cadence tables";
+      // Fallback: the optional markdown cadence table
+      source = "alerts.md cadence table";
       const alertsContent = readFile(path.join(HAROLD_DIR, "alerts.md"));
       if (!alertsContent) return { content: [{ type: "text", text: "No CRM connection and alerts.md not found." }], isError: true };
 
       const overdue = [], dueToday = [], upcoming = [];
 
-      const investorCadence = parseCadenceTable(alertsContent, "### Investor Cadence");
+      const investorCadence = parseCadenceTable(alertsContent, "### Outreach Cadence");
       for (const e of investorCadence) {
         if (!e.dueDateParsed) continue;
-        if (category && category !== "investor") continue;
+        // (the markdown table has no type column, so a category filter cannot apply here)
         const diff = Math.ceil((e.dueDateParsed - refDate) / (1000 * 60 * 60 * 24));
         const item = `${e.contact} (${e.org}) — ${e.nextAction} [due ${e.dueDate}]`;
-        if (diff < 0) overdue.push(item);
-        else if (diff === 0) dueToday.push(item);
-        else if (diff <= 7) upcoming.push(`${item} (in ${diff}d)`);
-      }
-
-      const edoCadence = parseEdoCadenceTable(alertsContent);
-      for (const e of edoCadence) {
-        if (!e.followUpDate) continue;
-        if (category && category !== "edo") continue;
-        const diff = Math.ceil((e.followUpDate - refDate) / (1000 * 60 * 60 * 24));
-        const item = `${e.contact} (${e.org}) — ${e.stage} [${e.followUpReminder}]`;
         if (diff < 0) overdue.push(item);
         else if (diff === 0) dueToday.push(item);
         else if (diff <= 7) upcoming.push(`${item} (in ${diff}d)`);
@@ -1249,17 +1219,17 @@ server.tool(
   "Log an interaction with a contact in the CRM. Use whenever a meeting, call, email, or notable touchpoint occurs. This feeds the freshness tracking system — without logged interactions, the alerts engine has no data.\n\nContact lookup: Provide contact_id directly, OR provide contact_name (+ optionally org) for fuzzy matching.\n\nTypes: call, email, meeting, note, linkedin, other",
   {
     contact_id: z.string().optional().describe("Direct CRM contact UUID. If provided, skips name lookup."),
-    contact_name: z.string().optional().describe("Contact name for lookup (e.g., 'Jane Smith'). Used if contact_id not provided."),
+    contact_name: z.string().optional().describe("Contact name for lookup (e.g., 'Jane Doe'). Used if contact_id not provided."),
     org: z.string().optional().describe("Organization name to disambiguate contacts with same name."),
     type: z.enum(["call", "email", "meeting", "note", "linkedin", "other"]).describe("Interaction type"),
-    subject: z.string().describe("Brief subject/title (e.g., 'Partner prep call', 'Follow-up email re: partnership')"),
+    subject: z.string().describe("Brief subject/title (e.g., 'Intro call', 'Follow-up email re: partnership')"),
     body: z.string().optional().describe("Optional longer notes about the interaction"),
     occurred_at: z.string().optional().describe("When the interaction occurred (ISO datetime). Defaults to now."),
   },
   async ({ contact_id, contact_name, org, type, subject, body, occurred_at }) => {
     try {
       const supabase = getSupabase();
-      if (!supabase) return { content: [{ type: "text", text: "Error: CRM not connected (no Supabase key)" }], isError: true };
+      if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
 
       // Resolve contact
       let resolvedId = contact_id;
@@ -1307,14 +1277,14 @@ server.tool(
 
 server.tool(
   "harold_upsert_contact",
-  "Create or update a contact in the CRM. Use when new people are encountered (meetings, intros, research) or when contact details change.\n\nFor NEW contacts: provide name + at minimum org and category.\nFor UPDATES: provide contact_id to target exact record, OR name+org to find and update.\n\nCategories: investor, edo, partner, team, other\nWarmth: Cold, Lukewarm, Warm, Hot, Strategic\nStatus: active, pending, cold, archived",
+  "Create or update a contact in the CRM. Use when new people are encountered (meetings, intros, research) or when contact details change.\n\nFor NEW contacts: provide name + at minimum org and category (the contact's one type).\nFor UPDATES: provide contact_id to target exact record, OR name+org to find and update.\n\nType (category): exactly one, from your own list (e.g. investor, partner, founder, team, other). team = your own colleagues: keep the record current, never log their interactions.\nLabels (categories): any number of extra tags, e.g. ecosystem, board.\nWarmth: Cold, Lukewarm, Warm, Hot, or empty (not rated)\nStatus: active, pending, cold, archived",
   {
     contact_id: z.string().optional().describe("For updates: exact CRM UUID to update"),
     name: z.string().describe("Contact full name"),
     org: z.string().optional().describe("Organization / company name"),
-    category: z.string().optional().describe("Primary category: investor, edo, partner, team, other"),
-    categories: z.array(z.string()).optional().describe("Multiple categories if contact spans types (e.g., ['investor', 'partner'])"),
-    warmth: z.enum(["", "Cold", "Lukewarm", "Warm", "Hot", "Strategic"]).optional().describe("Relationship closeness: Cold (no connection) → Hot (actively engaged) → Strategic (key ally)"),
+    category: z.string().optional().describe("The contact's one type, from your own list (e.g. investor, partner, founder, team, other)"),
+    categories: z.array(z.string()).optional().describe("Labels to add (any number, e.g. ['ecosystem', 'board']). Stored in contact_categories, never a copy of the type. Existing labels are kept."),
+    warmth: z.enum(["", "Cold", "Lukewarm", "Warm", "Hot"]).optional().describe("Relationship closeness: Cold (no connection) → Lukewarm → Warm → Hot (actively engaged). Empty string = not rated yet. Warmth is a judgment, independent of type."),
     status: z.enum(["active", "pending", "cold", "archived"]).optional().describe("Contact status. Default: pending for new, unchanged for updates."),
     priority: z.enum(["high", "medium", "low"]).optional().describe("Priority level. Default: medium"),
     email: z.string().optional().describe("Email address"),
@@ -1322,14 +1292,14 @@ server.tool(
     location: z.string().optional().describe("City, state, or region"),
     website: z.string().optional().describe("Website URL"),
     notes: z.string().optional().describe("Freeform notes about this contact"),
-    region: z.string().optional().describe("Geographic region (e.g., 'East Africa', 'Southeast US')"),
+    region: z.string().optional().describe("Geographic region (e.g., 'Pacific Northwest', 'Western Europe')"),
     focus_area: z.string().optional().describe("Professional focus or sector"),
     investor_type: z.string().optional().describe("For investors: VC, Angel, PE, Family Office, etc."),
   },
   async ({ contact_id, name, org, category, categories: multiCategories, warmth, status, priority, email, phone, location, website, notes, region, focus_area, investor_type }) => {
     try {
       const supabase = getSupabase();
-      if (!supabase) return { content: [{ type: "text", text: "Error: CRM not connected (no Supabase key)" }], isError: true };
+      if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
 
       let isUpdate = false;
       let existingId = contact_id;
@@ -1387,72 +1357,59 @@ server.tool(
           .from("contacts")
           .update(record)
           .eq("id", existingId)
-          .select("id, name, org, warmth, status, category, pipeline, pipeline_stage")
+          .select("id, name, org, warmth, status, category")
           .single();
 
         if (error) throw error;
         resultContact = data;
       } else {
-        // CREATE new contact
+        // CREATE new contact. Pipeline placement is deliberate and purpose-bound:
+        // nothing is auto-placed here. Use harold_pipeline to put someone in the pipeline.
         if (!record.status) record.status = "pending";
         if (!record.priority) record.priority = "medium";
         if (!record.category) record.category = category || "other";
 
-        // Auto-assign pipeline based on category (same as CRM MCP server)
-        const PIPELINE_DEFAULTS = {
-          investor: { pipeline: "investor", stage: "Prospect" },
-          edo: { pipeline: "edo", stage: "Identified" },
-          partner: { pipeline: "partner", stage: "Identified" },
-        };
-        const effectiveCategory = record.category;
-        if (PIPELINE_DEFAULTS[effectiveCategory] && !record.pipeline) {
-          record.pipeline = PIPELINE_DEFAULTS[effectiveCategory].pipeline;
-          record.pipeline_stage = PIPELINE_DEFAULTS[effectiveCategory].stage;
-          record.stage_entered_at = new Date().toISOString();
-        }
-
         const { data, error } = await supabase
           .from("contacts")
           .insert(record)
-          .select("id, name, org, warmth, status, category, pipeline, pipeline_stage")
+          .select("id, name, org, warmth, status, category")
           .single();
 
         if (error) throw error;
         resultContact = data;
       }
 
-      // Handle multiple categories via junction table
-      const allCategories = multiCategories || (category ? [category] : []);
-      if (allCategories.length > 0 && resultContact.id) {
-        if (isUpdate) {
-          // Remove old categories and re-add
-          await supabase
-            .from("contact_categories")
-            .delete()
-            .eq("contact_id", resultContact.id);
+      // Multi-label membership: the `categories` parameter writes here, not to contacts.category.
+      // A type is what someone IS (exactly one). A label is an extra tag (any number).
+      let allCategories = [];
+      if (resultContact) {
+        if (Array.isArray(multiCategories) && multiCategories.length) {
+          const rows = multiCategories
+            .map(c => String(c).trim().toLowerCase())
+            .filter(Boolean)
+            .map(category_name => ({ contact_id: resultContact.id, category_name }));
+          if (rows.length) await supabase.from("contact_categories").upsert(rows, { onConflict: "contact_id,category_name" });
         }
-
-        const categoryRows = allCategories.map(cat => ({
-          contact_id: resultContact.id,
-          category_name: cat,
-        }));
-
-        const { error: catError } = await supabase
+        const { data: catRows } = await supabase
           .from("contact_categories")
-          .insert(categoryRows);
-
-        if (catError) {
-          // Non-fatal — log but continue
-          console.error("Category insert error:", catError.message);
-        }
+          .select("category_name")
+          .eq("contact_id", resultContact.id);
+        allCategories = (catRows || []).map(r => r.category_name);
       }
+
+      // Fetch all pipeline memberships for display
+      const { data: contactPipelines } = await supabase
+        .from("contact_pipelines")
+        .select("stage, purpose, project")
+        .eq("contact_id", resultContact.id);
 
       const action = isUpdate ? "Updated" : "Created";
       const catStr = allCategories.length ? ` [${allCategories.join(", ")}]` : ` [${resultContact.category}]`;
       const warmthStr = resultContact.warmth ? ` | ${resultContact.warmth}` : "";
-      const pipelineStr = resultContact.pipeline
-        ? `\n   Pipeline: ${resultContact.pipeline} → ${resultContact.pipeline_stage}`
-        : "";
+      let pipelineStr = "";
+      if (contactPipelines && contactPipelines.length > 0) {
+        pipelineStr = contactPipelines.map(cp => `\n   Pipeline: ${cp.stage}${cp.purpose ? ` — ${cp.purpose}` : ""}${cp.project ? ` [${cp.project}]` : ""}`).join("");
+      }
 
       return {
         content: [{
@@ -1470,14 +1427,15 @@ server.tool(
 
 server.tool(
   "harold_search_contacts",
-  "Search CRM contacts by any combination of filters. Use for questions like 'who are our hot investors?', 'find EDO contacts in East Africa', 'show me everyone at Founders Fund', 'which contacts are cold?', 'show investor pipeline at Due Diligence stage', or 'all edo contacts in Active Partner stage'.\n\nReturns up to 25 results by default. All filters combine with AND logic. Text filters (name, org, keyword) use fuzzy matching.",
+  "Search CRM contacts by any combination of filters. Use for questions like 'who are our hot investors?', 'find partners in Western Europe', 'show me everyone at Acme Corp', 'which contacts are cold?', 'who is at the Advancing stage?', or 'everyone in the pipeline for the fundraise'.\n\nReturns up to 25 results by default. All filters combine with AND logic. Text filters (name, org, keyword) use fuzzy matching.",
   {
     name: z.string().optional().describe("Search by contact name (fuzzy match)"),
     org: z.string().optional().describe("Search by organization name (fuzzy match)"),
-    category: z.string().optional().describe("Filter by category: investor, edo, partner, team, other"),
-    pipeline: z.string().optional().describe("Filter by pipeline: investor, edo, partner"),
-    pipeline_stage: z.string().optional().describe("Filter by pipeline stage (e.g., 'Due Diligence', 'Active Partner', 'Exploring')"),
-    warmth: z.string().optional().describe("Filter by warmth: Cold, Lukewarm, Warm, Hot, Strategic"),
+    category: z.string().optional().describe("Filter by type (from your own list, e.g. investor, partner, founder, team, other)"),
+    purpose: z.string().optional().describe("Filter by why they are in the pipeline (fuzzy), e.g. 'capital', 'role', 'partner', 'client'"),
+    project: z.string().optional().describe("Filter by project slug from harold/projects.md, e.g. 'seed-round'"),
+    pipeline_stage: z.string().optional().describe("Filter by pipeline stage: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant"),
+    warmth: z.string().optional().describe("Filter by warmth: Cold, Lukewarm, Warm, Hot"),
     status: z.string().optional().describe("Filter by status: active, pending, cold, archived"),
     priority: z.string().optional().describe("Filter by priority: high, medium, low"),
     region: z.string().optional().describe("Filter by geographic region (fuzzy match)"),
@@ -1487,25 +1445,40 @@ server.tool(
     has_email: z.boolean().optional().describe("If true, only return contacts with email addresses"),
     has_phone: z.boolean().optional().describe("If true, only return contacts with phone numbers"),
     limit: z.number().optional().describe("Max results to return (default: 25, max: 100)"),
-    order_by: z.enum(["name", "updated_at", "created_at", "warmth", "org", "pipeline_stage"]).optional().describe("Sort field (default: updated_at)"),
+    order_by: z.enum(["name", "updated_at", "created_at", "warmth", "org"]).optional().describe("Sort field (default: updated_at)"),
   },
-  async ({ name, org, category, pipeline, pipeline_stage, warmth, status, priority, region, focus_area, investor_type, keyword, has_email, has_phone, limit: maxResults, order_by }) => {
+  async ({ name, org, category, purpose, project, pipeline_stage, warmth, status, priority, region, focus_area, investor_type, keyword, has_email, has_phone, limit: maxResults, order_by }) => {
     try {
       const supabase = getSupabase();
-      if (!supabase) return { content: [{ type: "text", text: "Error: CRM not connected (no Supabase key)" }], isError: true };
+      if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
 
       const resultLimit = Math.min(maxResults || 25, 100);
 
       let query = supabase
         .from("contacts")
-        .select("id, name, org, category, warmth, status, priority, email, phone, location, region, focus_area, investor_type, notes, pipeline, pipeline_stage, updated_at");
+        .select("id, name, org, category, warmth, status, priority, email, phone, location, region, focus_area, investor_type, notes, updated_at, contact_pipelines ( stage, purpose, project )");
+
+      // One pipeline: filter by stage, by why they are in it, or by project.
+      let pipelineContactIds = null;
+      if (purpose || project || pipeline_stage) {
+        let pipelineQuery = supabase.from("contact_pipelines").select("contact_id");
+        if (pipeline_stage) pipelineQuery = pipelineQuery.eq("stage", pipeline_stage);
+        if (purpose) pipelineQuery = pipelineQuery.ilike("purpose", `%${purpose}%`);
+        if (project) pipelineQuery = pipelineQuery.eq("project", project);
+        const { data: pipelineMatches } = await pipelineQuery;
+        pipelineContactIds = pipelineMatches && pipelineMatches.length
+          ? [...new Set(pipelineMatches.map(m => m.contact_id))] : [];
+      }
 
       // Apply filters
       if (name) query = query.ilike("name", `%${name}%`);
       if (org) query = query.ilike("org", `%${org}%`);
       if (category) query = query.eq("category", category);
-      if (pipeline) query = query.eq("pipeline", pipeline);
-      if (pipeline_stage) query = query.eq("pipeline_stage", pipeline_stage);
+      if (pipelineContactIds !== null && pipelineContactIds.length > 0) {
+        query = query.in("id", pipelineContactIds);
+      } else if (pipelineContactIds !== null && pipelineContactIds.length === 0) {
+        query = query.eq("id", "00000000-0000-0000-0000-000000000000"); // no pipeline match: return nothing
+      }
       if (warmth) query = query.eq("warmth", warmth);
       if (status) query = query.eq("status", status);
       if (priority) query = query.eq("priority", priority);
@@ -1537,7 +1510,8 @@ server.tool(
         if (name) filters.push(`name~"${name}"`);
         if (org) filters.push(`org~"${org}"`);
         if (category) filters.push(`category=${category}`);
-        if (pipeline) filters.push(`pipeline=${pipeline}`);
+        if (purpose) filters.push(`purpose~${purpose}`);
+        if (project) filters.push(`project=${project}`);
         if (pipeline_stage) filters.push(`stage=${pipeline_stage}`);
         if (warmth) filters.push(`warmth=${warmth}`);
         if (status) filters.push(`status=${status}`);
@@ -1545,10 +1519,27 @@ server.tool(
         return { content: [{ type: "text", text: `No contacts found matching: ${filters.join(", ") || "no filters"}` }] };
       }
 
+      // Fetch all pipeline memberships for these contacts
+      const contactIds = contacts.map(c => c.id);
+      const { data: allPipelines } = await supabase
+        .from("contact_pipelines")
+        .select("contact_id, stage, purpose, project, entered_at")
+        .in("contact_id", contactIds);
+      const pipelinesMap = {};
+      if (allPipelines) {
+        for (const cp of allPipelines) {
+          if (!pipelinesMap[cp.contact_id]) pipelinesMap[cp.contact_id] = [];
+          pipelinesMap[cp.contact_id].push(`${cp.stage}${cp.purpose ? " — " + cp.purpose : ""}`);
+        }
+      }
+
       // Format results
       const lines = contacts.map((c, i) => {
         const warmthTag = c.warmth ? ` | ${c.warmth}` : "";
-        const pipelineTag = c.pipeline_stage ? ` | ${c.pipeline}→${c.pipeline_stage}` : "";
+        const pipelines = pipelinesMap[c.id];
+        const pipelineTag = pipelines && pipelines.length > 0
+          ? ` | ${pipelines.join(", ")}`
+          : (c.pipeline_stage ? ` | ${c.pipeline}→${c.pipeline_stage}` : "");
         const emailTag = c.email ? ` | ${c.email}` : "";
         const phoneTag = c.phone ? ` | ${c.phone}` : "";
         const regionTag = c.region ? ` | ${c.region}` : "";
@@ -1561,7 +1552,8 @@ server.tool(
       if (name) filterDesc.push(`name~"${name}"`);
       if (org) filterDesc.push(`org~"${org}"`);
       if (category) filterDesc.push(`category=${category}`);
-      if (pipeline) filterDesc.push(`pipeline=${pipeline}`);
+      if (purpose) filterDesc.push(`purpose~${purpose}`);
+      if (project) filterDesc.push(`project=${project}`);
       if (pipeline_stage) filterDesc.push(`stage=${pipeline_stage}`);
       if (warmth) filterDesc.push(`warmth=${warmth}`);
       if (status) filterDesc.push(`status=${status}`);
@@ -1599,7 +1591,7 @@ server.tool(
   async ({ contact_id, contact_name, org, include_interactions, interaction_limit }) => {
     try {
       const supabase = getSupabase();
-      if (!supabase) return { content: [{ type: "text", text: "Error: CRM not connected (no Supabase key)" }], isError: true };
+      if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
 
       let resolvedId = contact_id;
 
@@ -1638,12 +1630,19 @@ server.tool(
       lines.push(`**Categories:** ${catList.length ? catList.join(", ") : contact.category || "—"}`);
       lines.push(`**Warmth:** ${contact.warmth || "—"} | **Status:** ${contact.status || "—"} | **Priority:** ${contact.priority || "—"}`);
 
-      // Pipeline stage info
-      if (contact.pipeline) {
-        const stageEnteredStr = contact.stage_entered_at
-          ? new Date(contact.stage_entered_at).toLocaleDateString()
-          : "—";
-        lines.push(`**Pipeline:** ${contact.pipeline} → **${contact.pipeline_stage || "—"}** (since ${stageEnteredStr})`);
+      // Pipeline stage info (from junction table, with legacy fallback)
+      const { data: contactPipelines } = await supabase
+        .from("contact_pipelines")
+        .select("stage, purpose, project, entered_at")
+        .eq("contact_id", resolvedId);
+
+      if (contactPipelines && contactPipelines.length > 0) {
+        for (const cp of contactPipelines) {
+          const since = cp.entered_at ? new Date(cp.entered_at).toLocaleDateString() : "—";
+          const why = cp.purpose ? ` — ${cp.purpose}` : "";
+          const proj = cp.project ? ` [${cp.project}]` : "";
+          lines.push(`**Pipeline:** **${cp.stage}**${why}${proj} (since ${since})`);
+        }
       }
 
       if (contact.email) lines.push(`**Email:** ${contact.email}`);
@@ -1699,8 +1698,8 @@ server.tool(
         });
       }
 
-      // Fetch stage change history if contact has a pipeline
-      if (contact.pipeline) {
+      // Stage history, if this contact has ever moved in the pipeline
+      {
         const { data: stageChanges } = await supabase
           .from("stage_changes")
           .select("from_stage, to_stage, notes, changed_at")
@@ -1731,11 +1730,117 @@ server.tool(
   }
 );
 
+// ── Tool: harold_pipeline ─────────────────────────────────────────
+// One pipeline for everything the operator has in motion. A person is in it for a REASON:
+// capital for a business, a role, a partner, a client. Same seven stages for all of it.
+server.tool(
+  "harold_pipeline",
+  "Put someone in the pipeline, move them along it, or see who is where.\n\nThere is ONE pipeline, not one per contact type. What differs is the PURPOSE: why this person is in it. 'Raising the seed round', 'Distribution partner for the product launch', 'Hiring a head of product', 'First client for the consultancy'. A person can hold more than one entry if they are in play for more than one reason.\n\nStages, in order: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant.\n\nNothing is ever auto-placed. Set a stage when the conversation actually establishes where someone stands, and move them when it changes.\n\nActions: add, move, close, list",
+  {
+    action: z.enum(["add", "move", "close", "list"]).describe("add = put someone in the pipeline for a purpose; move = change their stage; close = they are done or gone; list = who is where"),
+    contact_name: z.string().optional().describe("Contact name (fuzzy). Required for add/move/close."),
+    org: z.string().optional().describe("Organization, to disambiguate the name"),
+    entry_id: z.string().optional().describe("Pipeline entry UUID, when a contact has more than one"),
+    purpose: z.string().optional().describe("Why they are in the pipeline, in the operator's words. Required for add."),
+    project: z.string().optional().describe("Project name or slug from harold/projects.md, e.g. seed-round"),
+    stage: z.enum(["Identified","Reached Out","In Conversation","Advancing","Committed","Active","Dormant"]).optional().describe("Stage to set (add/move)"),
+    outcome: z.string().optional().describe("How it ended (close)"),
+    notes: z.string().optional().describe("Why the stage changed. Recorded in the history."),
+    filter_stage: z.string().optional().describe("list: only this stage"),
+    filter_project: z.string().optional().describe("list: only this project slug"),
+  },
+  async ({ action, contact_name, org, entry_id, purpose, project, stage, outcome, notes, filter_stage, filter_project }) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
+
+      if (action === "list") {
+        let q = supabase.from("contact_pipelines")
+          .select("id, stage, purpose, project, entered_at, outcome, closed_at, contacts ( name, org, category, warmth )")
+          .is("closed_at", null);
+        if (filter_stage) q = q.eq("stage", filter_stage);
+        if (filter_project) q = q.eq("project", filter_project);
+        const { data, error } = await q;
+        if (error) return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+        if (!data || !data.length) return { content: [{ type: "text", text: "Pipeline is empty. Nobody has been placed yet. That is normal: an entry exists only once a conversation establishes a purpose." }] };
+        const ORDER = ["Identified","Reached Out","In Conversation","Advancing","Committed","Active","Dormant"];
+        const byStage = {};
+        for (const e of data) (byStage[e.stage] ||= []).push(e);
+        const lines = [`# Pipeline — ${data.length} open entr${data.length === 1 ? "y" : "ies"}`, ""];
+        for (const st of ORDER) {
+          if (!byStage[st]) continue;
+          lines.push(`## ${st} (${byStage[st].length})`);
+          for (const e of byStage[st]) {
+            const c = e.contacts || {};
+            const since = e.entered_at ? new Date(e.entered_at).toLocaleDateString() : "—";
+            lines.push(`- **${c.name || "?"}**${c.org ? ` (${c.org})` : ""} — ${e.purpose || "no purpose recorded"}${e.project ? ` [${e.project}]` : ""} · since ${since}`);
+          }
+          lines.push("");
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      if (!contact_name && !entry_id) return { content: [{ type: "text", text: "Need contact_name (or entry_id)." }], isError: true };
+
+      let contact = null;
+      if (contact_name) {
+        const resolved = await resolveContact(supabase, contact_name, org);
+        if (resolved.error) return resolved.error;
+        if (resolved.multiple) return resolved.multiple;
+        contact = { id: resolved.id, name: resolved.name };
+      }
+
+      if (action === "add") {
+        if (!purpose) return { content: [{ type: "text", text: "Need a purpose: why is this person in the pipeline? (e.g. 'Raising the seed round', 'Hiring a head of product')" }], isError: true };
+        const { data, error } = await supabase.from("contact_pipelines")
+          .insert({ contact_id: contact.id, stage: stage || "Identified", purpose, project: project || null })
+          .select("id, stage, purpose, project").single();
+        if (error) return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+        await supabase.from("stage_changes").insert({ contact_id: contact.id, entry_id: data.id, from_stage: null, to_stage: data.stage, notes: notes || "" });
+        return { content: [{ type: "text", text: `✓ ${contact.name} in the pipeline at **${data.stage}** — ${data.purpose}${data.project ? ` [${data.project}]` : ""}` }] };
+      }
+
+      // move / close both need the entry
+      let entry = null;
+      if (entry_id) {
+        const { data } = await supabase.from("contact_pipelines").select("id, stage, purpose, project, contact_id").eq("id", entry_id).maybeSingle();
+        entry = data;
+      } else {
+        const { data } = await supabase.from("contact_pipelines").select("id, stage, purpose, project, contact_id").eq("contact_id", contact.id).is("closed_at", null);
+        if (!data || !data.length) return { content: [{ type: "text", text: `${contact.name} is not in the pipeline. Use action "add" with a purpose.` }], isError: true };
+        if (data.length > 1 && !purpose) {
+          return { content: [{ type: "text", text: `${contact.name} has ${data.length} open entries. Say which by passing purpose or entry_id:\n` + data.map(e => `- ${e.stage}: ${e.purpose} (${e.id})`).join("\n") }], isError: true };
+        }
+        entry = data.length === 1 ? data[0] : data.find(e => (e.purpose || "").toLowerCase().includes((purpose || "").toLowerCase()));
+        if (!entry) return { content: [{ type: "text", text: `No entry for ${contact.name} matching that purpose.` }], isError: true };
+      }
+
+      if (action === "move") {
+        if (!stage) return { content: [{ type: "text", text: "Need a stage to move to." }], isError: true };
+        const from = entry.stage;
+        const { error } = await supabase.from("contact_pipelines").update({ stage, entered_at: new Date().toISOString() }).eq("id", entry.id);
+        if (error) return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+        await supabase.from("stage_changes").insert({ contact_id: entry.contact_id, entry_id: entry.id, from_stage: from, to_stage: stage, notes: notes || "" });
+        return { content: [{ type: "text", text: `✓ ${contact ? contact.name : "Entry"}: **${from} → ${stage}** (${entry.purpose})${notes ? `\n   ${notes}` : ""}` }] };
+      }
+
+      if (action === "close") {
+        const { error } = await supabase.from("contact_pipelines")
+          .update({ closed_at: new Date().toISOString(), outcome: outcome || "", stage: stage || entry.stage }).eq("id", entry.id);
+        if (error) return { content: [{ type: "text", text: `Error: ${error.message}` }], isError: true };
+        return { content: [{ type: "text", text: `✓ Closed: ${entry.purpose}${outcome ? ` — ${outcome}` : ""}. The record stays; it is out of the open pipeline.` }] };
+      }
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+    }
+  }
+);
+
 // ── Tool: harold_crm_task ─────────────────────────────────────────
 
 server.tool(
   "harold_crm_task",
-  "Create, update, or complete a contact-specific CRM task. These are relationship follow-ups tied to a contact (e.g., 'Follow up with Sarah re: term sheet', 'Send deck to Charles'). They feed into the alerts engine for overdue/upcoming tracking.\n\nFor LINEAR tasks (DUS-XXX project work), use Linear MCP instead. CRM tasks are for contact-specific relationship actions only.\n\nActions: create, update, complete, cancel, list",
+  "Create, update, or complete a contact-specific CRM task. These are relationship follow-ups tied to a contact (e.g., 'Follow up with Jane re: term sheet', 'Send deck to Sam'). They feed into the alerts engine for overdue/upcoming tracking.\n\nFor project work, use the task manager (Linear by default) instead. CRM tasks are for contact-specific relationship actions only.\n\nActions: create, update, complete, cancel, list",
   {
     action: z.enum(["create", "update", "complete", "cancel", "list"]).describe("Action to perform"),
     task_id: z.string().optional().describe("Task UUID — required for update/complete/cancel"),
@@ -1751,7 +1856,7 @@ server.tool(
   async ({ action, task_id, contact_name, contact_id, org, title, description, priority, due_date, status }) => {
     try {
       const supabase = getSupabase();
-      if (!supabase) return { content: [{ type: "text", text: "Error: CRM not connected (no Supabase key)" }], isError: true };
+      if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
 
       // ── LIST ──
       if (action === "list") {

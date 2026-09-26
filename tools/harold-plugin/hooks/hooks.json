@@ -1,0 +1,14 @@
+{
+  "description": "Harold: boot on session start, enforce filing on stop. Uses ${CLAUDE_PLUGIN_ROOT}, never relative paths.",
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume|clear|compact", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/boot.sh\"", "timeout": 60 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/close.sh\"", "timeout": 240 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/close.sh\" --final", "timeout": 240 } ] }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "harold",
+  "version": "2.0.0",
+  "description": "Boots Harold (a chief-of-staff operating system) in Cowork: loads the constitution, playbooks, learnings, project map and due work from the connected Harold workspace, and enforces filing at session end. Say 'boot Harold' if it has not booted itself.",
+  "author": { "name": "[YOUR NAME]" }
+}

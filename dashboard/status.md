@@ -1,51 +1,62 @@
-# Dashboard — Current Status
+# Dashboard: Current Status
 
-*Update this at the start of each week or whenever the operational picture changes significantly.*
+*What is happening right now. Read at the start of every session. Keep it to what is current: finished work moves to the project's vault card and the daily notes.*
 
-**Last updated:** [date]
+**Last updated:** [DATE]
 
 ---
 
 ## Active Projects
 
-| Project | Status | Next Milestone | Owner | Due |
-|---------|--------|---------------|-------|-----|
-| [Project name] | Active | [What needs to happen next] | [Who owns it] | [Date] |
+*One block per active entry in `harold/projects.md`. Status, the next milestone, and what is in the way.*
+
+### Example Project (example)
+- **Status:** Negotiating a partnership with Acme Corp
+- **Next milestone:** Signed mutual NDA
+- **Blocked by:** B001 (see `harold/blockers.md`)
+- **Folder:** `bin/harold where example`
+
+### [Project name]
+- **Status:**
+- **Next milestone:**
+- **Blocked by:**
 
 ---
 
-## This Week's Priorities
+## Goals / KPIs
 
-1. [Most important thing]
-2. [Second]
-3. [Third]
+| Goal | Target | Due | Status |
+|------|--------|-----|--------|
+| [Goal] | [Measurable target] | [Date] | [On track / at risk] |
 
 ---
 
 ## Upcoming Deadlines
 
-| Date | Deadline |
-|------|---------|
-| [Date] | [What's due] |
+| Date | What | Project | Owner |
+|------|------|---------|-------|
+| [Date] | [Deadline] | [Project] | [Who] |
+
+*Dated events with prep belong in `harold/events.md`; task due dates belong in the task manager. This table is for the few deadlines that shape the month.*
+
+---
+
+## Open Loops / Flags
+
+- [Anything unresolved that is not a blocker: a decision pending, a question out]
+
+---
+
+## Key Intel
+
+*Short, current, and linked to the vault note that holds the detail (`vault/intel/`).*
+
+- [Insight] → [[vault note]]
 
 ---
 
 ## Recent Activity
 
-*Brief log of what happened recently — helps new sessions get up to speed fast.*
+*The last few sessions, one line each. The daily notes in `vault/daily/` hold the detail.*
 
-- [Date]: [What happened]
-
----
-
-## Key Metrics
-
-*The numbers that matter most to your work right now.*
-
-| Metric | Value | As of |
-|--------|-------|-------|
-| [e.g., Pipeline value] | [Amount] | [Date] |
-
----
-
-*Keep this file lean. Detailed project notes live in `projects/`. This is the at-a-glance view.*
+- [DATE]: [what changed]

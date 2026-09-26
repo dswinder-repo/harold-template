@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""
+harold-index — SQLite FTS5 search over Harold's markdown. Replaces the Obsidian Local REST API
+(localhost-only, Mac-only). No app, no server, no machine dependency: one file, harold/search.db,
+gitignored and rebuilt from the markdown in seconds (bin/harold boot rebuilds it whenever it is stale).
+
+  harold-index build            rebuild harold/search.db from scratch
+  harold-index search <query>   FTS5 query (words, "phrases", prefix*, AND/OR/NOT, col:field)
+  harold-index stat             what is indexed
+
+Indexed unit: one row per markdown section (split at headings), with path, title (file H1 or
+filename), heading, tags/category from frontmatter, and body text. Every markdown file under the
+knowledge dirs (vault, harold, memory, dashboard, playbook, raw, plus every `folder:` in
+harold/projects.md) is indexed; node_modules, .git, .claude, .obsidian and archive/ are skipped.
+Called by `bin/harold search`. Python 3.8+, stdlib only.
+"""
+import os, re, sys, sqlite3, json, time
+
+ROOT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..'))
+DB = os.path.join(ROOT, 'harold', 'search.db')
+STANDARD_DIRS = ['vault', 'harold', 'memory', 'dashboard', 'playbook', 'raw']
+SKIP_DIRS = {'node_modules', '.git', '.claude', '.obsidian', 'archive', 'worktrees'}
+
+def project_dirs():
+    """Every `- folder:` in harold/projects.md, so a newly mapped project is searchable without editing this file."""
+    out = []
+    try:
+        with open(os.path.join(ROOT, 'harold', 'projects.md'), encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                m = re.match(r'^-\s+folder:\s*(.+?)\s*$', line)
+                if not m: continue
+                f = m.group(1).strip().rstrip('/')
+                if f and f != '.' and not os.path.isabs(f) and '..' not in f.split('/'): out.append(f)
+    except OSError:
+        pass
+    return out
+
+def dirs():
+    seen, out = set(), []
+    for d in STANDARD_DIRS + project_dirs():
+        if d not in seen: seen.add(d); out.append(d)
+    return out
+SKIP_FILES = {'search.db'}
+TOP_FILES = ['AGENTS.md', 'README.md']
+
+def iter_md():
+    for rel in TOP_FILES:
+        p = os.path.join(ROOT, rel)
+        if os.path.isfile(p): yield rel
+    seen_files = set()
+    for d in dirs():
+        base = os.path.join(ROOT, d)
+        if not os.path.isdir(base): continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [x for x in dirnames if x not in SKIP_DIRS]
+            for f in filenames:
+                if f.endswith('.md') and f not in SKIP_FILES:
+                    rel = os.path.relpath(os.path.join(dirpath, f), ROOT)
+                    if rel in seen_files: continue  # a project folder nested inside a standard dir
+                    seen_files.add(rel)
+                    yield rel
+
+FM_RE = re.compile(r'^---\r?\n(.*?)\r?\n---\r?\n', re.S)
+def frontmatter(text):
+    m = FM_RE.match(text)
+    if not m: return {}, text
+    fm = {}
+    for line in m.group(1).split('\n'):
+        k = re.match(r'^([A-Za-z_][\w-]*):\s*(.*)$', line)
+        if k: fm[k.group(1)] = k.group(2).strip().strip('"\'')
+    return fm, text[m.end():]
+
+def sections(body):
+    """Yield (heading, text) chunks split at markdown headings. Preamble before first heading is heading ''."""
+    cur_h, buf = '', []
+    for line in body.split('\n'):
+        h = re.match(r'^(#{1,6})\s+(.*)$', line)
+        if h:
+            if ''.join(buf).strip(): yield cur_h, '\n'.join(buf)
+            cur_h, buf = h.group(2).strip(), []
+        else:
+            buf.append(line)
+    if ''.join(buf).strip(): yield cur_h, '\n'.join(buf)
+
+def build():
+    t0 = time.time()
+    tmp = DB + '.tmp'
+    if os.path.exists(tmp): os.remove(tmp)
+    con = sqlite3.connect(tmp)
+    con.executescript('''
+      CREATE TABLE files(path TEXT PRIMARY KEY, title TEXT, tags TEXT, category TEXT, mtime REAL, bytes INT);
+      CREATE VIRTUAL TABLE sections USING fts5(path UNINDEXED, title, heading, tags, body, tokenize='porter unicode61');
+      CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT);
+    ''')
+    nfiles = nsec = 0
+    for rel in iter_md():
+        p = os.path.join(ROOT, rel)
+        try:
+            with open(p, 'r', encoding='utf-8', errors='replace') as fh: text = fh.read()
+        except OSError as e:
+            print(f'skip {rel}: {e}', file=sys.stderr); continue
+        fm, body = frontmatter(text)
+        m = re.search(r'^#\s+(.+)$', body, re.M)
+        title = (m.group(1).strip() if m else os.path.splitext(os.path.basename(rel))[0])
+        tags = fm.get('tags', '')
+        cat = fm.get('category', '') or fm.get('type', '')
+        st = os.stat(p)
+        con.execute('INSERT INTO files VALUES (?,?,?,?,?,?)', (rel, title, tags, cat, st.st_mtime, st.st_size))
+        nfiles += 1
+        for heading, chunk in sections(body):
+            con.execute('INSERT INTO sections(path,title,heading,tags,body) VALUES (?,?,?,?,?)', (rel, title, heading, f'{tags} {cat}', chunk))
+            nsec += 1
+    con.execute('INSERT INTO meta VALUES (?,?)', ('built', time.strftime('%Y-%m-%dT%H:%M:%S')))
+    con.execute('INSERT INTO meta VALUES (?,?)', ('files', str(nfiles)))
+    con.execute('INSERT INTO meta VALUES (?,?)', ('sections', str(nsec)))
+    con.execute("INSERT INTO sections(sections) VALUES('optimize')")
+    con.commit(); con.execute('VACUUM'); con.close()
+    os.replace(tmp, DB)
+    print(f'indexed {nfiles} files, {nsec} sections → {os.path.relpath(DB, ROOT)} ({os.path.getsize(DB)//1024} KB) in {time.time()-t0:.1f}s')
+
+def search(q, limit=15, as_json=False):
+    if not os.path.exists(DB):
+        print('no index — run: bin/harold-index build', file=sys.stderr); return 1
+    con = sqlite3.connect(DB)
+    try:
+        rows = con.execute('''
+          SELECT path, title, heading, snippet(sections, 4, '[', ']', '…', 18) AS snip, bm25(sections, 0, 5.0, 3.0, 2.0, 1.0) AS rank
+          FROM sections WHERE sections MATCH ? ORDER BY rank LIMIT ?''', (q, limit)).fetchall()
+    except sqlite3.OperationalError as e:
+        # fall back: quote the whole thing as a phrase-ish AND of words
+        words = [w for w in re.findall(r'[\w\-\']+', q) if w]
+        try:
+            rows = con.execute('''SELECT path, title, heading, snippet(sections, 4, '[', ']', '…', 18), bm25(sections,0,5.0,3.0,2.0,1.0)
+                                  FROM sections WHERE sections MATCH ? ORDER BY 5 LIMIT ?''', (' '.join(f'"{w}"' for w in words), limit)).fetchall()
+        except sqlite3.OperationalError as e2:
+            print(f'bad query: {e2}', file=sys.stderr); return 2
+    if as_json:
+        print(json.dumps([{'path': r[0], 'title': r[1], 'heading': r[2], 'snippet': r[3]} for r in rows], indent=1)); return 0
+    if not rows: print(f'no matches for: {q}'); return 1
+    for path, title, heading, snip, _ in rows:
+        loc = f'{path}' + (f' › {heading}' if heading else '')
+        print(f'{loc}\n    {" ".join(snip.split())}')
+    return 0
+
+def stat():
+    if not os.path.exists(DB): print('no index'); return 1
+    con = sqlite3.connect(DB)
+    meta = dict(con.execute('SELECT k, v FROM meta').fetchall())
+    print(f"built {meta.get('built')}: {meta.get('files')} files, {meta.get('sections')} sections, {os.path.getsize(DB)//1024} KB")
+    for d, n in con.execute("SELECT substr(path,1,instr(path||'/','/')-1) AS d, count(*) FROM files GROUP BY d ORDER BY 2 DESC").fetchall(): print(f'  {n:5d} {d}')
+    return 0
+
+if __name__ == '__main__':
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'build'
+    if cmd == 'build': build()
+    elif cmd == 'search': sys.exit(search(' '.join(a for a in sys.argv[2:] if a != '--json'), as_json='--json' in sys.argv))
+    elif cmd == 'stat': sys.exit(stat())
+    else: print(__doc__); sys.exit(2)

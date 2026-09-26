@@ -1,0 +1,751 @@
+#!/usr/bin/env node
+/*
+ * harold — the deterministic floor under Harold.
+ *
+ * This program does not think. The playbooks think. Its only job is to
+ * guarantee that the prose gets loaded and that the steps the prose calls
+ * MANDATORY actually ran. Every command exits non-zero, with a plain reason,
+ * when that guarantee cannot be met. Silent degradation is the failure this
+ * file exists to remove.
+ *
+ *   harold boot    load date, constitution, playbooks, learnings, project map,
+ *                  alerts, blockers, due scheduled work. Register session file.
+ *   harold check   the contract test alone (read-only, any harness, any cwd)
+ *   harold close   verify filing happened; clear session state; record triggers;
+ *                  commit + push the knowledge base. Blocks when filing is missing.
+ *   harold file    deposit knowledge (trigger | daily | crm | learning)
+ *   harold where   resolve a topic or alias to a folder via harold/projects.md
+ *
+ * Lives at bin/harold because harold/ (the state directory) already owns the
+ * name at repo root. Zero dependencies. Node >= 18. Works from any cwd: it
+ * resolves the workspace from its own location, then HAROLD_ROOT, then by
+ * walking up from cwd.
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawnSync } = require('child_process');
+
+// ───────────────────────── root + time ─────────────────────────
+function isRoot(c) { return c && fs.existsSync(path.join(c, 'AGENTS.md')) && fs.existsSync(path.join(c, 'playbook')) && fs.existsSync(path.join(c, 'harold')); }
+function findRoot() {
+  const candidates = [];
+  if (process.env.HAROLD_ROOT) candidates.push(process.env.HAROLD_ROOT);
+  try { candidates.push(path.dirname(path.dirname(fs.realpathSync(__filename)))); } catch (_) {}
+  if (process.env.CLAUDE_PROJECT_DIR) candidates.push(process.env.CLAUDE_PROJECT_DIR);
+  let d = process.cwd();
+  for (let i = 0; i < 8; i++) { candidates.push(d); const p = path.dirname(d); if (p === d) break; d = p; }
+  for (const c of candidates) if (isRoot(c)) return fs.realpathSync(c);
+  return null;
+}
+const CLI = root => path.join(root, 'bin', 'harold');
+
+// Time zone: HAROLD_TZ (IANA name, e.g. Europe/London) wins; otherwise the system zone of whatever machine runs this.
+const TZ = process.env.HAROLD_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+function todayParts(d = new Date()) {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false });
+  const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return { iso: `${parts.year}-${parts.month}-${parts.day}`, weekday: parts.weekday, hm: `${hour}:${parts.minute}`, y: +parts.year, m: +parts.month, d: +parts.day };
+}
+function tzOffsetMs(d) {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const p = Object.fromEntries(fmt.formatToParts(d).map(x => [x.type, x.value]));
+  const h = p.hour === '24' ? '00' : p.hour;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +h, +p.minute, +p.second) - d.getTime();
+}
+// epoch ms of local midnight for the day `d` falls in, re-checked across DST boundaries
+function startOfLocalDayMs(d = new Date()) {
+  const t = todayParts(d);
+  const off1 = tzOffsetMs(d);
+  const guess = Date.UTC(t.y, t.m - 1, t.d) - off1;
+  const off2 = tzOffsetMs(new Date(guess));
+  return off2 === off1 ? guess : Date.UTC(t.y, t.m - 1, t.d) - off2;
+}
+function dateOf(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); }
+function daysBetween(aIso, bIso) { return Math.round((dateOf(bIso) - dateOf(aIso)) / 86400000); }
+function isoFromDate(dt) { return dt.toISOString().slice(0, 10); }
+function addDays(iso, n) { const dt = dateOf(iso); dt.setUTCDate(dt.getUTCDate() + n); return isoFromDate(dt); }
+function lastBusinessDayOfMonth(y, m) { let dt = new Date(Date.UTC(y, m, 0)); while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6) dt.setUTCDate(dt.getUTCDate() - 1); return isoFromDate(dt); }
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+// "Aug 7" | "Jan 26, 2026" | "March 6, 2026" | "2026-02-25" | "May 3-6, 2026" → iso | null
+function parseLooseDate(s, today) {
+  if (!s) return null;
+  let m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:\s*[-–]\s*\d{1,2})?(?:,?\s*(\d{4}))?/);
+  if (m && MONTHS[m[1].slice(0, 3).toLowerCase()] !== undefined) {
+    const mon = MONTHS[m[1].slice(0, 3).toLowerCase()];
+    let y = m[3] ? +m[3] : today.y;
+    if (!m[3] && mon > today.m + 1) y = today.y - 1;
+    return `${y}-${String(mon).padStart(2, '0')}-${String(+m[2]).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+// ───────────────────────── io helpers ─────────────────────────
+function readFull(p) { return fs.readFileSync(p).toString('utf8'); } // whole body: iCloud eviction surfaces here, not later
+function tryRead(p) { try { const t = readFull(p); return { ok: t.trim().length > 0, text: t, err: t.trim().length ? null : 'empty' }; } catch (e) { return { ok: false, text: '', err: e.code || e.message }; } }
+function readJsonl(p) {
+  const rows = [], errors = [];
+  if (!fs.existsSync(p)) return { rows, errors };
+  readFull(p).split('\n').forEach((line, i) => { if (!line.trim()) return; try { rows.push(JSON.parse(line)); } catch (e) { errors.push(`line ${i + 1}: ${e.message}`); } });
+  return { rows, errors };
+}
+function appendLine(p, obj) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.appendFileSync(p, JSON.stringify(obj) + '\n'); }
+
+/**
+ * Run fn while holding an exclusive lock on a file.
+ *
+ * mkdir is atomic on every filesystem we care about, so the directory itself is the
+ * lock. Needed because assigning the next id is a read-then-write: two sessions that
+ * both read "the highest id is 102" both write L103, and `harold check` then refuses
+ * to boot on duplicate ids. That happened twice in one afternoon.
+ *
+ * A lock older than 30 seconds is assumed to belong to a session that died and is
+ * broken, because a stuck lock that blocks filing forever is worse than a rare race.
+ */
+function withLock(target, fn) {
+  const lock = target + '.lock';
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try { fs.mkdirSync(lock); break; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > 30000) { fs.rmSync(lock, { recursive: true, force: true }); continue; }
+      } catch (_) { continue; }
+      if (Date.now() > deadline) { fs.rmSync(lock, { recursive: true, force: true }); continue; }
+      const until = Date.now() + 50; while (Date.now() < until) { /* brief spin */ }
+    }
+  }
+  try { return fn(); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} }
+}
+function frontmatter(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if (!m) return {};
+  const fm = {}; m[1].split('\n').forEach(l => { const k = l.match(/^([A-Za-z_][\w-]*):\s*(.*)$/); if (k) fm[k[1]] = k[2].trim().replace(/^["']|["']$/g, ''); });
+  return fm;
+}
+function walk(dir, pred, out = []) {
+  if (!fs.existsSync(dir)) return out;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === '.claude') continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walk(p, pred, out); else if (pred(p)) out.push(p);
+  }
+  return out;
+}
+function readStdinJson() {
+  try { if (process.stdin.isTTY) return null; const raw = fs.readFileSync(0, 'utf8'); return raw.trim() ? JSON.parse(raw) : null; } catch (_) { return null; }
+}
+
+// ───────────────────────── knowledge loaders ─────────────────────────
+const CORE = [
+  'AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md',
+  'harold/alerts.md', 'harold/blockers.md', 'harold/facts.md', 'harold/learnings.jsonl', 'harold/projects.md', 'harold/sync-map.md', 'playbook/README.md',
+];
+
+function loadPlaybooks(root) {
+  const dir = path.join(root, 'playbook');
+  // core/ is portable; engagements/<name>/ is employer- or client-specific. Location only: every body loads.
+  const files = walk(dir, p => p.endsWith('.md') && path.basename(p) !== 'README.md').map(p => path.relative(dir, p)).sort();
+  const items = files.map(f => {
+    const r = tryRead(path.join(dir, f));
+    const purpose = r.ok ? (r.text.match(/\*\*Purpose:\*\*\s*(.+)/) || r.text.match(/^#\s+(.+)/m) || [null, ''])[1].trim() : '';
+    return { name: f, ok: r.ok, err: r.err, bytes: r.text.length, purpose: purpose.slice(0, 110) };
+  });
+  const readme = tryRead(path.join(dir, 'README.md'));
+  const indexed = new Set((readme.text.match(/^\|\s*`([a-z0-9\/-]+\.md)`/gm) || []).map(s => s.replace(/^\|\s*`|`$/g, '')));
+  return { items, notIndexed: files.filter(f => !indexed.has(f)), indexedMissing: [...indexed].filter(f => !files.includes(f)) };
+}
+
+function loadLearnings(root) {
+  const { rows, errors } = readJsonl(path.join(root, 'harold/learnings.jsonl'));
+  const seen = new Set(), dupes = [];
+  rows.forEach(r => { if (seen.has(r.id)) dupes.push(r.id); seen.add(r.id); });
+  return { rows, errors, dupes, critical: rows.filter(r => r.severity === 'critical') };
+}
+
+function loadProjects(root) {
+  const r = tryRead(path.join(root, 'harold/projects.md')); if (!r.ok) return { ok: false, err: r.err, projects: [] };
+  const projects = []; let cur = null;
+  for (const line of r.text.split('\n')) {
+    const h = line.match(/^##\s+(.+?)\s*$/);
+    if (h) { cur = { name: h[1].trim() }; projects.push(cur); continue; }
+    const kv = cur && line.match(/^-\s+([a-z_]+):\s*(.*)$/);
+    if (kv) cur[kv[1]] = kv[2].trim();
+  }
+  const split = s => (s || '').replace(/—\s*ALIASES:\s*TODO/i, '').split(',').map(x => x.trim()).filter(Boolean);
+  projects.forEach(p => { p.aliasList = split(p.aliases); p.keywordList = split(p.keywords); p.aliasesTodo = /ALIASES:\s*TODO/i.test(p.aliases || ''); });
+  return { ok: true, projects };
+}
+
+function loadAlerts(root, today) {
+  const r = tryRead(path.join(root, 'harold/alerts.md'));
+  const m = r.text.match(/Last updated:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
+  const updated = m ? parseLooseDate(m[1], today) : null;
+  const cur = r.text.match(/##\s*Current Alerts[\s\S]*?(?=\n##\s|\n---|$)/i);
+  return { ok: r.ok, updated, age: updated ? daysBetween(updated, today.iso) : null, current: cur ? cur[0].trim() : '' };
+}
+
+function loadBlockers(root, today) {
+  const r = tryRead(path.join(root, 'harold/blockers.md'));
+  const section = r.text.split(/##\s*Resolved/i)[0] || '';
+  const rows = [];
+  for (const line of section.split('\n')) {
+    const m = line.match(/^\|\s*(B\d{3})\s*\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|/);
+    if (!m) continue;
+    const raised = parseLooseDate(m[5].trim(), today);
+    rows.push({ id: m[1], project: m[2].trim(), what: m[3].trim().replace(/\*\*/g, ''), waitingOn: m[4].trim(), raisedRaw: m[5].trim(), raised, age: raised ? daysBetween(raised, today.iso) : null });
+  }
+  return { ok: r.ok, rows };
+}
+
+function loadEvents(root, today) {
+  const r = tryRead(path.join(root, 'harold/events.md'));
+  const upcoming = (r.text.split(/##\s*Upcoming Events/i)[1] || '').split(/\n##\s/)[0];
+  const rows = [];
+  for (const line of upcoming.split('\n')) {
+    const cells = line.split('|').map(s => s.trim());
+    if (cells.length < 7 || !cells[1] || /^-+$/.test(cells[1]) || /^Event$/i.test(cells[1])) continue;
+    const date = parseLooseDate(cells[2], today);
+    rows.push({ event: cells[1].replace(/\*\*/g, ''), dates: cells[2], date, daysOut: date ? daysBetween(today.iso, date) : null, prep: cells[5] || '' });
+  }
+  return { ok: r.ok, rows };
+}
+
+function latestDaily(root) {
+  const dir = path.join(root, 'vault/daily');
+  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => /^\d{4}-\d{2}-\d{2}/.test(f)).sort() : [];
+  const last = files[files.length - 1];
+  return { count: files.length, last, lastDate: last ? last.slice(0, 10) : null };
+}
+
+function rawUncompiled(root) {
+  return walk(path.join(root, 'raw'), p => path.basename(p) !== 'README.md' && !/\.DS_Store$/.test(p))
+    .filter(p => !p.endsWith('.md') || !/^true$/i.test(frontmatter(readFull(p)).compiled || ''))
+    .map(p => path.relative(root, p));
+}
+
+// ───────────────────────── scheduled triggers ─────────────────────────
+// The rules live in AGENTS.md (Scheduled Triggers table). This computes what is due today and what
+// was missed. It never performs anything. A trigger is satisfied for the day when
+// harold/trigger-log.jsonl holds {id, date, status: ran|skipped|deferred}.
+function triggerLog(root) { return readJsonl(path.join(root, 'harold/trigger-log.jsonl')).rows; }
+function lastRun(log, id, fromIso) { return log.filter(e => e.id === id && e.status === 'ran' && (!fromIso || e.date >= fromIso)).map(e => e.date).sort().pop() || null; }
+function loggedToday(log, id, today) { return log.filter(e => e.id === id && e.date === today.iso); }
+
+function computeTriggers(root, today, ctx) {
+  const log = triggerLog(root);
+  const due = [], overdue = [], info = [];
+  const t = today.iso;
+  const dow = dateOf(t).getUTCDay();
+  const lastFriday = addDays(t, -((dow + 2) % 7));
+  const weeklyRan = lastRun(log, 'weekly-scan');
+  if (dow === 5) due.push({ id: 'weekly-scan', what: 'Weekly summary + quick KB scan', where: 'playbook/core/knowledge-base-health.md (Quick Scan) → harold/weekly-summary.md' });
+  else if (!weeklyRan || weeklyRan < lastFriday) {
+    const missed = weeklyRan ? Math.floor(daysBetween(weeklyRan, t) / 7) : null;
+    overdue.push({ id: 'weekly-scan', what: `Friday weekly scan missed for ${lastFriday}` + (missed ? ` (${missed} cycles since last run ${weeklyRan})` : ' (no run ever recorded)'), where: 'playbook/core/knowledge-base-health.md (Quick Scan)' });
+  }
+  const firstOfMonth = `${t.slice(0, 7)}-01`;
+  if (today.d === 1) due.push({ id: 'full-audit', what: 'Full KB health audit', where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
+  else if (!lastRun(log, 'full-audit', firstOfMonth)) overdue.push({ id: 'full-audit', what: `Monthly full audit not run since ${firstOfMonth}`, where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
+  const lbd = lastBusinessDayOfMonth(today.y, today.m);
+  if (t === lbd) due.push({ id: 'month-end', what: 'Month-end review', where: 'dashboard/processes.md (Time Triggers)' });
+  else if (t > lbd && !lastRun(log, 'month-end', lbd)) overdue.push({ id: 'month-end', what: `Month-end review for ${lbd} not run`, where: 'dashboard/processes.md' });
+  if (ctx.alerts.age === null || ctx.alerts.age > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Linear`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
+  for (const b of ctx.blockers.rows) {
+    if (b.age !== null && b.age > 7) {
+      const id = `blocker-escalation:${b.id}`;
+      if (!log.some(e => e.id === id && e.date >= addDays(t, -7))) due.push({ id, what: `${b.id} aged ${b.age}d: ${b.what.slice(0, 70)}`, where: 'playbook/core/blocker-escalation.md' });
+    }
+  }
+  for (const e of ctx.events.rows) {
+    if (e.daysOut !== null && e.daysOut >= 0 && e.daysOut < 10 && !/complete/i.test(e.prep)) due.push({ id: `event-prep:${e.event.slice(0, 40)}`, what: `${e.event} in ${e.daysOut}d, prep "${e.prep || 'not started'}"`, where: 'playbook/core/event-prep.md' });
+  }
+  if (ctx.raw.length) info.push(`${ctx.raw.length} item(s) in raw/ not compiled — flag, do not auto-compile (playbook/core/compile.md): ${ctx.raw.slice(0, 3).join(', ')}${ctx.raw.length > 3 ? '…' : ''}`);
+  if (ctx.daily.lastDate) { const gap = daysBetween(ctx.daily.lastDate, t); if (gap >= 3) info.push(`No vault/daily note in ${gap} days (last: ${ctx.daily.last}). One is written this session; harold close enforces it.`); }
+  else info.push('No vault/daily notes exist at all.');
+  [...due, ...overdue].forEach(d => { const l = loggedToday(log, d.id, today); d.logged = l.length ? l[l.length - 1].status : null; });
+  return { due, overdue, info };
+}
+
+// ───────────────────────── session state ─────────────────────────
+const SESSIONS_DIR = 'harold/active-sessions';
+const STATE_DIR = 'harold/active-sessions/.state';
+function sessionId(hook) { return (hook && hook.session_id) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || `terminal-${process.ppid}`; }
+function statePath(root, id) { return path.join(root, STATE_DIR, `${id.replace(/[^A-Za-z0-9_-]/g, '_')}.json`); }
+function loadState(root, id) { try { return JSON.parse(readFull(statePath(root, id))); } catch (_) { return null; } }
+function saveState(root, id, st) { const p = statePath(root, id); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(st, null, 2)); }
+const ACTIVITIES = ['research', 'strategy', 'writing', 'coding', 'data', 'comms', 'design', 'ops'];
+function blankSession(task) { const a = {}; ACTIVITIES.forEach(k => a[k] = { status: 'sleeping' }); return { session: true, task, activities: a }; }
+function findSessionFile(root, st) {
+  if (st && st.sessionFile && fs.existsSync(path.join(root, st.sessionFile))) return st.sessionFile;
+  const dir = path.join(root, SESSIONS_DIR);
+  const cands = fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => ({ f, m: fs.statSync(path.join(dir, f)).mtimeMs })).filter(x => !st || x.m >= (st.bootedAtMs || 0) - 60000).sort((a, b) => b.m - a.m);
+  return cands.length ? path.join(SESSIONS_DIR, cands[0].f) : null;
+}
+function archiveStaleSessions(root, nowMs) {
+  const dir = path.join(root, SESSIONS_DIR), arch = path.join(dir, 'archive'); const moved = [];
+  fs.mkdirSync(arch, { recursive: true });
+  for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json'))) {
+    const p = path.join(dir, f); let j; try { j = JSON.parse(readFull(p)); } catch (_) { continue; }
+    const starts = Object.values(j.activities || {}).map(a => a.started ? Date.parse(a.started) : NaN).filter(n => !isNaN(n));
+    const newest = Math.max(fs.statSync(p).mtimeMs, ...starts);
+    if (nowMs - newest > 48 * 3600000) { fs.renameSync(p, path.join(arch, f)); moved.push(f); }
+  }
+  return moved;
+}
+
+// ───────────────────────── check (the contract) ─────────────────────────
+function runCheck(root, today) {
+  const failures = [], warnings = [];
+  for (const rel of CORE) { const r = tryRead(path.join(root, rel)); if (!r.ok) failures.push(`core file unreadable: ${rel} (${r.err})`); }
+  const pb = loadPlaybooks(root);
+  pb.items.filter(i => !i.ok).forEach(i => failures.push(`playbook unreadable: playbook/${i.name} (${i.err})`));
+  if (!pb.items.length) failures.push('no playbooks found in playbook/');
+  if (pb.notIndexed.length) warnings.push(`playbooks not in playbook/README.md index: ${pb.notIndexed.join(', ')}`);
+  // A playbook the index promises and the directory does not have is a broken contract,
+  // not a note. Reading the directory can never notice a file that is gone, so the index
+  // is the manifest; without this the session starts happily with a missing procedure and
+  // nothing says so. Found on 2026-09-24 by testing the documented acceptance test
+  // ("rename a playbook: it should refuse, and name the file") against the real system,
+  // which named the file and then passed anyway.
+  if (pb.indexedMissing.length) failures.push(`playbook listed in playbook/README.md but missing on disk: ${pb.indexedMissing.join(', ')} — restore it, or remove its row from the index`);
+  const lr = loadLearnings(root);
+  lr.errors.forEach(e => failures.push(`learnings.jsonl parse error ${e}`));
+  if (lr.dupes.length) failures.push(`duplicate learning ids: ${lr.dupes.join(', ')} — fix with: bin/harold file learning --repair (renumbers the later copy; never edit the file by hand)`);
+  if (!lr.critical.length) warnings.push('no critical learnings loaded');
+  const pj = loadProjects(root);
+  if (!pj.ok) failures.push(`project map unreadable: harold/projects.md (${pj.err})`);
+  else { const noFolder = pj.projects.filter(p => p.folder && !fs.existsSync(path.join(root, p.folder))); if (noFolder.length) warnings.push(`project map folders missing on disk: ${noFolder.map(p => p.name + ' → ' + p.folder).join('; ')}`); }
+  const al = loadAlerts(root, today); if (!al.updated) warnings.push('alerts.md has no parseable "Last updated" line');
+  const bl = loadBlockers(root, today); if (!bl.rows.length) warnings.push('no active blockers parsed from blockers.md');
+  const ev = loadEvents(root, today);
+  const ctx = { alerts: al, blockers: bl, events: ev, daily: latestDaily(root), raw: rawUncompiled(root) };
+  const triggers = computeTriggers(root, today, ctx);
+  const idx = indexStale(root); if (idx) warnings.push(`search index ${idx} (boot rebuilds it)`);
+  const cm = tryRead(path.join(root, 'CLAUDE.md'));
+  if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
+  return { failures, warnings, playbooks: pb, learnings: lr, projects: pj, ctx, triggers };
+}
+
+
+// ───────────────────────── search index (SQLite FTS5 via bin/harold-index) ─────────────────────────
+function indexStale(root) {
+  const db = path.join(root, 'harold/search.db');
+  if (!fs.existsSync(db)) return 'missing';
+  const dbm = fs.statSync(db).mtimeMs;
+  let newest = 0;
+  for (const d of ['vault', 'harold', 'memory', 'dashboard', 'playbook']) walk(path.join(root, d), p => { if (p.endsWith('.md')) { try { const m = fs.statSync(p).mtimeMs; if (m > newest) newest = m; } catch (_) {} } return false; });
+  return newest > dbm ? 'stale' : null;
+}
+function rebuildIndex(root) {
+  const r = spawnSync('python3', [path.join(root, 'bin/harold-index'), 'build'], { cwd: root, encoding: 'utf8', timeout: 120000 });
+  return r.status === 0 ? r.stdout.trim() : `index build failed: ${(r.stderr || r.error && r.error.message || '').trim().slice(0, 200)}`;
+}
+function cmdSearch(root, args, opts) {
+  if (!args.length) { console.error('usage: harold search <query>   (FTS5: words, "phrases", prefix*, AND/OR/NOT)'); return 2; }
+  if (indexStale(root)) rebuildIndex(root);
+  const r = spawnSync('python3', [path.join(root, 'bin/harold-index'), 'search', ...(opts.json ? ['--json'] : []), args.join(' ')], { cwd: root, encoding: 'utf8', timeout: 60000 });
+  process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); return r.status == null ? 2 : r.status;
+}
+
+
+// ───────────────────────── Linear (task layer) via bin/harold-linear ─────────────────────────
+function linearSummary(root) {
+  const r = spawnSync('node', [path.join(root, 'bin/harold-linear'), 'tasks', '--json'], { cwd: root, encoding: 'utf8', timeout: 25000 });
+  if (r.status === 0) { try { const j = JSON.parse(r.stdout); return { live: true, ...j }; } catch (_) {} }
+  const snap = path.join(root, 'harold/linear-snapshot.md');
+  if (fs.existsSync(snap)) return { live: false, ageH: Math.round((Date.now() - fs.statSync(snap).mtimeMs) / 3600000), text: readFull(snap) };
+  return { live: false, none: true, err: (r.stderr || '').trim().slice(0, 160) };
+}
+
+// ───────────────────────── commands ─────────────────────────
+function cmdCheck(root, today, opts) {
+  const c = runCheck(root, today);
+  const okPb = c.playbooks.items.filter(i => i.ok).length;
+  const L = [];
+  L.push(`harold check — ${today.iso} ${today.weekday} ${today.hm} ${TZ}`);
+  L.push(`root: ${root}`);
+  L.push(`playbooks: ${okPb}/${c.playbooks.items.length} readable`);
+  L.push(`learnings: ${c.learnings.rows.length} loaded, ${c.learnings.critical.length} critical`);
+  L.push(`projects: ${c.projects.ok ? c.projects.projects.length : 0} in map (${c.projects.ok ? c.projects.projects.filter(p => p.status === 'active').length : 0} active)`);
+  L.push(`alerts: last rebuilt ${c.ctx.alerts.updated || '?'} (${c.ctx.alerts.age ?? '?'}d)  blockers: ${c.ctx.blockers.rows.length} active  events parsed: ${c.ctx.events.rows.length}  daily notes: ${c.ctx.daily.count} (last ${c.ctx.daily.lastDate || 'none'})`);
+  L.push(`scheduled: ${c.triggers.due.length} due today, ${c.triggers.overdue.length} overdue`);
+  c.warnings.forEach(w => L.push(`WARN  ${w}`));
+  c.failures.forEach(f => L.push(`FAIL  ${f}`));
+  L.push(c.failures.length ? `RESULT: FAIL (${c.failures.length})` : 'RESULT: PASS');
+  if (opts.json) console.log(JSON.stringify({ ok: !c.failures.length, root, today, ...c }, null, 1)); else console.log(L.join('\n'));
+  return c.failures.length ? 1 : 0;
+}
+
+function cmdBoot(root, today, opts, hook) {
+  const c = runCheck(root, today);
+  if (c.failures.length) {
+    console.log(`⛔ HAROLD BOOT REFUSED — ${today.iso} ${today.weekday}\nroot: ${root}\n` + c.failures.map(f => `  FAIL ${f}`).join('\n') + `\n\nThe contract cannot be met. Do not improvise from memory. Fix the failures above (iCloud eviction: run\n  find "${root}" -path '*/node_modules' -prune -o -type f -print0 | xargs -0 -n50 head -c1 >/dev/null 2>&1\nthen retry) and tell the operator in your first message that boot refused and why.`);
+    return 2;
+  }
+  const id = sessionId(hook);
+  let st = loadState(root, id);
+  const nowMs = Date.now();
+  let resumed = false;
+  // Two harnesses can both wire boot (project hooks + a plugin). A second boot within two minutes
+  // prints one line instead of the whole context again: idempotent, no guessing which harness fired.
+  if (st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000 && !opts.full) {
+    console.log(`Harold already booted ${Math.round((nowMs - st.bootedAtMs) / 1000)}s ago for this session (${st.harness}); context above still applies. Session file: ${path.join(root, st.sessionFile)}`);
+    return 0;
+  }
+  if (st && st.sessionFile && fs.existsSync(path.join(root, st.sessionFile)) && nowMs - st.bootedAtMs < 12 * 3600000) resumed = true;
+  else {
+    const slug = `session-${today.iso}-${today.hm.replace(':', '')}-${id.slice(-6).replace(/[^A-Za-z0-9]/g, '')}`;
+    const rel = path.join(SESSIONS_DIR, `${slug}.json`);
+    fs.mkdirSync(path.join(root, SESSIONS_DIR), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), JSON.stringify(blankSession('Booting — set this to what the session is doing'), null, 2));
+    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: (hook && hook.hook_event_name) ? 'claude-code-hook' : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
+    saveState(root, id, st);
+  }
+  const archived = archiveStaleSessions(root, nowMs);
+  const idxState = indexStale(root); const idxNote = idxState ? rebuildIndex(root) : 'search index current';
+
+  const L = [];
+  const P = rel => path.join(root, rel);
+  L.push(`# HAROLD BOOTED — ${today.weekday} ${today.iso} ${today.hm} ${TZ}`);
+  L.push(`Workspace root: ${root}   (use absolute paths under this root for every read and write)`);
+  L.push(`Harness: ${st.harness}${resumed ? '   (resumed existing session state)' : ''}`);
+  L.push(`Session file: ${P(st.sessionFile)}   ← set "task" and the working activity on your first tool call; all activities back to "sleeping" on your last. Rename it to a descriptive slug if you like; harold close will find it.`);
+  if (archived.length) L.push(`Archived stale session files (>48h): ${archived.join(', ')}`);
+  L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown; ${idxNote}; replaces Obsidian)`);
+  L.push('');
+  L.push('## Constitution and core files (all verified readable this boot)');
+  CORE.forEach(rel => L.push(`- ${P(rel)}`));
+  L.push('Read memory/CLAUDE.md, dashboard/index.md and dashboard/status.md now, per AGENTS.md. The Context Engine (dashboard/processes.md) is always on: playbooks fire on what the operator says, never on commands.');
+  L.push('');
+  L.push(`## Playbooks — ${c.playbooks.items.length}/${c.playbooks.items.length} readable at ${P('playbook')}/`);
+  c.playbooks.items.forEach(i => L.push(`- ${i.name} (${i.bytes}b)${i.purpose ? ' — ' + i.purpose : ''}`));
+  L.push('');
+  L.push(`## Critical learnings (${c.learnings.critical.length} of ${c.learnings.rows.length}; all binding — full file: ${P('harold/learnings.jsonl')})`);
+  c.learnings.critical.forEach(l => L.push(`- ${l.id} [${l.project}/${l.category}] ${l.lesson}`));
+  L.push('');
+  const act = c.projects.projects.filter(p => p.status === 'active');
+  L.push(`## Project map — ${c.projects.projects.length} entries, ${act.length} active (${P('harold/projects.md')}; resolve folders with: ${CLI(root)} where <topic>)`);
+  c.projects.projects.forEach(p => L.push(`- ${p.name} [${p.status}] → ${p.folder}${p.aliasList.length ? '  aliases: ' + p.aliasList.slice(0, 5).join(', ') : ''}${p.aliasesTodo ? '  (ALIASES: TODO — learn them from how the operator talks, never ask)' : ''}`));
+  L.push('');
+  L.push(`## Active blockers (${c.ctx.blockers.rows.length}) — ${P('harold/blockers.md')}`);
+  c.ctx.blockers.rows.forEach(b => L.push(`- ${b.id} (${b.age ?? '?'}d, raised ${b.raised || b.raisedRaw}) ${b.what} — waiting on: ${b.waitingOn}`));
+  L.push('');
+  L.push(`## Alerts — last rebuilt ${c.ctx.alerts.updated || 'unknown'} (${c.ctx.alerts.age ?? '?'} days ago) — ${P('harold/alerts.md')}`);
+  if (c.ctx.alerts.current) L.push(c.ctx.alerts.current.split('\n').slice(0, 40).join('\n'));
+  L.push('');
+  const lin = linearSummary(root);
+  L.push(`## Linear (task layer, via bin/harold-linear) — ${lin.live ? `live, ${lin.total} open` : lin.none ? 'UNAVAILABLE: ' + lin.err : `no API key here; committed snapshot ${lin.ageH}h old (${P('harold/linear-snapshot.md')})`}`);
+  if (lin.live) {
+    const row = i => `- ${i.identifier} [${i.state.name}${i.dueDate ? ', due ' + i.dueDate : ''}] ${i.title}${i.project ? ' (' + i.project.name + ')' : ''}`;
+    L.push(`Overdue ${lin.overdue.length} · due today ${lin.dueToday.length} · due this week ${lin.dueWeek.length} · in progress ${lin.inProg.length}. Full table: ${P('harold/linear-snapshot.md')}. Update state with: ${path.join(root, 'bin/harold-linear')} done|start <id>`);
+    lin.overdue.slice(0, 8).forEach(i => L.push(row(i))); lin.dueToday.forEach(i => L.push(row(i)));
+  } else if (lin.text) L.push(lin.text.split('\n').filter(l => /^\| [A-Z][A-Z0-9]*-\d|^### /.test(l)).slice(0, 14).join('\n'));
+  L.push('');
+  L.push('## Scheduled work (AGENTS.md → Scheduled Triggers). Due items run THIS session, then are recorded with:');
+  L.push(`   ${CLI(root)} file trigger <id> ran|skipped|deferred "<reason>"   — harold close blocks the turn until every due item is recorded.`);
+  if (!c.triggers.due.length && !c.triggers.overdue.length) L.push('- nothing due, nothing overdue');
+  c.triggers.due.forEach(d => L.push(`- DUE      ${d.id}: ${d.what}  [${d.where}]${d.logged ? '  (recorded today: ' + d.logged + ')' : ''}`));
+  c.triggers.overdue.forEach(d => L.push(`- OVERDUE  ${d.id}: ${d.what}  [${d.where}]${d.logged ? '  (recorded today: ' + d.logged + ')' : ''}  ← say this out loud to the operator`));
+  c.triggers.info.forEach(i => L.push(`- NOTE     ${i}`));
+  if (c.warnings.length) { L.push(''); L.push('## Warnings'); c.warnings.forEach(w => L.push(`- ${w}`)); }
+  L.push('');
+  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every external contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl), with the internal-team gate respected (type: team → never). harold close verifies these and commits + pushes the repo.`);
+  if (opts.full) {
+    L.push('\n\n# FULL CONTEXT DUMP (--full)\n');
+    ['AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
+    c.playbooks.items.forEach(i => { L.push(`\n\n===== playbook/${i.name} =====\n`); L.push(readFull(P('playbook/' + i.name))); });
+    L.push('\n\n===== harold/learnings.jsonl =====\n'); L.push(readFull(P('harold/learnings.jsonl')));
+  }
+  console.log(L.join('\n'));
+  return 0;
+}
+
+const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/];
+function secretScan(root, files) {
+  const hits = [];
+  for (const f of files) {
+    const p = path.join(root, f); let t; try { if (!fs.existsSync(p) || fs.statSync(p).size > 5e6) continue; t = readFull(p); } catch (_) { continue; }
+    if (/\0/.test(t.slice(0, 4000))) continue;
+    for (const re of SECRET_PATTERNS) if (re.test(t)) { hits.push(`${f}: matches ${re.source.slice(0, 30)}`); break; }
+  }
+  return hits;
+}
+function git(root, args, opts = {}) { const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: opts.timeout || 120000 }); return { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() }; }
+// Which contacts the CRM itself recorded a write for today. Returns a Set of lowercased names.
+// Empty set when the CRM is unreachable or unconfigured, which falls the check back to the queue.
+function crmTouchedToday(root, today) {
+  const out = new Set();
+  const env = path.join(os.homedir(), '.harold/env');
+  let url = process.env.SUPABASE_URL || '', key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  try {
+    const t = fs.readFileSync(env, 'utf8');
+    url = url || (t.match(/SUPABASE_URL\s*=\s*"?([^"\n]+)"?/) || [])[1] || '';
+    key = key || (t.match(/SUPABASE_SERVICE_ROLE_KEY\s*=\s*"?([^"\n]+)"?/) || [])[1] || '';
+  } catch (_) {}
+  if (!url || !key) return out;
+  const q = `${url.replace(/\/$/, '')}/rest/v1/contacts?select=name&updated_at=gte.${today.iso}T00:00:00`;
+  const r = spawnSync('curl', ['-s', '-m', '8', q, '-H', `apikey: ${key}`, '-H', `Authorization: Bearer ${key}`], { encoding: 'utf8' });
+  if (r.status !== 0 || !r.stdout) return out;
+  try { JSON.parse(r.stdout).forEach(c => c && c.name && out.add(String(c.name).toLowerCase())); } catch (_) {}
+  return out;
+}
+
+// Where knowledge lives: the standard directories plus every project folder in harold/projects.md.
+// Derived from the project map, never hard-coded, so a new project is covered the moment it is mapped.
+function knowledgeDirs(root) {
+  const std = ['vault', 'harold', 'memory', 'dashboard', 'playbook', 'raw'];
+  const folders = loadProjects(root).projects.map(p => (p.folder || '').trim().replace(/\/+$/, ''))
+    .filter(f => f && f !== '.' && !path.isAbsolute(f) && !f.split('/').includes('..'));
+  return [...new Set([...std, ...folders])];
+}
+
+function changedSince(root, sinceMs, dirs) {
+  const out = [];
+  for (const d of dirs) walk(path.join(root, d), p => { try { return fs.statSync(p).mtimeMs >= sinceMs && !/\.DS_Store$|\/\.state\//.test(p); } catch (_) { return false; } }, out);
+  return out.map(p => path.relative(root, p));
+}
+
+function cmdClose(root, today, opts, hook) {
+  const id = sessionId(hook);
+  let st = loadState(root, id);
+  const final = !!opts.final;
+  const stopHookActive = !!(hook && hook.stop_hook_active);
+  const problems = [], notes = [];
+  const nowMs = Date.now();
+  if (st && st.lastCloseOkMs && nowMs - st.lastCloseOkMs < 20000 && !final) {
+    if (hook && hook.hook_event_name) console.log('{}'); else console.log('harold close: already closed cleanly seconds ago, nothing to do');
+    return 0;
+  }
+  const bootMs = st ? st.bootedAtMs : nowMs - 6 * 3600000;
+  // A session left open for days would otherwise measure change since Monday and demand a Wednesday
+  // note for Monday's work. Never look back past local midnight. Same-day sessions are unaffected.
+  const sinceMs = Math.max(bootMs, startOfLocalDayMs());
+  if (!st) notes.push('no boot state for this session (boot did not run in this harness) — checks use a 6h window');
+
+  // 1. session file → sleeping (final: session=false). Deterministic, never a block.
+  const sf = findSessionFile(root, st);
+  if (sf) {
+    try { const j = JSON.parse(readFull(path.join(root, sf))); Object.keys(j.activities || {}).forEach(k => j.activities[k] = { status: 'sleeping' }); if (final) j.session = false; fs.writeFileSync(path.join(root, sf), JSON.stringify(j, null, 2)); notes.push(`session file ${final ? 'closed' : 'set to sleeping'}: ${sf}`); }
+    catch (e) { problems.push(`session file unreadable: ${sf} (${e.message})`); }
+  } else problems.push(`no session file found in ${SESSIONS_DIR}/ — register one (the constitution says every session does)`);
+
+  // 2. knowledge changed this session → today's daily note must exist and be fresh
+  const kbDirs = knowledgeDirs(root);
+  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && !f.endsWith('search.db'));
+  const dailyDir = path.join(root, 'vault/daily');
+  const todaysNotes = fs.existsSync(dailyDir) ? fs.readdirSync(dailyDir).filter(f => f.startsWith(today.iso)) : [];
+  const freshNote = todaysNotes.some(f => fs.statSync(path.join(dailyDir, f)).mtimeMs >= sinceMs);
+  if (changed.length && !freshNote) problems.push(`${changed.length} knowledge file(s) changed this session but no vault/daily note for ${today.iso} was written or updated today. Write ${root}/vault/daily/${today.iso}-<descriptive-slug>.md (what was done, contacts touched, files changed, CRM actions, pending items) or append to an existing one. Changed: ${changed.slice(0, 8).join(', ')}${changed.length > 8 ? ` (+${changed.length - 8})` : ''}`);
+  if (final && changed.length && !todaysNotes.length) problems.push(`final close: knowledge changed this session, a vault/daily note for ${today.iso} is required`);
+
+  // 3. contacts filed: a vault/people card touched this session must carry today's last_updated and a
+  //    crm-queue entry (CRM unreachable) — unless type: team (internal-team gate; `category: team` on older cards counts too).
+  // A card counts as touched when substance changed: new file, or any changed line that is not a [[link]] bullet,
+  // a ## Related header, or blank. Cross-link maintenance is structural and never a CRM touchpoint.
+  const substantive = f => {
+    const d = git(root, ['diff', '-U0', 'HEAD', '--', f]);
+    if (d.code !== 0) return true;
+    const tracked = git(root, ['ls-files', '--error-unmatch', f]).code === 0;
+    if (!tracked) return true;
+    const lines = d.out.split('\n').filter(l => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l)).map(l => l.slice(1).trim());
+    return lines.some(l => l && !/^- \[\[/.test(l) && !/^## Related/.test(l) && !/^last_updated:/.test(l));
+  };
+  const peopleTouched = changed.filter(f => f.startsWith('vault/people/') && f.endsWith('.md') && substantive(f));
+  const queue = readJsonl(path.join(root, 'harold/crm-queue.jsonl')).rows.filter(q => (q.date || '').startsWith(today.iso));
+  // A contact counts as filed when the CRM itself shows a write for it today. The queue remains a
+  // valid answer for when the CRM is down or not configured.
+  const crmWritten = crmTouchedToday(root, today);
+  for (const f of peopleTouched) {
+    const fm = frontmatter(readFull(path.join(root, f)));
+    const name = path.basename(f, '.md');
+    if ((fm.type || fm.category || '').toLowerCase() === 'team') { notes.push(`${name}: type team — internal-team gate: records are kept current, interactions are never logged`); continue; }
+    if ((fm.crm || '').toLowerCase() === 'none') { notes.push(`${name}: crm: none — this card is deliberately out of the CRM`); continue; }
+    const filed = crmWritten.has(name.toLowerCase()) || queue.some(q => (q.contact || '').toLowerCase() === name.toLowerCase());
+    const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
+    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: use harold_upsert_contact (or harold_log_interaction for an external touchpoint). If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
+  }
+
+  // 4. scheduled work recorded
+  const c = runCheck(root, today);
+  const needs = [...c.triggers.due, ...c.triggers.overdue];
+  const log = triggerLog(root);
+  const unrecorded = needs.filter(d => { const l = loggedToday(log, d.id, today); if (!l.length) return true; const s = l[l.length - 1].status; return !(s === 'ran' || s === 'skipped' || (!final && s === 'deferred')); });
+  if (unrecorded.length) problems.push(`scheduled work due today not recorded: ${unrecorded.map(u => u.id).join(', ')}. Run each per its playbook, then: ${CLI(root)} file trigger <id> ran|skipped${final ? '' : '|deferred'} "<reason>"${final ? ' (deferred is not accepted at final close)' : ''}`);
+
+  // 5. final: maintenance line into today's daily note — the deterministic record of what was due and what ran
+  if (final && !problems.length && todaysNotes.length) {
+    const note = path.join(dailyDir, todaysNotes.sort().pop());
+    const line = `\n\n**Maintenance (${today.iso}):** ` + (needs.length ? needs.map(d => { const s = loggedToday(log, d.id, today).pop(); return `${d.id} → ${s ? s.status + (s.reason ? ' (' + s.reason + ')' : '') : 'NOT RECORDED'}`; }).join('; ') : 'no scheduled triggers due') + '. Recorded by harold close.\n';
+    if (!readFull(note).includes(`**Maintenance (${today.iso}):**`)) fs.appendFileSync(note, line);
+    notes.push(`maintenance line appended to ${path.relative(root, note)}`);
+  }
+
+  // 6. commit + push. The repo is the authoritative copy; unpushed work is invisible work.
+  let gitNote = '';
+  if (!problems.length || final) {
+    const add = git(root, ['add', '-A']);
+    if (add.code !== 0) gitNote = `git add failed: ${add.err.slice(0, 200)}`;
+    else {
+      const staged = git(root, ['diff', '--cached', '--name-only']).out.split('\n').filter(Boolean);
+      let refused = false;
+      if (staged.length) {
+        const hits = secretScan(root, staged);
+        if (hits.length) { git(root, ['reset', '-q']); refused = true; problems.push(`refusing to commit: possible secrets in ${hits.join('; ')} — move credentials out of the repo (~/.harold/env) or add the file to .gitignore`); }
+        else {
+          const label = sf ? path.basename(sf, '.json') : id;
+          const cm = git(root, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+          if (cm.code !== 0) gitNote = `commit failed: ${cm.err.slice(0, 200)}`;
+        }
+      }
+      if (!gitNote && !refused) {
+        const ahead = git(root, ['rev-list', '--count', '@{u}..HEAD']).out;
+        if (ahead && ahead !== '0') { const ps = git(root, ['push', '-q'], { timeout: 180000 }); gitNote = ps.code === 0 ? `pushed ${ahead} commit(s)` : `PUSH FAILED (${ahead} commit(s) unpushed): ${ps.err.split('\n')[0].slice(0, 160)} — invisible until pushed; retry: git -C "${root}" push`; }
+        else gitNote = 'nothing to push';
+      }
+    }
+  }
+  const archived = archiveStaleSessions(root, nowMs);
+
+  st = st || { id, bootedAtMs: bootMs, blocks: 0 };
+  const isHook = !!(hook && hook.hook_event_name);
+  if (problems.length) {
+    st.blocks = (st.blocks || 0) + 1; saveState(root, id, st);
+    const reason = `⛔ HAROLD CLOSE: filing incomplete (attempt ${st.blocks}). Fix these, then finish:\n` + problems.map(p => `  • ${p}`).join('\n') + (gitNote ? `\n  git: ${gitNote}` : '');
+    if (isHook) {
+      if (stopHookActive && st.blocks > 3) { console.log(JSON.stringify({ systemMessage: `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}` })); return 0; }
+      console.log(JSON.stringify({ decision: 'block', reason })); return 0;
+    }
+    console.error(reason); return 2;
+  }
+  st.blocks = 0; st.lastCloseOkMs = Date.now(); if (final) { try { fs.unlinkSync(statePath(root, id)); } catch (_) {} } else saveState(root, id, st);
+  const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
+  const pushFailed = gitNote.startsWith('PUSH FAILED');
+  if (isHook) { console.log(JSON.stringify(pushFailed ? { systemMessage: summary } : {})); return 0; }
+  console.log(summary); return pushFailed ? 1 : 0;
+}
+
+function cmdFile(root, today, args, opts = {}) {
+  const kind = args[0]; const now = new Date().toISOString();
+  if (kind === 'trigger') {
+    const [id, status, ...rest] = args.slice(1);
+    if (!id || !['ran', 'skipped', 'deferred'].includes(status)) { console.error('usage: harold file trigger <id> ran|skipped|deferred "<reason>"'); return 2; }
+    if (status !== 'ran' && !rest.join(' ').trim()) { console.error(`a reason is required when a trigger is ${status} — if one was due and skipped, write why`); return 2; }
+    appendLine(path.join(root, 'harold/trigger-log.jsonl'), { id, status, reason: rest.join(' ').trim() || undefined, date: today.iso, ts: now });
+    console.log(`recorded ${id} → ${status}`); return 0;
+  }
+  if (kind === 'daily') {
+    const [slug, ...rest] = args.slice(1); const text = rest.join(' ');
+    if (!slug || !text) { console.error('usage: harold file daily <slug> "<text>"'); return 2; }
+    const p = path.join(root, 'vault/daily', `${today.iso}-${slug.replace(/[^a-z0-9-]/gi, '-').toLowerCase()}.md`);
+    if (!fs.existsSync(p)) fs.writeFileSync(p, `---\ndate: ${today.iso}\ntags: [daily]\nsession: ${slug}\n---\n\n# ${today.iso} — ${slug}\n\n`);
+    fs.appendFileSync(p, text.endsWith('\n') ? text : text + '\n');
+    console.log(path.relative(root, p)); return 0;
+  }
+  if (kind === 'crm') {
+    let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error('usage: harold file crm \'{"contact":"Name","action":"log_interaction|upsert_contact|crm_task","payload":{...}}\''); return 2; }
+    if (!obj.contact || !obj.action) { console.error('crm entry needs "contact" and "action"'); return 2; }
+    const card = path.join(root, 'vault/people', `${obj.contact}.md`);
+    if (fs.existsSync(card) && (() => { const fm = frontmatter(readFull(card)); return (fm.type || fm.category || '').toLowerCase() === 'team'; })()) { console.error(`REFUSED: ${obj.contact} is type: team. Internal team interactions are never logged in the CRM.`); return 3; }
+    appendLine(path.join(root, 'harold/crm-queue.jsonl'), { ...obj, date: today.iso, ts: now, replayed: false });
+    console.log(`queued ${obj.action} for ${obj.contact} (CRM unreachable — replays when reconnected)`); return 0;
+  }
+  if (kind === 'learning') {
+    if (opts.repair) {
+      // Renumber duplicates rather than making a human pick a number under pressure.
+      // The first entry with a given id keeps it; later copies move to the end of the
+      // sequence, so ids already cited in the prose keep pointing at what they meant.
+      const target = path.join(root, 'harold/learnings.jsonl');
+      const fixed = withLock(target, () => {
+        const rows = readJsonl(target).rows;
+        let max = Math.max(0, ...rows.map(r => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
+        const seen = new Set(); const changes = [];
+        for (const r of rows) {
+          if (!seen.has(r.id)) { seen.add(r.id); continue; }
+          const from = r.id; r.id = `L${String(++max).padStart(3, '0')}`;
+          seen.add(r.id); changes.push(`${from} -> ${r.id}`);
+        }
+        if (changes.length) fs.writeFileSync(target, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+        return changes;
+      });
+      if (!fixed.length) { console.log('no duplicate learning ids'); return 0; }
+      fixed.forEach(c => console.log(`renumbered ${c}`));
+      return 0;
+    }
+    let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error('usage: harold file learning \'{"severity":"critical|warning|info","project":"global","category":"process","lesson":"...","source":"user-correction"}\''); return 2; }
+    if (!obj.lesson) { console.error('lesson text required'); return 2; }
+    const target = path.join(root, 'harold/learnings.jsonl');
+    // The id is read and assigned inside the lock. Reading it outside, as this used to,
+    // let two sessions claim the same number and left the file unbootable.
+    const entry = withLock(target, () => {
+      const rows = readJsonl(target).rows;
+      const max = Math.max(0, ...rows.map(r => parseInt(String(r.id).replace(/\D/g, ''), 10) || 0));
+      const e = { id: `L${String(max + 1).padStart(3, '0')}`, date: today.iso, severity: obj.severity || 'warning', project: obj.project || 'global', category: obj.category || 'process', lesson: obj.lesson, source: obj.source || 'user-correction' };
+      appendLine(target, e);
+      return e;
+    });
+    console.log(`recorded ${entry.id}`); return 0;
+  }
+  console.error('usage: harold file trigger|daily|crm|learning ...'); return 2;
+}
+
+function cmdWhere(root, args) {
+  const q = args.join(' ').trim().toLowerCase();
+  if (!q) { console.error('usage: harold where <topic|alias|keyword>'); return 2; }
+  const { projects } = loadProjects(root);
+  const score = p => {
+    let s = 0; const name = p.name.toLowerCase();
+    if (name === q || p.aliasList.some(a => a.toLowerCase() === q)) s += 100;
+    if (name.includes(q) || q.includes(name)) s += 40;
+    p.aliasList.forEach(a => { const al = a.toLowerCase(); if (al && (q.includes(al) || al.includes(q))) s += 30; });
+    p.keywordList.forEach(k => { const kl = k.toLowerCase(); if (kl && (q.includes(kl) || kl.includes(q))) s += 10; });
+    const f = (p.folder || '').toLowerCase(); if (f && (f.includes(q.replace(/\s+/g, '_')) || f.includes(q.replace(/\s+/g, '-')))) s += 25;
+    if (p.status === 'archived') s -= 15;
+    return s;
+  };
+  const ranked = projects.map(p => ({ p, s: score(p) })).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+  if (!ranked.length) { console.log(`no project matches "${q}" — if this is a new project, run playbook/core/project-intake.md: create the folder, add the harold/projects.md entry, create the vault card, cross-link.`); return 1; }
+  const top = ranked[0].p;
+  console.log(`${top.name} [${top.status}]\nfolder: ${path.join(root, top.folder || '')}`);
+  if (top.routes) console.log('routes:\n' + top.routes.split(';').map(r => '  ' + r.trim()).join('\n'));
+  if (top.card) console.log(`card: ${path.join(root, top.card)}`);
+  if (top.people) console.log(`people: ${top.people}`);
+  if (top.notes) console.log(`notes: ${top.notes}`);
+  if (ranked.length > 1) console.log(`also: ${ranked.slice(1, 4).map(x => x.p.name).join(', ')}`);
+  return 0;
+}
+
+// ───────────────────────── main ─────────────────────────
+function main() {
+  const argv = process.argv.slice(2);
+  const cmd = argv[0];
+  const opts = { json: argv.includes('--json'), full: argv.includes('--full'), final: argv.includes('--final'), repair: argv.includes('--repair') };
+  const args = argv.slice(1).filter(a => !a.startsWith('--'));
+  const hook = (cmd === 'boot' || cmd === 'close') ? readStdinJson() : null;
+  const root = findRoot();
+  const today = todayParts();
+  if (!root) {
+    const msg = `⛔ HAROLD: cannot resolve the workspace root from ${process.cwd()} (need a directory containing AGENTS.md, playbook/, harold/). Set HAROLD_ROOT or invoke bin/harold by its own path.`;
+    if (cmd === 'close' && hook) { console.log(JSON.stringify({ systemMessage: msg })); process.exit(0); }
+    console.error(msg); process.exit(2);
+  }
+  let code = 0;
+  switch (cmd) {
+    case 'boot': code = cmdBoot(root, today, opts, hook); break;
+    case 'check': code = cmdCheck(root, today, opts); break;
+    case 'close': code = cmdClose(root, today, opts, hook); break;
+    case 'file': code = cmdFile(root, today, args, opts); break;
+    case 'where': code = cmdWhere(root, args); break;
+    case 'search': code = cmdSearch(root, args, opts); break;
+    case 'index': console.log(rebuildIndex(root)); break;
+    case 'root': console.log(root); break;
+    default:
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n  file trigger|daily|crm|learning ...\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      code = cmd ? 2 : 0;
+  }
+  process.exit(code);
+}
+main();

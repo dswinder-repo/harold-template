@@ -1,0 +1,17 @@
+{
+  "name": "harold-mcp",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Harold MCP server: CRM (Supabase) tools, the alerts engine, and atomic writes to the harold/ markdown files",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@supabase/supabase-js": "^2.96.0",
+    "zod": "^3.23.8"
+  }
+}

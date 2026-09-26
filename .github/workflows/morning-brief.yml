@@ -1,0 +1,90 @@
+name: Harold morning brief (cloud, optional)
+
+# OPTIONAL. Writes a DRAFT of Steps 1–2 of playbook/core/morning-brief.md to harold/briefs/YYYY-MM-DD.md
+# before you wake, on GitHub's machines rather than your laptop, and commits it. Nothing reads that
+# file automatically and nothing sends it to you: open it yourself, or ask Harold for it when you say
+# good morning. Step 3 needs you present, so it never runs here.
+#
+# To enable:
+#   1. Add ONE repository secret (Settings → Secrets and variables → Actions):
+#        CLAUDE_CODE_OAUTH_TOKEN  (run `claude setup-token`; uses your Claude subscription), or
+#        ANTHROPIC_API_KEY        (pay-as-you-go API key)
+#   2. Set HAROLD_TZ below to your IANA time zone and adjust the cron (it is in UTC).
+#   3. Run it once by hand: Actions → "Harold morning brief" → Run workflow (dry_run=true first).
+# Until a secret exists, the "Require model credentials" step fails with a clear message.
+on:
+  schedule:
+    - cron: '30 10 * * 1-5'     # 10:30 UTC on weekdays. Change to suit [YOUR TIMEZONE].
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Contract check + context only, no model call"
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency: morning-brief
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAROLD_TZ: UTC               # e.g. America/New_York, Europe/London
+      HAROLD_SESSION_ID: github-actions-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+
+      - name: Contract check (refuses loudly if any playbook or core file is unreadable)
+        run: bin/harold check
+
+      - name: Boot — load the full context for the model
+        run: |
+          bin/harold boot --full > /tmp/harold-context.md
+          wc -c /tmp/harold-context.md
+          echo "DATE=$(TZ=$HAROLD_TZ date +%Y-%m-%d)" >> "$GITHUB_ENV"
+
+      - name: Require model credentials
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          APIKEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$OAUTH" ] && [ -z "$APIKEY" ]; then
+            echo "::error::No model credential. Add repo secret CLAUDE_CODE_OAUTH_TOKEN (from 'claude setup-token', uses your Claude subscription) or ANTHROPIC_API_KEY. Until then the cloud brief cannot run. Everything else in this job passed."
+            exit 1
+          fi
+
+      - name: Run the brief (morning-brief.md steps 1–2, analyst.md standard)
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+          claude -p "$(cat harold/brief-prompt.md)" \
+            --output-format text \
+            --max-turns 60 \
+            --permission-mode acceptEdits \
+            --allowedTools "Read,Glob,Grep,Write,Edit,WebSearch,WebFetch,Bash(bin/harold *),Bash(cat *),Bash(date *)" \
+            --strict-mcp-config --mcp-config '{"mcpServers":{}}' > /tmp/brief-run.log 2>&1 || { tail -40 /tmp/brief-run.log; echo "::error::brief run failed"; exit 1; }
+          test -s "harold/briefs/$DATE.md" || { tail -40 /tmp/brief-run.log; echo "::error::brief file harold/briefs/$DATE.md was not written"; exit 1; }
+          echo "brief written: $(wc -c < harold/briefs/$DATE.md) bytes"
+
+      - name: Record the run and push
+        if: always()
+        run: |
+          git config user.name "Harold (cloud brief)"
+          git config user.email "harold-cloud-brief@users.noreply.github.com"
+          STATUS="${{ job.status }}"
+          bin/harold file trigger cloud-brief ran "github run ${{ github.run_id }} status=$STATUS" || true
+          for f in harold/briefs harold/trigger-log.jsonl harold/alerts.md harold/linear-snapshot.md; do [ -e "$f" ] && git add -- "$f"; done
+          if ! git diff --cached --quiet; then
+            git commit -q -m "chore(brief): cloud morning brief $DATE ($STATUS)" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+            git pull -q --rebase origin "${{ github.ref_name }}" || true
+            git push -q
+          fi

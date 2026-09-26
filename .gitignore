@@ -1,8 +1,34 @@
+# ── OS / editors ─────────────────────────────────────────
 .DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ── Dependencies / build ─────────────────────────────────
 node_modules/
-.env
-.venv/
-dist/
 __pycache__/
 *.pyc
+.venv/
+venv/
+dist/
+build/
+
+# ── Secrets: never in the repo. They live in ~/.harold/env ──
+.env
+.env.*
+*.env
+.mcp.json
+*.key
+*.pem
+**/credentials.json
+**/service-account*.json
+
+# ── Harold runtime state (rebuilt or per-machine) ────────
+harold/search.db*
 harold/active-sessions/*.json
+harold/active-sessions/.state/
+*.lock/
+.claude/settings.local.json
+
+# ── Obsidian app state (optional viewer; may hold API keys) ──
+vault/.obsidian/

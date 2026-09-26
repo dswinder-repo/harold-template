@@ -1,0 +1,14 @@
+#!/bin/bash
+# Launch tools/harold-mcp with credentials from ~/.harold/env (never from the repo).
+# ~/.harold/env holds lines like:
+#   export SUPABASE_URL="https://<your-project-ref>.supabase.co"
+#   export SUPABASE_SERVICE_ROLE_KEY="<service_role key>"
+# bin/harold-setup-crm writes them for you and tests the connection.
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+[ -f "$HOME/.harold/env" ] && set -a && . "$HOME/.harold/env" && set +a
+export HAROLD_BASE="$ROOT"
+if [ ! -d "$ROOT/tools/harold-mcp/node_modules" ]; then
+  echo "harold-mcp: dependencies not installed. Run: (cd \"$ROOT/tools/harold-mcp\" && npm install)" >&2
+  exit 1
+fi
+exec node "$ROOT/tools/harold-mcp/server.js" "$@"

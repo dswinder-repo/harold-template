@@ -15,6 +15,10 @@
  *   node serve.js --sessions /custom/path/to/active-sessions
  *
  * Then open http://localhost:3210 in your browser.
+ *
+ * Local-only by design: it listens on 127.0.0.1 (override with HOST=...) and sends no CORS
+ * headers, because /api/preview-file can read files in your workspace. Do not expose the port.
+ * Zero dependencies (Node 18+).
  */
 
 const http = require('http');
@@ -22,10 +26,12 @@ const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
 const os = require('os');
+const { exec } = require('child_process');
 
 // --- Config ---
 const args = process.argv.slice(2);
 const PORT = getArg('--port', 3210);
+const HOST = process.env.HOST || '127.0.0.1';
 const SESSIONS_DIR = getArg('--sessions',
   path.resolve(__dirname, '..', '..', 'harold', 'active-sessions')
 );
@@ -61,8 +67,54 @@ const server = http.createServer((req, res) => {
   if (req.url === '/api/sessions') {
     return serveSessions(req, res);
   }
+  // History endpoints
+  if (req.method === 'POST' && req.url === '/api/history') {
+    return handleHistoryPost(req, res);
+  }
+  if (req.method === 'GET' && req.url === '/api/history') {
+    return handleHistoryGet(req, res);
+  }
+  // Git endpoints
+  if (req.method === 'GET' && req.url === '/api/git/log') {
+    return handleGit(res, 'git log --oneline --no-decorate -20');
+  }
+  if (req.method === 'GET' && req.url === '/api/git/diff') {
+    return handleGit(res, 'git diff --stat HEAD');
+  }
+  if (req.method === 'GET' && req.url === '/api/git/status') {
+    return handleGit(res, 'git status --short');
+  }
+  // Preview file serving — serves local HTML/images for the live preview panel
+  if (req.method === 'GET' && req.url && req.url.startsWith('/api/preview-candidates')) {
+    return handlePreviewCandidates(req, res);
+  }
+  if (req.method === 'GET' && req.url && req.url.startsWith('/api/preview-file')) {
+    return handlePreviewFile(req, res);
+  }
   if (req.url === '/' || req.url === '/index.html') {
     return serveFile(res, path.join(__dirname, 'index.html'), 'text/html');
+  }
+  if (req.method === 'POST' && req.url === '/api/cleanup') {
+    return cleanupStaleSessions(req, res);
+  }
+  if (req.method === 'DELETE' && req.url && req.url.startsWith('/api/sessions/')) {
+    return deleteSession(req, res);
+  }
+  // Static asset serving for /assets/ directory
+  if (req.url && req.url.startsWith('/assets/')) {
+    const safePath = req.url.replace(/\.\./g, '').replace(/\/+/g, '/');
+    const filePath = path.join(__dirname, safePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes = {
+      '.svg': 'image/svg+xml',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.json': 'application/json',
+      '.css': 'text/css',
+      '.js': 'application/javascript'
+    };
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+    return serveFile(res, filePath, contentType);
   }
   res.writeHead(404);
   res.end('Not found');
@@ -72,7 +124,7 @@ function serveSessions(req, res) {
   const result = {};
 
   function respond() {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 
@@ -110,7 +162,8 @@ function readRegisteredSessions(result, done) {
               parsed._mtime = statErr ? null : stats.mtime.toISOString();
               parsed._source = 'registered';
               const mtime = stats ? stats.mtime.getTime() : Date.now();
-              if (Date.now() - mtime <= RETIRE_AFTER_MS) {
+              // Only include sessions that are active (session !== false) and recent
+              if (parsed.session !== false && Date.now() - mtime <= RETIRE_AFTER_MS) {
                 result[file] = parsed;
               }
             } catch (e) { /* skip malformed */ }
@@ -130,7 +183,7 @@ function readRegisteredSessions(result, done) {
  */
 function readAutoSessions(result, done) {
   // JSONL files live inside subdirectories of CLAUDE_PROJECTS_DIR
-  // (e.g. ~/.claude/projects/your-workspace-path/*.jsonl)
+  // (e.g. ~/.claude/projects/<encoded-project-path>/*.jsonl)
   fs.readdir(CLAUDE_PROJECTS_DIR, (err, entries) => {
     if (err) return done();
 
@@ -279,82 +332,14 @@ function extractFirstPrompt(filePath, cb) {
  * the session is ACTUALLY doing, not what it last remembered to report.
  */
 function enhanceWithLiveActivities(result, done) {
-  // Only act on registered sessions with stale activity data AND all activities sleeping.
-  // If a session already has any "working" activity in its JSON, leave it alone —
-  // overwriting it with another session's JSONL would be wrong.
-  const staleKeys = Object.keys(result).filter(key => {
-    const s = result[key];
-    if (s._source !== 'registered' || !s._mtime) return false;
-    if ((Date.now() - new Date(s._mtime).getTime()) <= JSONL_OVERLAY_AFTER_MS) return false;
-    const activities = s.activities || {};
-    return !Object.values(activities).some(a => a && a.status === 'working');
-  });
-
-  if (staleKeys.length === 0) return done();
-
-  // Scan all project subdirs under CLAUDE_PROJECTS_DIR for the freshest active JSONL.
-  // Each subdir (e.g. your-workspace-path) holds JSONL files for one CWD.
-  fs.readdir(CLAUDE_PROJECTS_DIR, (err, entries) => {
-    if (err) return done();
-
-    // Collect all JSONL paths across all subdirs
-    let pending = 0;
-    const allJsonls = [];
-
-    entries.forEach(entry => {
-      const entryPath = path.join(CLAUDE_PROJECTS_DIR, entry);
-      pending++;
-      fs.stat(entryPath, (statErr, stats) => {
-        if (!statErr && stats && stats.isDirectory()) {
-          pending++;
-          fs.readdir(entryPath, (rdErr, files) => {
-            if (!rdErr && files) {
-              files.filter(f => f.endsWith('.jsonl')).forEach(f => {
-                allJsonls.push(path.join(entryPath, f));
-              });
-            }
-            if (--pending === 0) findNewestAndOverlay();
-          });
-        }
-        if (--pending === 0) findNewestAndOverlay();
-      });
-    });
-
-    if (pending === 0) findNewestAndOverlay();
-
-    function findNewestAndOverlay() {
-      if (allJsonls.length === 0) return done();
-
-      let newestPath = null;
-      let newestMtime = 0;
-      let checked = 0;
-
-      allJsonls.forEach(filePath => {
-        fs.stat(filePath, (statErr, stats) => {
-          checked++;
-          if (!statErr && stats) {
-            const mtime = stats.mtime.getTime();
-            if (mtime > newestMtime && (Date.now() - mtime) <= ACTIVE_THRESHOLD_MS) {
-              newestPath = filePath;
-              newestMtime = mtime;
-            }
-          }
-          if (checked === allJsonls.length) {
-            if (!newestPath) return done();
-            readJSONLTail(newestPath, (activities) => {
-              if (activities) {
-                staleKeys.forEach(key => {
-                  result[key].activities = activities;
-                  result[key]._liveDetected = true;
-                });
-              }
-              done();
-            });
-          }
-        });
-      });
-    }
-  });
+  // DISABLED: The previous implementation found the single newest JSONL log
+  // and overlaid its inferred activities onto ALL stale registered sessions.
+  // This caused a bug where ended/idle sessions would display agent activity
+  // from a completely unrelated active session. Since there's no reliable way
+  // to match a JSONL log to a specific registered session file, the overlay
+  // is removed entirely. Sessions must self-report their activities via their
+  // JSON file (which is the intended protocol per CLAUDE.md).
+  done();
 }
 
 /**
@@ -458,6 +443,76 @@ function toolCallDescription(name, input) {
   }
 }
 
+/**
+ * POST /api/cleanup — Remove stale/ended session files.
+ * Deletes any JSON file in active-sessions/ where session===false or mtime > 2h.
+ */
+function cleanupStaleSessions(req, res) {
+  fs.readdir(SESSIONS_DIR, (err, files) => {
+    if (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Cannot read sessions dir' }));
+      return;
+    }
+    const jsonFiles = files.filter(f => f.endsWith('.json'));
+    const removed = [];
+    let pending = jsonFiles.length;
+    if (pending === 0) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ removed: [] }));
+      return;
+    }
+    jsonFiles.forEach(file => {
+      const filePath = path.join(SESSIONS_DIR, file);
+      fs.stat(filePath, (statErr, stats) => {
+        fs.readFile(filePath, 'utf8', (readErr, data) => {
+          let shouldRemove = false;
+          if (!readErr) {
+            try {
+              const parsed = JSON.parse(data);
+              const age = stats ? Date.now() - stats.mtime.getTime() : Infinity;
+              // Remove if session ended or file is older than retire threshold
+              if (parsed.session === false || age > RETIRE_AFTER_MS) {
+                shouldRemove = true;
+              }
+            } catch (e) { shouldRemove = true; /* malformed */ }
+          }
+          if (shouldRemove) {
+            fs.unlink(filePath, () => {});
+            removed.push(file);
+          }
+          if (--pending === 0) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ removed }));
+          }
+        });
+      });
+    });
+  });
+}
+
+/**
+ * DELETE /api/sessions/:name — Remove a specific session file.
+ */
+function deleteSession(req, res) {
+  const name = decodeURIComponent(req.url.replace('/api/sessions/', ''));
+  if (!name || name.includes('..') || name.includes('/')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid session name' }));
+    return;
+  }
+  const filePath = path.join(SESSIONS_DIR, name.endsWith('.json') ? name : name + '.json');
+  fs.unlink(filePath, (err) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Session not found' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ removed: name }));
+  });
+}
+
 function serveFile(res, filePath, contentType) {
   fs.readFile(filePath, (err, data) => {
     if (err) {
@@ -470,8 +525,212 @@ function serveFile(res, filePath, contentType) {
   });
 }
 
-server.listen(PORT, () => {
-  console.log(`\n  Expedition HQ running at http://localhost:${PORT}`);
+// --- History endpoints ---
+// Kept outside the workspace so dashboard polling never counts as a knowledge change for bin/harold close.
+const HISTORY_FILE = path.join(os.homedir(), '.harold', 'expedition-history.jsonl');
+try { fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true }); } catch (_) {}
+const HISTORY_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+function handleHistoryPost(req, res) {
+  let body = '';
+  let aborted = false;
+  req.on('data', chunk => {
+    body += chunk;
+    if (body.length > 4096 && !aborted) {
+      aborted = true;
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end('{"error":"Payload too large"}');
+      req.destroy();
+    }
+  });
+  req.on('end', () => {
+    if (aborted) return;
+    try {
+      const snapshot = JSON.parse(body);
+      if (!snapshot.ts) snapshot.ts = Date.now();
+      fs.appendFile(HISTORY_FILE, JSON.stringify(snapshot) + '\n', () => {});
+      // Prune old entries periodically (every ~100 writes)
+      if (Math.random() < 0.01) pruneHistory();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end('{"error":"Invalid JSON"}');
+    }
+  });
+}
+
+function handleHistoryGet(req, res) {
+  fs.readFile(HISTORY_FILE, 'utf8', (err, data) => {
+    if (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('[]');
+      return;
+    }
+    const cutoff = Date.now() - HISTORY_MAX_AGE_MS;
+    const entries = data.split('\n').filter(l => l.trim()).map(l => {
+      try { return JSON.parse(l); } catch(e) { return null; }
+    }).filter(e => e && e.ts > cutoff);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(entries));
+  });
+}
+
+function pruneHistory() {
+  fs.readFile(HISTORY_FILE, 'utf8', (err, data) => {
+    if (err) return;
+    const cutoff = Date.now() - HISTORY_MAX_AGE_MS;
+    const lines = data.split('\n').filter(l => {
+      if (!l.trim()) return false;
+      try { return JSON.parse(l).ts > cutoff; } catch(e) { return false; }
+    });
+    fs.writeFile(HISTORY_FILE, lines.join('\n') + '\n', () => {});
+  });
+}
+
+// --- Preview candidates ---
+// Returns session-declared artifacts only.
+// Only artifacts explicitly set by active sessions appear here.
+// No auto-detection of dev servers — running servers don't mean active work.
+let _previewCandidatesCache = null;
+let _previewCandidatesCacheTime = 0;
+const PREVIEW_CACHE_TTL = 10000; // 10 seconds
+
+function detectFileType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const typeMap = {
+    '.html': 'html', '.htm': 'html',
+    '.md': 'markdown', '.markdown': 'markdown',
+    '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.gif': 'image', '.svg': 'image', '.webp': 'image',
+    '.pdf': 'pdf',
+    '.docx': 'docx', '.doc': 'docx',
+    '.xlsx': 'xlsx', '.xls': 'xlsx',
+    '.pptx': 'pptx',
+    '.js': 'code', '.ts': 'code', '.tsx': 'code', '.jsx': 'code',
+    '.py': 'code', '.rs': 'code', '.go': 'code', '.rb': 'code',
+    '.json': 'code', '.css': 'code', '.sh': 'code',
+  };
+  return typeMap[ext] || 'code';
+}
+
+function handlePreviewCandidates(req, res) {
+  const now = Date.now();
+  if (_previewCandidatesCache && now - _previewCandidatesCacheTime < PREVIEW_CACHE_TTL) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(_previewCandidatesCache));
+    return;
+  }
+
+  const artifacts = [];
+
+  fs.readdir(SESSIONS_DIR, (err, files) => {
+    if (err) { respond(); return; }
+    const jsonFiles = files.filter(f => f.endsWith('.json'));
+    let pending = jsonFiles.length;
+    if (pending === 0) { respond(); return; }
+
+    jsonFiles.forEach(file => {
+      const filePath = path.join(SESSIONS_DIR, file);
+      fs.readFile(filePath, 'utf8', (readErr, data) => {
+        if (!readErr) {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.session !== false && parsed.artifact) {
+              const sessionName = file.replace(/\.json$/, '').replace(/-/g, ' ');
+              artifacts.push({
+                session: sessionName,
+                path: parsed.artifact,
+                type: detectFileType(parsed.artifact),
+                filename: path.basename(parsed.artifact)
+              });
+            }
+          } catch (e) { /* skip */ }
+        }
+        if (--pending === 0) respond();
+      });
+    });
+  });
+
+  function respond() {
+    const result = { artifacts };
+    _previewCandidatesCache = result;
+    _previewCandidatesCacheTime = Date.now();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+}
+
+// --- Preview file serving ---
+// Safely serves local files for the live preview iframe.
+// Only allows files under the workspace root (REPO_DIR) to prevent path traversal.
+function handlePreviewFile(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const filePath = url.searchParams.get('path');
+  if (!filePath) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Missing path parameter');
+    return;
+  }
+  const resolved = path.resolve(filePath);
+  const workspaceRoot = path.resolve(__dirname, '..', '..');
+  // Security: only serve files under the workspace (a sibling folder sharing the prefix does not count)
+  if (resolved !== workspaceRoot && !resolved.startsWith(workspaceRoot + path.sep)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Access denied: file outside workspace');
+    return;
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  const mimeTypes = {
+    '.html': 'text/html', '.htm': 'text/html',
+    '.css': 'text/css', '.js': 'application/javascript',
+    '.json': 'application/json', '.svg': 'image/svg+xml',
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
+    '.woff': 'font/woff', '.woff2': 'font/woff2',
+    '.txt': 'text/plain', '.md': 'text/plain',
+    '.pdf': 'application/pdf',
+    '.py': 'text/plain', '.ts': 'text/plain', '.tsx': 'text/plain',
+    '.jsx': 'text/plain', '.rs': 'text/plain', '.go': 'text/plain',
+    '.docx': 'application/octet-stream',
+    '.xlsx': 'application/octet-stream', '.xls': 'application/octet-stream',
+    '.pptx': 'application/octet-stream',
+  };
+  const contentType = mimeTypes[ext] || 'application/octet-stream';
+  fs.readFile(resolved, (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('File not found');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(data);
+  });
+}
+
+// --- Git endpoints ---
+// NOTE: All git commands are hardcoded strings — no user input is passed to exec.
+// This is safe from command injection.
+const REPO_DIR = path.resolve(__dirname, '..', '..');
+const GIT_MAX_OUTPUT = 4096;
+
+function handleGit(res, command) {
+  exec(command, { cwd: REPO_DIR, timeout: 5000, maxBuffer: GIT_MAX_OUTPUT * 2 }, (err, stdout, stderr) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (err) {
+      res.end(JSON.stringify({ error: stderr || err.message, output: '' }));
+      return;
+    }
+    var output = stdout || '';
+    if (output.length > GIT_MAX_OUTPUT) output = output.slice(0, GIT_MAX_OUTPUT) + '\n... (truncated)';
+    res.end(JSON.stringify({ output: output }));
+  });
+}
+
+server.listen(PORT, HOST, () => {
+  console.log(`\n  Expedition HQ running at http://${HOST === '127.0.0.1' ? 'localhost' : HOST}:${PORT}`);
   console.log(`  Registered sessions: ${SESSIONS_DIR}`);
   console.log(`  Auto-detect:     ${CLAUDE_PROJECTS_DIR}`);
   console.log();
