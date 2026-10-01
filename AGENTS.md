@@ -2,7 +2,7 @@
 
 > **This file is the canonical entry point for every harness: Claude Code, Cowork, Codex, Cursor, a terminal, a scheduled job.** `CLAUDE.md` at the repo root is a one-line include of this file (`@AGENTS.md`). All working memory, context and system files live in this workspace, versioned in a private git repository ([YOUR GITHUB USER]/[YOUR REPO]).
 >
-> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE]. Everywhere this file says "the operator", it means you.
+> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ` in `~/.harold/env`, e.g. America/Chicago). Everywhere this file says "the operator", it means you.
 
 ## FIRST INSTRUCTION — run `bin/harold boot`
 
@@ -168,7 +168,8 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 | **Cross-file cascade rules** | `harold/sync-map.md` |
 | **Lessons** | `harold/learnings.jsonl` (`bin/harold file learning`) |
 | **Scheduled-work log** | `harold/trigger-log.jsonl` (`bin/harold file trigger`) |
-| **Offline CRM queue** | `harold/crm-queue.jsonl` (`bin/harold file crm`) |
+| **Offline CRM queue** | `harold/crm-queue.jsonl` (`bin/harold file crm`; applied by boot/close, or `bin/harold replay`) |
+| **Morning brief drafts** | `harold/briefs/` (`bin/harold brief status`; schedule: `HAROLD_TZ`, `HAROLD_BRIEF_TIME`) |
 | **Dashboard State** | `harold/active-sessions/` (one JSON per live session) |
 | **Knowledge Vault** | `vault/` (people, companies, projects, intel, decisions, meetings, daily; plain markdown, Obsidian optional) |
 | **Raw Source Inbox** | `raw/` (unprocessed sources, compiled into the vault by `playbook/core/compile.md`) |
@@ -185,7 +186,8 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
-- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`, `HAROLD_TZ`). `bin/harold close` refuses to commit anything that looks like a key.
+- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ` and `HAROLD_BRIEF_TIME`. `bin/harold close` refuses to commit anything that looks like a key.
+- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions or a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
 ## CRM Filing Protocol (MANDATORY — all three, every time)
@@ -208,6 +210,8 @@ If the CRM is unreachable, queue the work instead of dropping it, and say that y
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro call"}}'
 ```
+
+The queue is a fallback, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run with the CRM reachable (wherever that is: any computer, or a cloud job with the credentials), skipping anything already applied and never logging an interaction for a `team` contact. `bin/harold replay --dry-run` shows what would happen.
 
 When corrections are made (warmth change, name fix, any contact detail), the CRM contact record is the most important update. Never correct the vault or the task manager and skip the CRM.
 

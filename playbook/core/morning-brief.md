@@ -1,7 +1,7 @@
 # Playbook: Morning Brief
 
 **Purpose:** Start the day in three guided steps: intel, then the brief and priorities, then ready-to-run prompts.
-**Trigger:** "good morning", "morning", "gm", "daily brief", "start the day", "let's go", or any morning greeting.
+**Trigger:** a start-of-day opener, at any hour: "good morning", "morning", "gm", "let's get started", "let's go", "start the day", "daily brief", or the same idea in other words. **Not a trigger:** a first message that is a request about a project; do the request and do not run or offer the brief. Once the brief has run today, do not re-run it unless asked.
 
 **This is a mandatory playbook. Follow it exactly. Do not improvise, and do not merge the steps.**
 
@@ -21,14 +21,36 @@ Priority-setting is guided, not open-ended. Harold proposes; you confirm, correc
 | Setting | Placeholder | Notes |
 |---------|-------------|-------|
 | Weather location | [YOUR CITY] | Optional. Delete the section if you don't want it. |
-| Calendar source | [YOUR CALENDAR SOURCE] | A calendar connector, an app screenshot, or an export. List every calendar that matters (work, personal, family). |
+| Calendars | [YOUR CALENDARS] | Read through a calendar connector (see Calendar Access below). List every calendar that matters: work, personal, family, shared. |
 | Markets | [YOUR MARKETS WATCHLIST] | Optional. e.g. major indices, a few tickers, rates, commodities. |
 | News beats | [YOUR NEWS BEATS] | Optional. e.g. Global, Business/Finance, your industry, your region. |
 | Other sections | [YOUR OPTIONAL SECTIONS] | Optional. e.g. sports scores, weather at an upcoming trip destination. |
 
-**If the calendar source is unreachable, say so on the first attempt.** Do not try three workarounds silently and do not present a day with no meetings as if it were true.
+**Calendar Access:**
+- Read today's and the coming week's events through a calendar connector available in the session (for example Google Calendar or Microsoft 365). Pull every calendar listed above.
+- No screenshots of a calendar app and no scripts against one machine's calendar: the brief must work from any harness, including a scheduled cloud job with nobody at a computer.
+- If no calendar connector is available, or it fails, say "Calendar unavailable: [reason]" on the first attempt and continue. Do not try three workarounds silently, and never present a day with no meetings as if it were true.
+- If an employer's calendar cannot be connected (some organizations block connectors), any workaround belongs in that engagement's playbook (`playbook/engagements/<name>/`), not here. A workaround is a known flaw to retire, not part of the design.
 
-**Optional cloud draft:** if you set up the scheduled cloud morning brief, a draft may exist at `harold/briefs/YYYY-MM-DD.md`. Nothing reads it automatically. If today's file exists, use it as input for Step 1; if it doesn't, run Step 1 live.
+---
+
+## STEP 0: Is today's draft already written? (check FIRST, every time)
+
+If you turned on the scheduled morning brief (`.github/workflows/morning-brief.yml`, or a Claude Code routine running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
+
+1. **Find it.** `bin/harold boot` prints a section **"Today's morning brief draft"**; `bin/harold brief status` prints the same thing on demand. It says one of:
+   - **READY** (in this checkout) → read that file.
+   - **READY on origin, not in this checkout** → run `git -C <root> pull --ff-only`, then read the file. If the pull refuses (local changes in the way), do not force it: read the draft with the `git show origin/<branch>:harold/briefs/<date>.md` command boot printed, and say the checkout is behind.
+   - **NONE yet** (before the brief time) or **NONE** on a weekend → run Steps 1 and 2 live below.
+   - **NONE** on a weekday after the brief time → if the operator runs the scheduled brief, say so in one line ("No draft this morning: the scheduled brief did not write one"), then run Steps 1 and 2 live.
+   - **UNKNOWN** (origin could not be reached) → retry once; if it still fails, run live and say why.
+2. **Put it on screen.** Present the draft's Step 1 and Step 2 content as written, headed by one line: when the job fired and finished (frontmatter `fired`, `generated`) and the ages of any data the draft itself states. Do not re-run the web searches or rebuild alerts; the job already did. Only refresh something if the operator asks, or if an item is plainly overtaken (for example a meeting that has already happened).
+   Also check `harold/briefs/housekeeping-notes.md`: anything still under `## New` (left by unattended jobs after the draft was made) goes in one short **Housekeeping** line at the end; then move those lines under `## Shown`. Nothing there means say nothing.
+3. **Still ask the overnight question.** End with: "You got anything? What came in overnight?" and STOP, exactly as in Step 1. The scheduled job could not ask it.
+4. **Then Step 2's "First: process overnight updates".** Integrate what the operator says into the draft's picture, adjust the TOP 3 PRIORITIES if the overnight input changes them (say what changed and why), and ask "Does this look right?"
+5. **Then Step 3** as written below.
+
+Everything below is the live procedure, used when there is no draft and as the specification the scheduled job follows.
 
 ---
 
@@ -41,8 +63,8 @@ Priority-setting is guided, not open-ended. Harold proposes; you confirm, correc
 
 2. **Weather** (optional) — today's forecast for [YOUR CITY].
 
-3. **Calendar** — today's meetings from [YOUR CALENDAR SOURCE], all calendars.
-   - *If unreachable:* say "Calendar unavailable: [reason]" and continue. Never infer the schedule from memory.
+3. **Calendar** — today's meetings, all calendars (see Calendar Access above).
+   - *If unavailable:* say "Calendar unavailable: [reason]" and continue. Never infer the schedule from memory.
 
 4. **Morning intel** (every sub-section optional and configurable):
 
@@ -182,6 +204,7 @@ The operator launches each prompt as its own session, in parallel.
 
 ## Completion checklist
 
+- [ ] Step 0: today's draft checked (boot's "Today's morning brief draft"); if READY, shown instead of re-running Steps 1-2
 - [ ] Step 1 presented (memory consolidation, calendar, configured intel sections, analyst callouts) and ended with the overnight question
 - [ ] Waited for the overnight answer
 - [ ] Overnight updates integrated; intake/analyst playbooks queued for new people, projects, intel

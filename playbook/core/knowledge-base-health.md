@@ -188,11 +188,35 @@ Action: fix non-standard values; add missing frontmatter.
 
 **8e. Broken wiki-links.** Find `[[links]]` whose target does not exist. Create the note if it should exist; otherwise fix the link.
 
-### Step 9: Raw inbox
+**Tidying is not a contact update.** Tag, link, date and formatting fixes on `vault/people/` cards are housekeeping: they do not change `last_updated`, warmth or status, and they need no CRM write (`bin/harold close` ignores them).
+
+### Step 9: CRM consistency
+
+**Purpose:** keep the CRM and the vault people cards saying the same thing about each person.
+
+**Read** the CRM with whatever CRM tool this session has (the harold-mcp tools `harold_search_contacts` and `harold_get_contact`, or a CRM connector). If none is available in this run, skip this step and say so in the report.
+
+**Compare** every `vault/people/` card whose `type` is not `team` with its CRM record, and correct the CRM when the vault (or a dated meeting or daily note) clearly shows the right value:
+
+| Case | Correction |
+|---|---|
+| Title, company/org, email, phone or location changed in the notes; the CRM still has the old value | Update the CRM field |
+| Name spelled differently, and the notes settle which is right | Correct the CRM name; fix any vault spelling too |
+| Card exists, no CRM record | Create the record (type from the card's `type`) |
+| CRM type is not on your list of contact types (`dashboard/people.md`) | Set the type from the card |
+| Warmth differs **and** logged interactions clearly support one value | Align the CRM to the evidence |
+
+**Never:** log an interaction, change last-contacted dates, add, move or close pipeline entries, create tasks, merge or delete contacts, or touch a `team` record's interactions. Anything ambiguous (two plausible values, a possible duplicate, warmth without clear evidence) is not corrected: it goes to the operator as one line in the report (and, for an unattended run, in `harold/briefs/housekeeping-notes.md` under `## New`).
+
+**How to write:** with `harold_upsert_contact`, passing the `contact_id` of the existing record (a name correction cannot be matched by the new name; omit it only when creating) and only the corrected fields. If the CRM tool is a connector that `bin/harold` cannot see from here, record each write so `bin/harold close` counts it as filed: `bin/harold file crm '{"contact":"<name>","action":"upsert_contact","applied":"connector","payload":{...the same fields...}}'`. If the CRM is unreachable, queue the correction without `applied` (`bin/harold file crm '{"contact":"<name>","action":"upsert_contact","payload":{"contact_id":"<id>", ...}}'`); boot and close apply it once the CRM answers.
+
+**Record:** list every correction (contact, field, old → new, the evidence file) in the report.
+
+### Step 10: Raw inbox
 
 List files in `raw/` without `compiled: true` in frontmatter. Report the count and age of the oldest. Do not compile them here; that is `playbook/core/compile.md`, run when the operator asks.
 
-### Step 10: Report and record
+### Step 11: Report and record
 
 - Write the report (template below) into today's daily note: `vault/daily/YYYY-MM-DD-kb-health.md`.
 - `bin/harold file trigger full-audit ran "<one-line summary>"` (or `skipped "<reason>"`).
@@ -219,6 +243,7 @@ List files in `raw/` without `compiled: true` in frontmatter. Report the count a
 | Task manager sync | OK / Warn / Fail / Skipped | [n] | [brief] |
 | External references | OK / Warn / Fail | [n] | [brief] |
 | Vault hygiene | OK / Warn / Fail | [n] | [brief] |
+| CRM consistency | OK / Warn / Fail / Skipped | [n] | [brief] |
 | Raw inbox | [n] uncompiled | | |
 
 ### Issues found
@@ -271,7 +296,7 @@ When a new spelling or consistency error is found:
 - [ ] `bin/harold file trigger weekly-scan ran|skipped "<reason>"` recorded
 
 **Monthly Full Audit**
-- [ ] Steps 1-9 run (or each skipped step noted with a reason)
+- [ ] Steps 1-10 run (or each skipped step noted with a reason)
 - [ ] Report written to `vault/daily/YYYY-MM-DD-kb-health.md`
 - [ ] New error patterns added to Part 2, Step 2
 - [ ] `bin/harold file trigger full-audit ran|skipped "<reason>"` recorded

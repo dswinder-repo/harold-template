@@ -133,9 +133,9 @@ All of these, together, for every new external contact:
 
 ## Step 5 — If the CRM is unreachable
 
-Queue each CRM action; the next session with a working CRM flushes the queue:
+Queue each CRM action (the payload uses `harold_upsert_contact`'s field names: `org`, `category` for the type, `categories` for labels). `bin/harold boot` and `bin/harold close` apply the queue automatically the next time they run with the CRM reachable, skipping anything already applied; `bin/harold replay` does it on demand (`--dry-run` to preview):
 ```bash
-bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{"company":"Acme Corp","category":"partner","labels":["ecosystem"],"status":"pending"}}'
+bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{"org":"Acme Corp","category":"partner","categories":["ecosystem"],"status":"pending"}}'
 bin/harold file crm '{"contact":"Jane Doe","action":"crm_task","payload":{"title":"Initial outreach: Jane Doe (Acme Corp)","due_date":"YYYY-MM-DD"}}'
 ```
 The vault profile is written now regardless.

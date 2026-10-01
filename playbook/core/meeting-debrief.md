@@ -64,7 +64,7 @@ Target the gaps only. Never re-ask what the notes already answer.
 - body: key takeaways in 2-3 sentences, not the transcript
 - This feeds freshness tracking automatically; no manual cadence update is needed.
 
-**If the CRM is unreachable:** queue it and keep going:
+**If the CRM is unreachable:** queue it and keep going (boot and close apply the queue once the CRM answers):
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"meeting","subject":"...","body":"..."}}'
 ```

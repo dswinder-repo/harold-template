@@ -25,7 +25,7 @@
 
 | You say something like... | Playbook |
 |---------------------------|----------|
-| "good morning", "gm", "morning", "let's go", "start the day" | `playbook/core/morning-brief.md` (3 steps, two pauses, follow exactly) |
+| A start-of-day opener at any hour: "good morning", "gm", "morning", "let's get started", "let's go", "start the day", "daily brief" (a first message that is a project request is NOT one) | `playbook/core/morning-brief.md` (Step 0 first: show today's scheduled draft if boot says READY; otherwise 3 steps, two pauses, follow exactly) |
 | "just got off a call with...", "we met with...", pasting notes or a transcript | `playbook/core/meeting-debrief.md`, then `playbook/core/analyst.md` |
 | "met someone new", "intro to...", "add X to the CRM" | `playbook/core/contact-intake.md` |
 | "I'm starting work on...", talking about a client or workstream the map doesn't know | `playbook/core/project-intake.md` |
