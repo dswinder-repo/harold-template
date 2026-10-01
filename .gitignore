@@ -24,6 +24,8 @@ build/
 *.pem
 **/credentials.json
 **/service-account*.json
+# The env templates are meant to be committed: they hold no values.
+!.env.example
 
 # ── Harold runtime state (rebuilt or per-machine) ────────
 harold/search.db*
@@ -38,3 +40,15 @@ harold/.brief-context.md
 
 # ── Obsidian app state (optional viewer; may hold API keys) ──
 vault/.obsidian/
+
+# ── The CRM web app (tools/harold-crm, Next.js) ──────────
+# node_modules/ and .env.local are covered above.
+tools/harold-crm/.next/
+tools/harold-crm/out/
+tools/harold-crm/coverage/
+tools/harold-crm/.vercel/
+tools/harold-crm/next-env.d.ts
+tools/harold-crm/supabase/.temp/
+*.tsbuildinfo
+.pnpm-debug.log*
+npm-debug.log*

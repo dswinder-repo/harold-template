@@ -33,13 +33,21 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    Without it, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
    Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it.
 
-4. **Set up the CRM (Supabase).** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Then:
+4. **Set up the CRM (Supabase).**
+
+   **a. The database: Harold's tools work from here.** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Then:
    ```bash
    bin/harold-setup-crm                       # stores SUPABASE_URL + service_role key in ~/.harold/env, tests the connection
    (cd tools/harold-mcp && npm install)
    cp .mcp.example.json .mcp.json             # Claude Code: then put the absolute path to bin/harold-mcp in it
    ```
    Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored.
+
+   **b. Optional: the web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
+   - In the SQL editor, run `tools/harold-crm/supabase/migrations/002` to `006` in order (`001` is the schema you already ran).
+   - Deploy it on Vercel or any Next.js host: import this repository with **Root Directory** `tools/harold-crm`, and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the publishable key, never the service role key).
+   - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
+   - Optional AI (contact research, enrichment, meeting prep) runs on Google Gemini, whose free tier covers it: get a free API key at [Google AI Studio](https://aistudio.google.com/apikey) and set it as `GEMINI_API_KEY` in the host's environment variables (and in `tools/harold-crm/.env.local` for local development). Without it, the AI buttons say AI is off.
 
 5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on.
 
@@ -88,7 +96,7 @@ Each hook command passes `--via=claude|codex|cursor`, so `bin/harold` answers in
 
 ```
 AGENTS.md                  the constitution: boot/close contract, startup sequence, scheduled triggers,
-                           CRM filing protocol (with the internal-team gate), error capture, git rules
+                           CRM filing protocol, error capture, git rules
 CLAUDE.md                  one line: @AGENTS.md
 .claude/settings.json      Claude Code hooks: SessionStart → boot, Stop → close, SessionEnd → close --final
 .codex/hooks.json          Codex hooks: the same three (trust them once with /hooks)
@@ -116,6 +124,8 @@ playbook/
   engagements/example/     how to add employer- or client-specific playbooks
 tools/
   harold-mcp/              MCP server (14 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
+  harold-crm/              optional CRM web app (Next.js + Supabase) on the same database; deploy with root directory
+                           tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-006 add the app's tables
   harold-plugin/           Cowork plugin: the same hooks + a "boot Harold" skill
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
@@ -124,11 +134,14 @@ tools/
 tests/
   brief-gate.test.js       tests for the brief schedule gate: node --test tests/brief-gate.test.js
   hooks.test.js            boot and close as Claude Code, Codex and Cursor hooks: node --test tests/hooks.test.js
+  crm.test.js              one CRM schema (001 = schema.sql) and the optional HAROLD_NO_LOG_TYPES: node --test tests/crm.test.js
 ```
 
 ### The CRM model
 
-Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other; `team` is reserved for your own colleagues, whose conversations are never logged), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`.
+Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`; the web app adds its own tables around them.
+
+Every conversation with a contact is logged unless you choose otherwise: the optional setting `HAROLD_NO_LOG_TYPES` in `~/.harold/env` (empty by default) lists contact types whose conversations are never logged, for example your own team. "CRM Filing Protocol" in `AGENTS.md` describes exactly what it changes.
 
 ### Morning brief: your time zone, your time
 

@@ -1,0 +1,505 @@
+@import "tailwindcss";
+
+/* ── Prevent horizontal overflow on all screen sizes ──── */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* ── Dark theme (default) ─────────────────────────────── */
+:root {
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #111111;
+  --bg-card: #1a1a1a;
+  --bg-card-hover: #222222;
+  --bg-input: #0f0f0f;
+  --bg-header: #0a2540;
+  --bg-overlay: rgba(0,0,0,0.5);
+  --bg-overlay-heavy: rgba(0,0,0,0.7);
+
+  --border-primary: #2a2a2a;
+  --border-secondary: #222222;
+  --border-subtle: rgba(255,255,255,0.1);
+  --border-input: rgba(255,255,255,0.2);
+
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #888888;
+  --text-muted: #666666;
+  --text-faint: #555555;
+  --text-bright: #e0e0e0;
+  --text-soft: #cccccc;
+  --text-softer: #aaaaaa;
+
+  --accent: #4C72B0;
+  --accent-hover: #5a82c0;
+  --accent-bg: rgba(76,114,176,0.08);
+  --accent-border: rgba(76,114,176,0.15);
+  --accent-subtle: rgba(76,114,176,0.1);
+
+  --positive: #28a745;
+  --success: #55A868;
+  --warning: #DD8452;
+  --danger: #C44E52;
+  --info: #ffc107;
+
+  --danger-bg: rgba(196,78,82,0.08);
+  --danger-border: rgba(196,78,82,0.2);
+  --warning-bg: rgba(221,132,82,0.15);
+
+  --hover-subtle: rgba(255,255,255,0.08);
+  --hover-light: rgba(255,255,255,0.1);
+  --hover-medium: rgba(255,255,255,0.15);
+  --hover-strong: rgba(255,255,255,0.2);
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.1), 0 8px 16px rgba(0,0,0,0.05);
+  --shadow-card-hover: 0 2px 4px rgba(0,0,0,0.15), 0 8px 16px rgba(0,0,0,0.12), 0 16px 32px rgba(0,0,0,0.08);
+  --shadow-elevated: 0 4px 12px rgba(0,0,0,0.2), 0 16px 32px rgba(0,0,0,0.15);
+  --shadow-dropdown: 0 8px 24px rgba(0,0,0,0.4);
+
+  --header-glass-bg: rgba(10, 37, 64, 0.75);
+  --glass-modal-bg: rgba(26,26,26,0.85);
+  --glass-modal-border: rgba(255,255,255,0.1);
+
+  --skeleton-base: #1a1a1a;
+  --skeleton-shine: #151515;
+
+  --timeline-line: rgba(255,255,255,0.06);
+}
+
+/* ── Light theme ──────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #eeeeee;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f0f0f0;
+  --bg-input: #ffffff;
+  --bg-header: #1a3a5c;
+  --bg-overlay: rgba(0,0,0,0.3);
+  --bg-overlay-heavy: rgba(0,0,0,0.5);
+
+  --border-primary: #d4d4d4;
+  --border-secondary: #e0e0e0;
+  --border-subtle: rgba(0,0,0,0.1);
+  --border-input: rgba(0,0,0,0.2);
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #555555;
+  --text-tertiary: #777777;
+  --text-muted: #999999;
+  --text-faint: #aaaaaa;
+  --text-bright: #2a2a2a;
+  --text-soft: #444444;
+  --text-softer: #666666;
+
+  --accent: #4C72B0;
+  --accent-hover: #3d6099;
+  --accent-bg: rgba(76,114,176,0.08);
+  --accent-border: rgba(76,114,176,0.2);
+  --accent-subtle: rgba(76,114,176,0.08);
+
+  --positive: #28a745;
+  --success: #55A868;
+  --warning: #DD8452;
+  --danger: #C44E52;
+  --info: #e5a800;
+
+  --danger-bg: rgba(196,78,82,0.08);
+  --danger-border: rgba(196,78,82,0.2);
+  --warning-bg: rgba(221,132,82,0.1);
+
+  --hover-subtle: rgba(0,0,0,0.04);
+  --hover-light: rgba(0,0,0,0.06);
+  --hover-medium: rgba(0,0,0,0.08);
+  --hover-strong: rgba(0,0,0,0.12);
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.08), 0 4px 8px rgba(0,0,0,0.06), 0 8px 16px rgba(0,0,0,0.03);
+  --shadow-card-hover: 0 2px 4px rgba(0,0,0,0.08), 0 8px 16px rgba(0,0,0,0.06), 0 16px 32px rgba(0,0,0,0.04);
+  --shadow-elevated: 0 4px 12px rgba(0,0,0,0.1), 0 16px 32px rgba(0,0,0,0.08);
+  --shadow-dropdown: 0 8px 24px rgba(0,0,0,0.15);
+
+  --header-glass-bg: rgba(26, 58, 92, 0.8);
+  --glass-modal-bg: rgba(255,255,255,0.88);
+  --glass-modal-border: rgba(0,0,0,0.08);
+
+  --skeleton-base: #e8e8e8;
+  --skeleton-shine: #d8d8d8;
+
+  --timeline-line: rgba(0,0,0,0.08);
+}
+
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-primary);
+  background-image:
+    radial-gradient(ellipse 120% 120% at 15% 25%, rgba(76, 114, 176, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 100% 100% at 80% 70%, rgba(85, 168, 104, 0.16) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 90% at 50% 50%, rgba(221, 132, 82, 0.12) 0%, transparent 50%);
+  background-size: 200% 200%;
+  animation: aurora 45s ease-in-out infinite;
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Light theme: softer aurora */
+[data-theme="light"] body {
+  background-image:
+    radial-gradient(ellipse 120% 120% at 15% 25%, rgba(76, 114, 176, 0.09) 0%, transparent 60%),
+    radial-gradient(ellipse 100% 100% at 80% 70%, rgba(85, 168, 104, 0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 90% 90% at 50% 50%, rgba(221, 132, 82, 0.05) 0%, transparent 50%);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+/* Feature 12: focus ring glow on form inputs */
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(76,114,176,0.25), 0 0 12px rgba(76,114,176,0.15);
+  border-color: var(--accent);
+  transition: box-shadow 200ms ease, border-color 200ms ease;
+}
+
+/* Light theme: slightly deeper focus glow */
+[data-theme="light"] input:focus,
+[data-theme="light"] select:focus,
+[data-theme="light"] textarea:focus {
+  box-shadow: 0 0 0 2px rgba(76,114,176,0.35), 0 0 12px rgba(76,114,176,0.2);
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes micro-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+@keyframes micro-bounce {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-3px); }
+  60% { transform: translateY(1px); }
+}
+
+@keyframes micro-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.micro-fade-in {
+  animation: micro-fade-in 400ms ease-out both;
+}
+
+@keyframes aurora {
+  0%   { background-position: 0% 0%; }
+  25%  { background-position: 50% 25%; }
+  50%  { background-position: 100% 50%; }
+  75%  { background-position: 50% 75%; }
+  100% { background-position: 0% 0%; }
+}
+
+/* Feature 3: count badge scale-pulse when column count changes */
+@keyframes count-pulse {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.animate-count-pulse {
+  animation: count-pulse 300ms ease-out;
+}
+
+/* Feature 5: sidebar slide-in reduced-motion override */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-panel,
+  .sidebar-backdrop {
+    transition: none !important;
+  }
+}
+
+/* Feature 9: toast spinner ring rotation */
+@keyframes toast-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Feature 14: column header green flash when a card is received */
+@keyframes celebrate-flash {
+  0%   { background: rgba(85, 168, 104, 0.0); }
+  25%  { background: rgba(85, 168, 104, 0.28); }
+  100% { background: rgba(85, 168, 104, 0.0); }
+}
+
+.animate-celebrate-flash {
+  animation: celebrate-flash 500ms ease-out;
+}
+
+/* Feature 2: staggered card entrance */
+@keyframes card-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Feature 7: relationship pulse dot */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.4); }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.animate-micro-pulse {
+  animation: micro-pulse 300ms ease-out;
+}
+
+.animate-micro-bounce {
+  animation: micro-bounce 400ms ease-out;
+}
+
+/* Feature 10: scroll-triggered timeline fade-in */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 300ms ease-out, transform 300ms ease-out;
+}
+
+.scroll-reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Feature 13: animated empty-state pulse */
+@keyframes empty-state-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes empty-state-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes empty-state-dashed-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.55; }
+}
+
+/* Feature 9 (btn): button press micro-feedback */
+.btn-press {
+  transition: transform 100ms ease;
+}
+.btn-press:active {
+  transform: scale(0.97);
+}
+
+.card-hover {
+  transition: transform 150ms ease, box-shadow 150ms ease;
+  box-shadow: var(--shadow-card);
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* ── Visual Feature 2: Interactive Cursor Glow ────────────────── */
+.cursor-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(700px circle at var(--glow-x, -999px) var(--glow-y, -999px), rgba(76,114,176,0.13), transparent 70%);
+}
+
+/* ── Visual Feature 3: Card Shimmer on Hover ──────────────────── */
+@keyframes card-shimmer-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.card-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    transparent 30%,
+    rgba(255,255,255,0.05) 50%,
+    transparent 70%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.card-shimmer:hover::after {
+  animation: card-shimmer-sweep 600ms ease-in-out;
+}
+
+/* ── Visual Feature 6: Gradient Text on Page Titles ───────────── */
+@keyframes gradient-shift {
+  0% { background-position: 0% center; }
+  50% { background-position: 100% center; }
+  100% { background-position: 0% center; }
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, var(--accent) 0%, #7BA4D4 60%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  background-size: 200% auto;
+  animation: gradient-shift 8s ease-in-out infinite;
+}
+
+/* Light theme: darken gradient endpoints for readability */
+[data-theme="light"] .text-gradient {
+  background: linear-gradient(135deg, #2d4a7a 0%, #4C72B0 60%, #2d4a7a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  background-size: 200% auto;
+  animation: gradient-shift 8s ease-in-out infinite;
+}
+
+/* Feature 14 (map): marching ants edge animation */
+@keyframes marching-ants {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -20; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Feature 9 (btn): disable scale, keep opacity feedback */
+  .btn-press:active {
+    transform: none;
+    opacity: 0.8;
+  }
+  /* Feature 14 (map): disable marching ants */
+  @keyframes marching-ants {
+    from, to { stroke-dashoffset: 0; }
+  }
+  @keyframes shimmer {
+    0%, 100% { background-position: 0 0; }
+  }
+  @keyframes micro-pulse {
+    0%, 100% { transform: scale(1); }
+  }
+  @keyframes micro-bounce {
+    0%, 100% { transform: translateY(0); }
+  }
+  @keyframes micro-fade-in {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes aurora {
+    0%, 100% { background-position: 0% 50%; }
+  }
+  /* Feature 3: disable count badge pulse */
+  @keyframes count-pulse {
+    0%, 100% { transform: scale(1); }
+  }
+  /* Feature 9: disable toast spinner rotation */
+  @keyframes toast-spin {
+    to { transform: rotate(0deg); }
+  }
+  /* Feature 14: disable celebration flash */
+  @keyframes celebrate-flash {
+    0%, 100% { background: rgba(85, 168, 104, 0.0); }
+  }
+  /* Feature 2: disable card stagger */
+  @keyframes card-fade-up {
+    from, to { opacity: 1; transform: none; }
+  }
+  /* Feature 7: disable pulse dot */
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+  }
+  /* Visual Feature 2: disable cursor glow */
+  .cursor-glow {
+    display: none;
+  }
+  /* Visual Feature 3: disable card shimmer sweep, show static lighten */
+  @keyframes card-shimmer-sweep {
+    from, to { transform: translateX(-100%); }
+  }
+  .card-shimmer:hover::after {
+    animation: none;
+    transform: translateX(0);
+    opacity: 0.5;
+  }
+  /* Visual Feature 6: disable gradient animation */
+  .text-gradient {
+    animation: none;
+  }
+  .card-hover:hover {
+    transform: none;
+    box-shadow: none;
+  }
+  body {
+    animation: none;
+    background-image: none;
+  }
+}

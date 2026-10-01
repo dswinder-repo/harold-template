@@ -1,0 +1,40 @@
+{
+  "name": "harold-crm",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:demo": "NEXT_PUBLIC_DEMO_MODE=1 next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test:migrations": "node scripts/test-migrations.mjs"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^2.0.4",
+    "@hello-pangea/dnd": "^18.0.1",
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.95.3",
+    "@tanstack/react-virtual": "^3.13.18",
+    "@xyflow/react": "^12.10.0",
+    "date-fns": "^4.1.0",
+    "framer-motion": "^12.34.2",
+    "next": "15.5.12",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "license": "MIT",
+  "description": "Harold CRM: the relationship layer of Harold. Next.js + Supabase."
+}
