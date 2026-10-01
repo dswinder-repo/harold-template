@@ -113,7 +113,7 @@ Does that work, or is there a firmer timeline for the original path?
 ### Waiting on your own team
 - Use the team's normal channel first (brief, standup, sync).
 - Past 7 days: name the downstream impact plainly ("this is holding up [downstream work]; can we prioritize it?").
-- Internal team conversations are not logged in the CRM (internal team gate). Record them in the daily note only.
+- Record the chase in the daily note. Whether to log it in the CRM follows the CRM filing protocol (types listed in the optional `HAROLD_NO_LOG_TYPES` are never logged).
 
 ### Waiting on an external contact
 - Day 7: follow-up message.
@@ -176,5 +176,5 @@ One of:
 - [ ] `harold/blockers.md` Last Update column updated (or row moved to `## Resolved`)
 - [ ] Daily note updated
 - [ ] Task manager comment added
-- [ ] External touches filed in the CRM (or queued); internal team touches not logged
+- [ ] Touches filed in the CRM (or queued), except types listed in `HAROLD_NO_LOG_TYPES`
 - [ ] `bin/harold file trigger blocker-escalation:<ID> ran|skipped|deferred "<reason>"` recorded

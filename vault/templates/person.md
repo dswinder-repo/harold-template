@@ -1,6 +1,6 @@
 ---
 tags: [person]
-type:          # exactly one, from your own list (e.g. investor | partner | founder | team | other). team = your own colleagues: never logged as CRM interactions
+type:          # exactly one, from your own list (e.g. investor | partner | founder | team | other)
 labels: []     # any number of extra tags, e.g. [ecosystem, board]. Never a copy of the type
 company:
 role:

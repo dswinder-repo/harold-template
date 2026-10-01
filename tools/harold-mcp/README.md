@@ -30,4 +30,7 @@ The MCP server that connects Harold to your CRM and keeps the `harold/` markdown
 
 Without the two Supabase variables the server still starts: it prints a loud warning, the markdown tools work, and every CRM tool returns an error saying exactly what is missing. Queue CRM work meanwhile with `bin/harold file crm '<json>'`.
 
-Optional: `HAROLD_NO_CADENCE_TYPES` (default `team,other`) lists the contact types that never get staleness alerts.
+Optional settings, in `~/.harold/env`:
+
+- `HAROLD_NO_LOG_TYPES` (empty by default): contact types whose conversations are never logged. `harold_log_interaction` refuses them; their records can still be updated. See "CRM Filing Protocol" in `AGENTS.md`.
+- `HAROLD_NO_CADENCE_TYPES` (default `other`): contact types that never get staleness alerts. Types in `HAROLD_NO_LOG_TYPES` are skipped too.

@@ -1,7 +1,7 @@
 # Playbook: Meeting Debrief
 
 **Purpose:** Capture a meeting's outcomes and file them into the CRM, vault, tasks and facts so nothing is lost.
-**Trigger:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted notes or a transcript, or any mention of a completed meeting with an external contact.
+**Trigger:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted notes or a transcript, or any mention of a completed meeting with a contact.
 
 ---
 
@@ -44,9 +44,9 @@ Harold:   "Got it. Looks like she's interested but wants two customer case studi
 
 ### 0. Gate check (before any CRM action)
 For each attendee, open their `vault/people/<Name>.md` profile.
-- **`type: team`** → internal colleague. **Never log the meeting as a CRM interaction** and never update their profile as if it were an external touchpoint. Action items and facts still get filed (steps 4, 6, 7).
 - **`crm: none`** → deliberately out of the CRM. Skip steps 3 and 5 for them; the vault profile is still updated.
 - **No profile** → run `playbook/core/contact-intake.md` for them first (it does the duplicate check).
+- **Type listed in `HAROLD_NO_LOG_TYPES`** (an optional setting, off by default; see "CRM Filing Protocol" in `AGENTS.md`) → skip step 3 for them; keep their record and profile current in step 5. Action items and facts still get filed.
 
 ### 1. Process input
 - **Notes / transcript:** extract attendees, topics, decisions, action items, and asks from both sides.
@@ -56,10 +56,10 @@ For each attendee, open their `vault/people/<Name>.md` profile.
 ### 2. Ask clarifying questions
 Target the gaps only. Never re-ask what the notes already answer.
 
-### 3. Log the interaction to the CRM (external contacts only)
+### 3. Log the interaction to the CRM
 **`harold_log_interaction`**, immediately after processing:
 - type: `meeting` (or `call`)
-- contact: the primary external contact
+- contact: the primary contact (one interaction per attendee you track)
 - subject: brief description (e.g. "Pilot scoping call")
 - body: key takeaways in 2-3 sentences, not the transcript
 - This feeds freshness tracking automatically; no manual cadence update is needed.
@@ -75,7 +75,7 @@ For each action item:
 - **`harold_crm_task`** for contact-specific follow-ups ("Send case studies to Jane Doe", "Schedule follow-up with Sam Lee"), with due dates taken from what was said ("by Friday", "next week"). Queue with `bin/harold file crm` (`action: crm_task`) if the CRM is down.
 - *If the task manager is unreachable:* list the tasks in today's daily note under "Tasks to create" so the next session files them.
 
-### 5. Update the relationship (external contacts only)
+### 5. Update the relationship
 All three together, per the CRM filing protocol:
 1. **`harold_upsert_contact`** — warmth if the meeting changed closeness (e.g. Cold → Lukewarm after a good intro, Warm → Hot after deep engagement), status (pending → active after the first real meeting), notes with the meeting context.
 2. **Pipeline** — if the meeting *established a purpose* ("they want to pilot", "they're considering investing"), add an entry with `harold_pipeline` (`add`, with that purpose and a stage). If it moved an existing purpose, `move` the stage. If it ended one, `close` it. Never create an entry the conversation didn't establish.
@@ -180,8 +180,8 @@ Best,
 
 ## Completion checklist
 
-- [ ] Gate checked for every attendee (`type: team` and `crm: none` respected)
-- [ ] `harold_log_interaction` called (or queued) for each external contact
+- [ ] Gate checked for every attendee (`crm: none` and `HAROLD_NO_LOG_TYPES`, if set, respected)
+- [ ] `harold_log_interaction` called (or queued) for each contact
 - [ ] Tasks created in the task manager; `harold_crm_task` for contact-specific follow-ups
 - [ ] `harold_upsert_contact` called; pipeline entry added/moved/closed only if the conversation established it
 - [ ] `vault/people/` profile evolved (warmth, status, `last_updated`, timeline)

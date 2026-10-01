@@ -196,7 +196,7 @@ Action: fix non-standard values; add missing frontmatter.
 
 **Read** the CRM with whatever CRM tool this session has (the harold-mcp tools `harold_search_contacts` and `harold_get_contact`, or a CRM connector). If none is available in this run, skip this step and say so in the report.
 
-**Compare** every `vault/people/` card whose `type` is not `team` with its CRM record, and correct the CRM when the vault (or a dated meeting or daily note) clearly shows the right value:
+**Compare** every `vault/people/` card (except `crm: none`) with its CRM record, and correct the CRM when the vault (or a dated meeting or daily note) clearly shows the right value:
 
 | Case | Correction |
 |---|---|
@@ -206,7 +206,7 @@ Action: fix non-standard values; add missing frontmatter.
 | CRM type is not on your list of contact types (`dashboard/people.md`) | Set the type from the card |
 | Warmth differs **and** logged interactions clearly support one value | Align the CRM to the evidence |
 
-**Never:** log an interaction, change last-contacted dates, add, move or close pipeline entries, create tasks, merge or delete contacts, or touch a `team` record's interactions. Anything ambiguous (two plausible values, a possible duplicate, warmth without clear evidence) is not corrected: it goes to the operator as one line in the report (and, for an unattended run, in `harold/briefs/housekeeping-notes.md` under `## New`).
+**Never:** log an interaction, change last-contacted dates, add, move or close pipeline entries, create tasks, merge or delete contacts, or touch any record's interactions. Anything ambiguous (two plausible values, a possible duplicate, warmth without clear evidence) is not corrected: it goes to the operator as one line in the report (and, for an unattended run, in `harold/briefs/housekeeping-notes.md` under `## New`).
 
 **How to write:** with `harold_upsert_contact`, passing the `contact_id` of the existing record (a name correction cannot be matched by the new name; omit it only when creating) and only the corrected fields. If the CRM tool is a connector that `bin/harold` cannot see from here, record each write so `bin/harold close` counts it as filed: `bin/harold file crm '{"contact":"<name>","action":"upsert_contact","applied":"connector","payload":{...the same fields...}}'`. If the CRM is unreachable, queue the correction without `applied` (`bin/harold file crm '{"contact":"<name>","action":"upsert_contact","payload":{"contact_id":"<id>", ...}}'`); boot and close apply it once the CRM answers.
 

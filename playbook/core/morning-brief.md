@@ -136,7 +136,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
    | Contact | Purpose | Stage | Last Touch | Days Silent | Flag | Next Action |
    |---------|---------|-------|------------|-------------|------|-------------|
 
-   Staleness: the stage cadence for pipeline entries; otherwise warmth (Hot 7 days, Warm 14, Lukewarm 28). Cold or unset warmth gets no nudge. Team members never appear here.
+   Staleness: the stage cadence for pipeline entries; otherwise warmth (Hot 7 days, Warm 14, Lukewarm 28). Cold or unset warmth gets no nudge, and neither do the types in `HAROLD_NO_CADENCE_TYPES` (default `other`) or the optional `HAROLD_NO_LOG_TYPES`.
    - *If the CRM is unreachable:* say so, and fall back to `last_updated` in `vault/people/` profiles for the contacts tied to today's priorities.
 4. **Blockers and flags** — active blockers, deadlines in the next 7 days, overnight additions.
 5. **Scheduled triggers** — anything due today per `AGENTS.md` (weekly-scan on Fridays, full-audit on the 1st, month-end on the last business day). Due means it runs this session; say so here.

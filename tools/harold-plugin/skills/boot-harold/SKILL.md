@@ -37,4 +37,4 @@ Before the session ends, run:
 "${CLAUDE_PLUGIN_ROOT:-${CLAUDE_SKILL_DIR}/../..}/scripts/close.sh" --final
 ```
 
-It verifies today's `vault/daily/` note exists when knowledge changed, that every touched external contact was filed (internal-team gate: `type: team` is never logged to the CRM), that due scheduled work was recorded, sets the session file to sleeping, and commits and pushes the repo. If it reports problems, fix them and run it again. The operator never sees these commands; they just talk.
+It verifies today's `vault/daily/` note exists when knowledge changed, that every touched contact was filed (types listed in the optional `HAROLD_NO_LOG_TYPES` are never logged), that due scheduled work was recorded, sets the session file to sleeping, and commits and pushes the repo. If it reports problems, fix them and run it again. The operator never sees these commands; they just talk.

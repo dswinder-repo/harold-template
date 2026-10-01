@@ -27,7 +27,7 @@ If boot's output is already in your context, it ran: do not run it again. **In a
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
-At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed (internal-team gate respected), that due scheduled work was recorded, and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
+At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed, that due scheduled work was recorded, and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
 
 ---
 
@@ -192,23 +192,18 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ## System Rules
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
-- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
+- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
 - **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
-- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ` and `HAROLD_BRIEF_TIME`. `bin/harold close` refuses to commit anything that looks like a key.
+- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ`, `HAROLD_BRIEF_TIME` and `HAROLD_NO_LOG_TYPES`. `bin/harold close` refuses to commit anything that looks like a key.
 - **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with a ready-made switch for Claude Code, Codex and Cursor, or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
 ## CRM Filing Protocol (MANDATORY — all three, every time)
 
-**⚠️ INTERNAL TEAM GATE (check BEFORE any CRM action):**
-Before logging ANY interaction, check the vault profile's `type` field. If `type: team`, STOP. **Internal team communications (the operator ↔ anyone whose type is `team`) are NEVER logged as CRM interactions, and their vault profile is never updated as if it were an external touchpoint.** There is no exception. `bin/harold file crm` refuses to queue work for a `team` contact.
-
-Team members **do** have contact records. Keeping the record current (title, organization, status) is fine. Logging the conversation is not. The record is the person; the interaction log is for external relationships. A vault card with `crm: none` is deliberately kept out of the CRM.
-
-For **external contacts only**, all three happen together. No exceptions. No "I'll do it next."
+For every contact touched, all three happen together. No exceptions. No "I'll do it next." A vault card with `crm: none` is deliberately kept out of the CRM.
 
 *The CRM is the operator's own, spanning their whole working life, not an employer's. Each contact has exactly one type, from the operator's own short list (for example: investor, partner, founder, team, other), any number of labels, and a warmth (Hot, Warm, Lukewarm, Cold, or unset). There is one pipeline; every entry in it states its purpose and sits at one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. Nothing is placed in the pipeline automatically.*
 
@@ -216,13 +211,15 @@ For **external contacts only**, all three happen together. No exceptions. No "I'
 2. `harold_upsert_contact` — update warmth, status, notes on the contact record
 3. Vault people profile — update warmth, `last_updated`, context
 
+**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `~/.harold/env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions; for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: `harold_log_interaction`, `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
+
 If the CRM is unreachable, queue the work instead of dropping it, and say that you did:
 
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro call"}}'
 ```
 
-The queue is a fallback, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run with the CRM reachable (wherever that is: any computer, or a cloud job with the credentials), skipping anything already applied and never logging an interaction for a `team` contact. `bin/harold replay --dry-run` shows what would happen.
+The queue is a fallback, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run with the CRM reachable (wherever that is: any computer, or a cloud job with the credentials), skipping anything already applied and never logging an interaction for a type listed in `HAROLD_NO_LOG_TYPES`. `bin/harold replay --dry-run` shows what would happen.
 
 When corrections are made (warmth change, name fix, any contact detail), the CRM contact record is the most important update. Never correct the vault or the task manager and skip the CRM.
 
@@ -289,8 +286,8 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 1. **Session Summary** — 3-5 bullets of what was accomplished.
 2. **CRM Sweep** — for EVERY contact mentioned or touched this session:
-   - **FIRST: check the vault profile's `type`. If `type: team` → SKIP. No CRM interactions for internal team members. Ever.**
-   - For external contacts: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. CRM down → `bin/harold file crm`.
+   - If `HAROLD_NO_LOG_TYPES` is set and the contact's `type` is in it, keep the record current and log no interaction.
+   - For every other contact: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. CRM down → `bin/harold file crm`.
 3. **Vault Daily Note** — create or append to `vault/daily/YYYY-MM-DD-<session-slug>.md` (template: `vault/templates/daily.md`): what was done, contacts touched, files created or modified, CRM actions, pending items for next session.
 4. **Task Check** — update the task manager for anything discussed; create tasks for new action items (every task gets a due date and a project).
 5. **Record scheduled work** — every DUE item from boot: `bin/harold file trigger <id> ran|skipped "<reason>"`.

@@ -15,14 +15,14 @@
 
 ## Your Contact Types
 
-*Each contact in the CRM has exactly one type, from this list. Keep it short: if you are unsure which type someone is, you have too many. `team` is reserved for your own colleagues and triggers the internal-team gate.*
+*Each contact in the CRM has exactly one type, from this list. Keep it short: if you are unsure which type someone is, you have too many. If there are types whose conversations you never want logged (some people choose this for their own team), list them in `HAROLD_NO_LOG_TYPES` (see "CRM Filing Protocol" in `AGENTS.md`).*
 
 | Type | Who it covers |
 |------|---------------|
 | investor | [e.g. VCs, angels, family offices] |
 | partner | [e.g. distribution, channel, ecosystem bodies] |
 | founder | [e.g. founders you advise or peer with] |
-| team | Your own colleagues. Record kept current; interactions never logged. |
+| team | Your own colleagues |
 | other | Everyone else worth knowing |
 
 **Labels** add anything else worth seeing at a glance (e.g. `ecosystem`, `board`, `advisor`). Any number per contact; never a copy of the type.
@@ -41,7 +41,7 @@
 
 ## Your Team
 
-*Colleagues (type `team`). Harold keeps their records current and never logs conversations with them as CRM interactions.*
+*Colleagues (type `team`).*
 
 | Name | Role | Notes |
 |------|------|-------|

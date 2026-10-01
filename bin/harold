@@ -21,6 +21,8 @@
  * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path):
  *   HAROLD_TZ          IANA time zone, e.g. America/Chicago. Default: the zone of the machine running this.
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
+ *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
+ *                      as CRM interactions (records are still kept current). Empty by default.
  *   HAROLD_NOW         TESTING ONLY: pretend it is this time ("2026-10-05T06:10:00" is wall-clock time
  *                      in HAROLD_TZ; add Z or an offset for an absolute instant).
  *
@@ -616,7 +618,7 @@ function cmdBoot(root, today, opts, hook) {
   c.triggers.info.forEach(i => L.push(`- NOTE     ${i}`));
   if (c.warnings.length) { L.push(''); L.push('## Warnings'); c.warnings.forEach(w => L.push(`- ${w}`)); }
   L.push('');
-  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every external contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers), with the internal-team gate respected (type: team → never). harold close verifies these and commits + pushes the repo.`);
+  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers)${noLogTypes().size ? `; conversations with contact types in HAROLD_NO_LOG_TYPES (${[...noLogTypes()].join(', ')}) are never logged` : ''}. harold close verifies these and commits + pushes the repo.`);
   if (opts.full) {
     L.push('\n\n# FULL CONTEXT DUMP (--full)\n');
     ['AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
@@ -656,8 +658,8 @@ function crmTouchedToday(root, today) {
 // them as secrets): boot and close do it automatically, `harold replay [--dry-run]` does it by hand.
 // Same semantics as the harold-mcp tools harold_upsert_contact, harold_log_interaction and
 // harold_crm_task (tools/harold-mcp/server.js), plus two guards: a replay never creates a second contact
-// for a name the CRM already holds (it stops and says so), and never logs an interaction for a team
-// contact. Every write looks for its own result first, so a crash between the CRM write and the queue
+// for a name the CRM already holds (it stops and says so), and never logs an interaction for a contact
+// whose type is listed in HAROLD_NO_LOG_TYPES (when that optional setting is used). Every write looks for its own result first, so a crash between the CRM write and the queue
 // update cannot apply the same row twice on the next run. The queue is a fallback, not a workflow.
 const CRM_QUEUE = 'harold/crm-queue.jsonl';
 const CRM_ACTIONS = ['log_interaction', 'upsert_contact', 'crm_task'];
@@ -722,16 +724,19 @@ function resolveCrmContact(cfg, name, org, id) {
   if (m.length > 1) throw new Error(`${m.length} CRM contacts match "${name}", add org or contact_id to the row: ${listed(m)}`);
   return m[0];
 }
-// Internal-team gate: CRM type team, a team label, or a vault card whose type (or older category) is team.
-function cardIsTeam(root, name) {
+// Optional, off by default: HAROLD_NO_LOG_TYPES lists contact types whose conversations are never logged
+// as CRM interactions (for example, some people choose never to log conversations with their own team).
+// Their contact records are still kept current. A contact matches by its CRM type or its vault card's
+// `type` (or the older `category`).
+function noLogTypes() { return new Set(setting('HAROLD_NO_LOG_TYPES').split(',').map(t => t.trim().toLowerCase()).filter(Boolean)); }
+function cardType(root, name) {
   const card = path.join(root, 'vault/people', `${name}.md`);
-  try { if (!fs.existsSync(card)) return false; const fm = frontmatter(readFull(card)); return (fm.type || fm.category || '').toLowerCase() === 'team'; } catch (_) { return false; }
+  try { if (!fs.existsSync(card)) return ''; const fm = frontmatter(readFull(card)); return (fm.type || fm.category || '').toLowerCase(); } catch (_) { return ''; }
 }
-function isTeamContact(cfg, root, c) {
-  if ((c.category || '').toLowerCase() === 'team' || cardIsTeam(root, c.name)) return true;
-  const r = crmRequest(cfg, 'GET', `contact_categories?select=category_name&contact_id=eq.${enc(c.id)}`);
-  if (!r.ok) throw new Error(`label lookup failed: ${r.err}`);
-  return (r.data || []).some(x => (x.category_name || '').toLowerCase() === 'team');
+function cardIsNoLog(root, name) { const t = noLogTypes(); return t.size > 0 && t.has(cardType(root, name)); }
+function isNoLogContact(root, c) {
+  const t = noLogTypes();
+  return t.size > 0 && (t.has((c.category || '').toLowerCase()) || t.has(cardType(root, c.name)));
 }
 // "2026-07" and "2026" are how people remember dates; Postgres wants a day.
 function normalizeWhen(s) {
@@ -803,7 +808,7 @@ function replayLogInteraction(cfg, root, row, dry) {
   if (typeof p.subject !== 'string') throw new Error('subject is required');
   const when = normalizeWhen(p.occurred_at) || row.ts;
   const c = resolveCrmContact(cfg, p.contact_name || row.contact, p.org || p.company, p.contact_id);
-  if (isTeamContact(cfg, root, c)) throw new Refusal(`${c.name} is team: internal conversations are never logged as CRM interactions`);
+  if (isNoLogContact(root, c)) throw new Refusal(`${c.name}'s type is listed in HAROLD_NO_LOG_TYPES: conversations with this type are never logged as CRM interactions`);
   const q = `interactions?select=id&contact_id=eq.${enc(c.id)}&type=eq.${enc(p.type)}&subject=eq.${enc(p.subject)}&occurred_at=eq.${enc(when)}`;
   const dup = crmRequest(cfg, 'GET', q);
   if (!dup.ok) throw new Error(`duplicate check failed: ${dup.err}`);
@@ -997,7 +1002,8 @@ function closeOnce(root, today, opts, hook) {
   if (final && changed.length && !todaysNotes.length) problems.push(`final close: knowledge changed this session, a vault/daily note for ${today.iso} is required`);
 
   // 3. contacts filed: a vault/people card touched this session must carry today's last_updated and a
-  //    CRM write or crm-queue entry (CRM unreachable) — unless type: team (internal-team gate; `category: team` on older cards counts too).
+  //    CRM write or crm-queue entry (CRM unreachable) — unless its type is listed in the optional
+  //    HAROLD_NO_LOG_TYPES (`category` on older cards counts too) or the card says crm: none.
   // A card counts as touched only when something about the person changed: a new card, a changed frontmatter
   // field other than the structural ones (tags, aliases, dates), or a changed body line that is not a [[link]]
   // bullet, a ## Related header or blank. Tidying (tag normalization, cross-links, date fixes) is housekeeping,
@@ -1024,14 +1030,16 @@ function closeOnce(root, today, opts, hook) {
   // A contact counts as filed when the CRM itself shows a write for it today. The queue remains a
   // valid answer for when the CRM is down or not configured.
   const crmWritten = crmTouchedToday(root, today);
+  const noLog = noLogTypes();
   for (const f of peopleTouched) {
     const fm = frontmatter(readFull(path.join(root, f)));
     const name = path.basename(f, '.md');
-    if ((fm.type || fm.category || '').toLowerCase() === 'team') { notes.push(`${name}: type team — internal-team gate: records are kept current, interactions are never logged`); continue; }
+    const type = (fm.type || fm.category || '').toLowerCase();
+    if (noLog.has(type)) { notes.push(`${name}: type ${type} is in HAROLD_NO_LOG_TYPES — conversations are not logged`); continue; }
     if ((fm.crm || '').toLowerCase() === 'none') { notes.push(`${name}: crm: none — this card is deliberately out of the CRM`); continue; }
     const filed = crmWritten.has(name.toLowerCase()) || queue.some(q => (q.contact || '').toLowerCase() === name.toLowerCase());
     const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
-    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: use harold_upsert_contact (or harold_log_interaction for an external touchpoint). If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
+    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: use harold_upsert_contact (or harold_log_interaction for a conversation). If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
   }
 
   // 4. scheduled work recorded
@@ -1154,7 +1162,7 @@ function cmdFile(root, today, args, opts = {}) {
     let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error('usage: harold file crm \'{"contact":"Name","action":"log_interaction|upsert_contact|crm_task","payload":{...}}\''); return 2; }
     if (!obj.contact || !obj.action) { console.error('crm entry needs "contact" and "action"'); return 2; }
     if (!CRM_ACTIONS.includes(obj.action)) { console.error(`action must be one of: ${CRM_ACTIONS.join(', ')}`); return 2; }
-    if (cardIsTeam(root, obj.contact)) { console.error(`REFUSED: ${obj.contact} is type: team. Internal team interactions are never logged in the CRM.`); return 3; }
+    if (obj.action === 'log_interaction' && cardIsNoLog(root, obj.contact)) { console.error(`REFUSED: ${obj.contact} is type: ${cardType(root, obj.contact)}, which HAROLD_NO_LOG_TYPES says is never logged. Keep the record current with upsert_contact instead.`); return 3; }
     const qp = path.join(root, CRM_QUEUE);
     // "applied":"connector" records a write already made through a CRM connector or MCP tool in a harness
     // where bin/harold cannot see the CRM itself (no credentials here): it counts as filed, never replayed.

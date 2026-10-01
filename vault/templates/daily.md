@@ -13,7 +13,7 @@ session: {{slug}}
 <!-- With [[links]] to decision notes -->
 
 ## Contacts Touched
-<!-- [[person]] links, and what was filed to the CRM for each (or queued with bin/harold file crm). Team members: record only, no interaction -->
+<!-- [[person]] links, and what was filed to the CRM for each (or queued with bin/harold file crm). Types in HAROLD_NO_LOG_TYPES, if set: record only, no interaction -->
 
 ## Files Created / Modified
 

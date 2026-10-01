@@ -42,7 +42,7 @@ When you edit any file below, check its cascade column. If the field you are cha
 | Relationship state (type, labels, warmth, pipeline entries, last contact) | **CRM** | `vault/people/<Name>.md` frontmatter | CRM first → vault card frontmatter (`warmth`, `last_updated`) |
 | Names, titles, organizations | `harold/facts.md` + `vault/people/` | CRM, project folders, `memory/CLAUDE.md` | Fix the spelling everywhere it appears → add the mistake to the Terminology table in facts.md |
 | New contacts | `playbook/core/contact-intake.md` | CRM, `vault/people/`, `harold/facts.md` | Vault card → CRM record → facts.md row if it is a fact worth guarding |
-| Internal team | vault card `type: team` | CRM record | Record kept current; interactions are never logged |
+| Types you never log (optional `HAROLD_NO_LOG_TYPES`) | vault card `type` | CRM record | Record kept current; interactions are never logged |
 
 ---
 

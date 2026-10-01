@@ -48,7 +48,7 @@ Every contact has **exactly one type**, chosen from **your own short list**. Def
 | **investor** | Deploys capital: VC, angel, family office, fund, PE |
 | **partner** | Ongoing collaboration: co-delivery, channel, program partner, chamber of commerce, trade or economic-development office, government counterpart |
 | **founder** | Runs or is starting a company, whatever else they are |
-| **team** | **Reserved for your own colleagues.** Record only, see the internal-team gate |
+| **team** | Your own colleagues |
 | **other** | Advisor, introducer, prospect, general business contact |
 
 - **Unclear between partner and other:** default to **other** unless there is an explicit ongoing collaboration or formal program.
@@ -80,26 +80,24 @@ High **only** if (a) it is explicitly marked high in a source you trust, or (b) 
 
 ### Status (active / pending / cold)
 
-- **active** — live dialogue, a scheduled meeting, or an open outreach task. Team members are always active.
+- **active** — live dialogue, a scheduled meeting, or an open outreach task. Your own team members are usually active.
 - **pending** — in the system but not yet contacted, or awaiting a reply, or on hold.
 - **cold** — went dark: outreach finished with no reply, or 60+ days dormant.
 - **If unsure: pending.**
 
 ---
 
-## Step 3 — Internal-team gate (check before any CRM action)
-
-If the contact's type is `team` (vault frontmatter `type: team`):
-- A contact **record** is fine and should be kept current (title, company, status) with `harold_upsert_contact`.
-- **Never log an interaction with them** (`harold_log_interaction`), and never update their profile as if an internal conversation were an external touchpoint. Internal communications are not CRM interactions. No exceptions.
+## Step 3 — Check for exceptions (before any CRM action)
 
 If the frontmatter says **`crm: none`**, the person is deliberately out of the CRM: vault profile only, no CRM calls.
 
+If the optional `HAROLD_NO_LOG_TYPES` setting lists the contact's type (see "CRM Filing Protocol" in `AGENTS.md`; off by default, and some people use it for their own team), keep the **record** current with `harold_upsert_contact` but never log an interaction with them.
+
 ---
 
-## Step 4 — The cascade (external contacts)
+## Step 4 — The cascade
 
-All of these, together, for every new external contact:
+All of these, together, for every new contact:
 
 1. **`harold_upsert_contact`** — name, company, role, type (`category`), labels, warmth (or unset), status, priority, plus whatever is known: email, location, focus, how you met, notes.
 2. **`vault/people/<Name>.md`** from `vault/templates/person.md`, frontmatter:
@@ -124,7 +122,7 @@ All of these, together, for every new external contact:
 - **investor** — record firm and investor style (VC / angel / family office / PE) in notes. If you run a raise, add them to that project's tracker (`bin/harold where <raise>`) and let the raise's own playbook take over research and outreach. Run `playbook/core/analyst.md`: does their portfolio, thesis or network create an angle? Surface them in the next morning brief's pipeline health if they're in the pipeline.
 - **partner** — add the `ecosystem` label for chambers, trade offices, economic-development and government contacts. If they're tied to a project, update that project's card or README. Run the analyst playbook: any recent news about their organization or region?
 - **founder** — record what the company does. Create or link a `vault/companies/` card if the company matters. Pipeline only if something is in motion (an investment, a partnership, a piece of work). Analyst playbook: what does this company change about anything you're doing?
-- **team** — record only (Step 3). Update `dashboard/people.md` if they change operational context (new role, new reporting line). Onboarding checklist task if needed.
+- **team** — update `dashboard/people.md` if they change operational context (new role, new reporting line). Onboarding checklist task if needed.
 - **other** — default warmth `Cold` or unset, status `pending`. **Watch for reclassification:** if investor, partner or founder context appears later, change the type with `harold_upsert_contact` and run that type's additions.
 
 **Downstream triggers:** a meeting mentioned or imminent → queue meeting prep; a meeting just happened → `playbook/core/meeting-debrief.md`.
@@ -205,8 +203,8 @@ Duplicate check finds her → `harold_upsert_contact` (company), update the vaul
 - [ ] Duplicate check run (CRM, `bin/harold search`, task manager) before creating anything
 - [ ] Exactly one type from your list; labels separate and not duplicating the type
 - [ ] Warmth set only if assessed (else unset); status and priority by the rules above
-- [ ] Internal-team gate and `crm: none` respected
-- [ ] External: `harold_upsert_contact` done (or queued with `bin/harold file crm`)
+- [ ] `crm: none` and `HAROLD_NO_LOG_TYPES` (if set) respected
+- [ ] `harold_upsert_contact` done (or queued with `bin/harold file crm`)
 - [ ] `vault/people/<Name>.md` created/updated with full frontmatter and `last_updated`
 - [ ] `harold/facts.md` updated
 - [ ] Follow-up task + `harold_crm_task` if there's a next step

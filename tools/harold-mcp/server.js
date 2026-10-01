@@ -27,7 +27,10 @@
  *   SUPABASE_URL                https://<project-ref>.supabase.co
  *   SUPABASE_SERVICE_ROLE_KEY   the service_role key (never commit it)
  *   HAROLD_ROOT / HAROLD_BASE   workspace root (default: two levels above this file)
- *   HAROLD_NO_CADENCE_TYPES     contact types that never get staleness alerts (default: team,other)
+ *   HAROLD_NO_LOG_TYPES         optional: contact types whose conversations are never logged
+ *                               (harold_log_interaction refuses them). Empty by default.
+ *   HAROLD_NO_CADENCE_TYPES     contact types that never get staleness alerts (default: other).
+ *                               Types in HAROLD_NO_LOG_TYPES are skipped too.
  * Database: tools/harold-mcp/schema.sql creates exactly the tables and columns this file uses.
  */
 
@@ -54,8 +57,14 @@ const CRM_NOT_CONFIGURED = `Error: CRM not configured — ${CRM_MISSING.join(" a
 if (CRM_MISSING.length) {
   console.error("\n" + "!".repeat(78) + "\n!! harold-mcp: CRM DISABLED. Missing: " + CRM_MISSING.join(", ") + "\n!! Set them in ~/.harold/env (bin/harold-setup-crm) and start the server via bin/harold-mcp.\n" + "!".repeat(78) + "\n");
 }
-// Contact types that are not outreach relationships and never get staleness alerts.
-const NO_CADENCE_TYPES = (process.env.HAROLD_NO_CADENCE_TYPES || "team,other").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+// Optional, off by default: contact types whose conversations are never logged as interactions
+// (for example, some people choose never to log conversations with their own team). Their records
+// are still kept current; harold_log_interaction refuses them.
+const typeList = v => (v || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+const NO_LOG_TYPES = typeList(process.env.HAROLD_NO_LOG_TYPES);
+// Contact types that never get staleness alerts: HAROLD_NO_CADENCE_TYPES (default: other), plus the
+// no-log types, whose last-contact date would otherwise look stale forever.
+const NO_CADENCE_TYPES = [...new Set([...typeList(process.env.HAROLD_NO_CADENCE_TYPES ?? "other"), ...NO_LOG_TYPES])];
 
 let _supabase = null;
 function getSupabase() {
@@ -132,7 +141,7 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
         categories.push(contact.category);
       }
 
-      // Skip non-outreach types (HAROLD_NO_CADENCE_TYPES, default team + other) — we only track outreach relationships
+      // Skip non-outreach types (HAROLD_NO_CADENCE_TYPES, default other, plus HAROLD_NO_LOG_TYPES)
       if (categories.every(c => NO_CADENCE_TYPES.includes(String(c).toLowerCase()))) continue;
 
       const warmth = (contact.warmth || "").toLowerCase();
@@ -1246,6 +1255,16 @@ server.tool(
         resolvedName = resolved.name;
       }
 
+      // Optional HAROLD_NO_LOG_TYPES: conversations with these contact types are never logged.
+      if (NO_LOG_TYPES.length) {
+        const { data: who, error: whoErr } = await supabase.from("contacts").select("name, category").eq("id", resolvedId).single();
+        if (whoErr) throw whoErr;
+        const type = String(who?.category || "").toLowerCase();
+        if (NO_LOG_TYPES.includes(type)) {
+          return { content: [{ type: "text", text: `Not logged: ${who.name} is type "${type}", and HAROLD_NO_LOG_TYPES says conversations with that type are never logged. Keep their record current with harold_upsert_contact instead.` }], isError: true };
+        }
+      }
+
       // Insert the interaction
       const { data: interaction, error } = await supabase
         .from("interactions")
@@ -1277,7 +1296,7 @@ server.tool(
 
 server.tool(
   "harold_upsert_contact",
-  "Create or update a contact in the CRM. Use when new people are encountered (meetings, intros, research) or when contact details change.\n\nFor NEW contacts: provide name + at minimum org and category (the contact's one type).\nFor UPDATES: provide contact_id to target exact record, OR name+org to find and update.\n\nType (category): exactly one, from your own list (e.g. investor, partner, founder, team, other). team = your own colleagues: keep the record current, never log their interactions.\nLabels (categories): any number of extra tags, e.g. ecosystem, board.\nWarmth: Cold, Lukewarm, Warm, Hot, or empty (not rated)\nStatus: active, pending, cold, archived",
+  "Create or update a contact in the CRM. Use when new people are encountered (meetings, intros, research) or when contact details change.\n\nFor NEW contacts: provide name + at minimum org and category (the contact's one type).\nFor UPDATES: provide contact_id to target exact record, OR name+org to find and update.\n\nType (category): exactly one, from your own list (e.g. investor, partner, founder, team, other).\nLabels (categories): any number of extra tags, e.g. ecosystem, board.\nWarmth: Cold, Lukewarm, Warm, Hot, or empty (not rated)\nStatus: active, pending, cold, archived",
   {
     contact_id: z.string().optional().describe("For updates: exact CRM UUID to update"),
     name: z.string().describe("Contact full name"),

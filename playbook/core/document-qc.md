@@ -74,7 +74,7 @@ Cross-reference document content against the knowledge base:
 | Terminology and product names | `harold/facts.md`, `memory/glossary.md` |
 | Dates and timelines | `harold/events.md`, project milestones |
 | Company positioning | The project's own docs, resolved with `bin/harold where <project>` |
-| Team info | `vault/people/` profiles with `type: team` |
+| Team info | `vault/people/` profiles of your colleagues (e.g. `type: team`) |
 | Historical claims ("we met in...", "they committed to...") | `vault/meetings/`, `vault/daily/`, `vault/decisions/`; use `bin/harold search "<claim>"` |
 
 **Flag every discrepancy** between the document and the knowledge base, and between the vault profile and the CRM record for the same person. Do not assume the document is wrong; the knowledge base might be the error source.
@@ -129,7 +129,7 @@ When external sources conflict with the knowledge base:
 3. **If the KB was wrong, fix it at the source, all places at once:**
    - The file the wrong value came from (project doc, `dashboard/status.md`, `harold/events.md`, etc.).
    - `harold/facts.md` if it is a discrete fact (`harold_fact`, or edit the file).
-   - **For a person:** the CRM contact record comes first (`harold_upsert_contact` with the corrected title/company/name), then `vault/people/<name>.md` (fix the field, bump `last_updated`). A correction is not an interaction: do not call `harold_log_interaction` for it. The internal team gate still applies: for `type: team` you may keep the record current, never log an interaction. If the CRM is unreachable, queue the update: `bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{...}}'`.
+   - **For a person:** the CRM contact record comes first (`harold_upsert_contact` with the corrected title/company/name), then `vault/people/<name>.md` (fix the field, bump `last_updated`). A correction is not an interaction: do not call `harold_log_interaction` for it. If the CRM is unreachable, queue the update: `bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{...}}'`.
    - If the error came from something Harold introduced (misheard, assumed, mis-transcribed) or the operator corrected it, file a lesson immediately: `bin/harold file learning '{"severity":"critical","project":"global","category":"facts","lesson":"..."}'` (use category `names` or `titles` where that fits).
 4. **Update the document** with the correct information.
 5. **Note the fix** in today's daily note: `bin/harold file daily <slug> "Document QC: corrected [X] to [Y] in [files], source [citation]"`.

@@ -63,7 +63,7 @@ For each real connection, update the file or system it touches:
 | Current priorities | `memory/CLAUDE.md` | — |
 | How a process should run | the relevant playbook | — |
 
-Team members (`type: team`) are never the subject of CRM interaction logs; flag intel to them via a task instead.
+Applying intel is not a conversation: never log a CRM interaction for it. To pass intel on to a colleague, use a task.
 
 ### 4. Log the application
 Append to today's `vault/daily/YYYY-MM-DD-<slug>.md` (or `bin/harold file daily <slug> "<text>"`):
