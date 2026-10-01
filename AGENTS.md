@@ -12,11 +12,22 @@ Before anything else, run the boot command from the workspace root:
 bin/harold boot
 ```
 
-It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. In Claude Code this runs automatically from a SessionStart hook (`.claude/settings.json`); in Cowork it runs from the `boot-harold` skill of the Harold plugin (`tools/harold-plugin/`); elsewhere, run it. The operator never types it.
+It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit, or output starting `⛔ HAROLD BOOT REFUSED`), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. The operator never types it.
+
+Harold works the same from any AI tool. Where the tool has lifecycle hooks, the workspace already wires boot and close into them:
+
+| Tool | Hook file | Session start | End of every turn | Session end |
+|------|-----------|---------------|-------------------|-------------|
+| Claude Code | `.claude/settings.json` | `SessionStart` → boot | `Stop` → close | `SessionEnd` → close --final |
+| Codex | `.codex/hooks.json` (trust it once with `/hooks`) | `SessionStart` → boot | `Stop` → close | `SessionEnd` → close --final |
+| Cursor | `.cursor/hooks.json` | `sessionStart` → boot | `stop` → close | `sessionEnd` → close --final |
+| Claude desktop app (Cowork) | the Harold plugin (`tools/harold-plugin/`) | `boot-harold` skill + hook | `Stop` → close | `SessionEnd` → close --final |
+
+If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again.
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
-At the end of every turn `bin/harold close` runs (Claude Code Stop hook). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed (internal-team gate respected), that due scheduled work was recorded, and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
+At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed (internal-team gate respected), that due scheduled work was recorded, and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
 
 ---
 
@@ -57,7 +68,7 @@ Then set whichever activity you're starting with to `"working"` with a `"task"`,
 The visualizer polls every few seconds but only shows what's in the file.
 
 - **At the START of processing every user message**, set the right activity to `"working"` with a current `"task"` and `"progress"`, and the others to `"sleeping"`.
-- **At the END of processing every user message**, set all activities back to `"sleeping"` (`bin/harold close` does this for you in Claude Code). Keep `"session": true` and `"task"`.
+- **At the END of processing every user message**, set all activities back to `"sleeping"` (`bin/harold close` does this for you). Keep `"session": true` and `"task"`.
 - **Also update** when finishing a major phase or starting a new type of work, and when the session ends (`"session": false`, all `"sleeping"`; `bin/harold close --final` does this).
 
 ---
@@ -187,7 +198,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
 - **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ` and `HAROLD_BRIEF_TIME`. `bin/harold close` refuses to commit anything that looks like a key.
-- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions or a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
+- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving Claude Code, Codex or Cursor, or a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
 ## CRM Filing Protocol (MANDATORY — all three, every time)
@@ -268,7 +279,7 @@ It assigns the next ID under a lock and appends the entry. Choosing the ID by re
 
 ## Session Commands
 
-These trigger on natural language; no slash prefix needed. They work the same in Claude Code, Cowork or any other harness.
+These trigger on natural language; no slash prefix needed. They work the same in Claude Code, Cowork, Codex, Cursor or any other harness.
 
 ### /done — Session Close
 
