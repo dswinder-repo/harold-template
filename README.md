@@ -1,6 +1,6 @@
 # Harold 2.0 — starter workspace
 
-Harold is an AI chief of staff you run on your own machine with your own AI harness (Claude Code, the Claude desktop app, or any tool that reads `AGENTS.md`). This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
+Harold is an AI chief of staff you run with your own AI harness (Claude Code, the Claude desktop app, or any tool that reads `AGENTS.md`), from any computer or from the cloud. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
 
 **Full documentation: [harold.works/docs](https://harold.works/docs).** If you are an AI agent setting this up for someone, read the docs first, then this README, then `AGENTS.md`.
 
@@ -30,6 +30,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    mkdir -p ~/.harold && chmod 700 ~/.harold
    echo 'export HAROLD_TZ="America/Chicago"' >> ~/.harold/env && chmod 600 ~/.harold/env
    ```
+   Without it, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
    Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it.
 
 4. **Set up the CRM (Supabase).** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Then:
@@ -52,7 +53,7 @@ AGENTS.md                  the constitution: boot/close contract, startup sequen
 CLAUDE.md                  one line: @AGENTS.md
 .claude/settings.json      SessionStart → boot, Stop → close, SessionEnd → close --final
 bin/
-  harold                   boot | check | close | file (learning|trigger|daily|crm) | where | search | index | root
+  harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | where | search | index | root
   harold-index             SQLite FTS5 search index over every markdown file (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
   harold-linear            optional Linear task layer
@@ -74,16 +75,31 @@ tools/
   harold-plugin/           Cowork plugin: the same hooks + a "boot Harold" skill
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
-  morning-brief.yml        OPTIONAL scheduled cloud brief (needs a repo secret; see the file)
+  morning-brief.yml        OPTIONAL scheduled morning brief, in your time zone at your time (see below)
+tests/
+  brief-gate.test.js       tests for the brief schedule gate: node --test tests/brief-gate.test.js
 ```
 
 ### The CRM model
 
 Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other; `team` is reserved for your own colleagues, whose conversations are never logged), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`.
 
-### The optional cloud brief
+### Morning brief: your time zone, your time
 
-`.github/workflows/morning-brief.yml` runs `bin/harold check` and `boot` on GitHub's machines on weekday mornings and has Claude write a draft of the first two steps of the morning brief to `harold/briefs/YYYY-MM-DD.md`. It needs a `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` repository secret, and the result is a saved draft: nothing reads or sends it to you automatically. Delete the workflow if you don't want it.
+Say "good morning" and Harold runs the morning brief (`playbook/core/morning-brief.md`). Optionally, Steps 1 and 2 can be written for you before you sit down, so the morning starts with them on screen. By default that happens at **6:30am on weekdays, in your time zone**.
+
+`.github/workflows/morning-brief.yml` does it on GitHub's machines, so no computer of yours needs to be on. GitHub schedules only in UTC, so the workflow wakes every hour and asks `bin/harold brief start` whether the brief is due: a weekday in your zone, at or after your time, and no brief yet today. Every other hour it stops in seconds, and daylight saving takes care of itself. The draft lands in `harold/briefs/YYYY-MM-DD.md`; the next time you boot, Harold sees it and shows it instead of re-running those steps.
+
+To turn it on, add one repository secret (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`) and set two repository **variables** (Settings → Secrets and variables → Actions → Variables):
+
+| Variable | Example | Default |
+|---|---|---|
+| `HAROLD_TZ` | `America/Chicago`, `Europe/London`, `Asia/Singapore` | UTC on GitHub's machines (each run warns until you set it) |
+| `HAROLD_BRIEF_TIME` | `07:15` (24-hour, your local time) | `06:30` |
+
+To change the time or zone later, change the variables; nothing else. Check the gate any time with `bin/harold brief status`. The workflow file explains the rest (dry runs, the optional ntfy phone push, and how to spend fewer Actions minutes).
+
+**Prefer a Claude Code routine?** Delete the workflow and create a routine whose prompt is `harold/brief-prompt.md`, on its own schedule (for example weekdays at your brief time). The routine's schedule is the clock; the same gate still skips weekends and days that already have a brief. Set `HAROLD_TZ` in the routine's environment so dates are yours, not the server's.
 
 ## Keeping it private
 
