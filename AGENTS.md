@@ -1,6 +1,6 @@
 # Harold — Constitution
 
-> **This file is the canonical entry point for every harness: Claude Code, Cowork, Codex, Cursor, a terminal, a scheduled job.** `CLAUDE.md` at the repo root is a one-line include of this file (`@AGENTS.md`). All working memory, context and system files live in this workspace, versioned in a private git repository ([YOUR GITHUB USER]/[YOUR REPO]).
+> **This file is the canonical entry point for every harness (any AI tool that can read this file and run a command, with any model), a terminal or a scheduled job.** `CLAUDE.md` at the repo root is a one-line include of this file (`@AGENTS.md`). All working memory, context and system files live in this workspace, versioned in a private git repository ([YOUR GITHUB USER]/[YOUR REPO]).
 >
 > **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ` in `~/.harold/env`, e.g. America/Chicago). Everywhere this file says "the operator", it means you.
 
@@ -14,7 +14,7 @@ bin/harold boot
 
 It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit, or output starting `⛔ HAROLD BOOT REFUSED`), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. The operator never types it.
 
-Harold works the same from any AI tool. Where the tool has lifecycle hooks, the workspace already wires boot and close into them:
+Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Where a harness has lifecycle hooks, boot and close run automatically. The workspace ships ready-made wiring for these, as examples:
 
 | Tool | Hook file | Session start | End of every turn | Session end |
 |------|-----------|---------------|-------------------|-------------|
@@ -23,7 +23,7 @@ Harold works the same from any AI tool. Where the tool has lifecycle hooks, the 
 | Cursor | `.cursor/hooks.json` | `sessionStart` → boot | `stop` → close | `sessionEnd` → close --final |
 | Claude desktop app (Cowork) | the Harold plugin (`tools/harold-plugin/`) | `boot-harold` skill + hook | `Stop` → close | `SessionEnd` → close --final |
 
-If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again.
+If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again. To wire another harness's hooks, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
@@ -198,7 +198,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
 - **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ` and `HAROLD_BRIEF_TIME`. `bin/harold close` refuses to commit anything that looks like a key.
-- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving Claude Code, Codex or Cursor, or a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
+- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with a ready-made switch for Claude Code, Codex and Cursor, or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
 ## CRM Filing Protocol (MANDATORY — all three, every time)
@@ -279,7 +279,7 @@ It assigns the next ID under a lock and appends the entry. Choosing the ID by re
 
 ## Session Commands
 
-These trigger on natural language; no slash prefix needed. They work the same in Claude Code, Cowork, Codex, Cursor or any other harness.
+These trigger on natural language; no slash prefix needed. They work the same in any harness, with any model.
 
 ### /done — Session Close
 

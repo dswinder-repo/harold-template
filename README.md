@@ -1,6 +1,6 @@
 # Harold 2.0 — starter workspace
 
-Harold is an AI chief of staff you run with your own AI tool (Claude Code, the Claude desktop app, Codex, Cursor, or any agent that reads `AGENTS.md`), from any computer or from the cloud. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
+Harold is an AI chief of staff that works with any AI tool and any model: it is platform-, model- and harness-agnostic, and runs in any harness that can read `AGENTS.md` and run a shell command, from any computer or from the cloud. Ready-made wiring ships for Claude Code, the Claude desktop app, Codex and Cursor. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
 
 **Full documentation: [harold.works/docs](https://harold.works/docs).** If you are an AI agent setting this up for someone, read the docs first, then this README, then `AGENTS.md`.
 
@@ -39,23 +39,40 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    (cd tools/harold-mcp && npm install)
    cp .mcp.example.json .mcp.json             # Claude Code: then put the absolute path to bin/harold-mcp in it
    ```
-   Codex and Cursor have their own examples (see [Use it with your AI tool](#use-it-with-your-ai-tool)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored.
+   Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored.
 
 5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on.
 
-6. **Start a session and say good morning.** Claude Code, Codex and Cursor run boot and close from the hook files already in this repository (Codex asks you to trust them once). In the Claude desktop app, install `tools/harold-plugin`. Anywhere else, the first instruction in `AGENTS.md` is to run `bin/harold boot`. Details per tool below.
+6. **Start a session and say good morning**, in whichever harness you use. Claude Code, Codex and Cursor run boot and close from the hook files already in this repository (Codex asks you to trust them once); in the Claude desktop app, install `tools/harold-plugin`. In any other harness, wire the same commands into its hooks or let the first instruction in `AGENTS.md` have the agent run them. Details below.
 
-## Use it with your AI tool
+## Any AI tool, any model
 
-Harold is not tied to one AI tool. Every tool that matters reads `AGENTS.md` (Claude Code reads it through the one-line `CLAUDE.md`), and the same `bin/harold boot` and `bin/harold close` do the enforcing. What differs is how they get called.
+Harold is platform-, model- and harness-agnostic. A harness is the app or command-line tool that runs an AI model and lets it read your files and run commands. Harold is plain files in a git repository plus a small command-line program, so it works with any harness that can do three things:
 
-| Tool | Boot and close | Harold's MCP tools (CRM) | Scheduled brief (`HAROLD_AGENT`) |
+1. **Read an instruction file at the start.** `AGENTS.md` is the shared file name many AI agent tools read on their own ([agents.md](https://agents.md)). For one that doesn't, point it at `AGENTS.md`.
+2. **Run a shell command:** `bin/harold boot` at the start of a session, `bin/harold close` at the end of every turn.
+3. **Ideally, connect to MCP servers** ([an open standard](https://modelcontextprotocol.io/introduction)) for the CRM and knowledge tools. Without MCP the agent still works from the files; CRM changes it cannot make wait in `harold/crm-queue.jsonl`, which boot and close apply once the CRM's credentials are present.
+
+Any model the harness offers works; Harold doesn't depend on a particular one, because the checks are a program, not the model. Automatic hooks are a convenience: where a harness supports them, the checks run on their own; where it doesn't, the first instruction in `AGENTS.md` has the agent run them. Switching harness or model doesn't mean rebuilding anything: the knowledge, rules and tools stay the same. The author runs Harold on Claude; that is his setup, not a requirement.
+
+### Any other harness: a checklist
+
+1. **Instructions.** If it reads `AGENTS.md`, nothing to do. Otherwise add one line to its own rules file: read and follow `AGENTS.md` at the start of every session.
+2. **With hooks.** From the workspace root, run `bin/harold boot` at session start, `bin/harold close` at the end of every turn and `bin/harold close --final` at session end, with no `--via` flag (that flag is only for the three harnesses below). If the hook passes input on stdin, add `< /dev/null` so Harold answers in plain text. Boot prints the context to hand the agent and exits 0, or prints `⛔ HAROLD BOOT REFUSED` and exits 2. Close exits 0 when everything is filed and pushed, 2 with the list of what is missing on stderr (send it back to the agent, which fixes it and closes again), or 1 when only the push failed.
+3. **Without hooks.** Nothing to wire: `AGENTS.md` tells the agent to run boot first and close at the end of every turn. Every command also works by hand in a terminal.
+4. **MCP.** Add `bin/harold-mcp` as a local (command) MCP server, with its absolute path. It reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
+5. **Scheduled brief.** Any harness with a headless mode can write it: run it on a schedule with `harold/brief-prompt.md` as the prompt (the prompt runs `bin/harold brief start` and `brief finish` itself). In `.github/workflows/morning-brief.yml`, add a step for it next to the three already there; the gate before it and the finish step after it stay the same.
+
+### Ready-made wiring
+
+This repository ships hook files and MCP examples for Claude Code (and the Claude desktop app, through a plugin), Codex and Cursor, as worked examples of the checklist. For any other harness, wire the same three commands.
+
+| Harness | Boot and close | Harold's MCP tools (CRM) | Scheduled brief (`HAROLD_AGENT`) |
 |---|---|---|---|
 | Claude Code | `.claude/settings.json` hooks, automatic | `.mcp.json` from `.mcp.example.json` | `claude` (default) |
 | Claude desktop app (Cowork) | the plugin in `tools/harold-plugin/` | add `bin/harold-mcp` as a local MCP server | n/a |
 | Codex | `.codex/hooks.json` hooks, after you trust them | `.codex/config.toml` from `.codex/config.example.toml`, or `codex mcp add` | `codex` |
 | Cursor | `.cursor/hooks.json` hooks, automatic | `.cursor/mcp.json` from `.cursor/mcp.example.json` | `cursor` |
-| Anything else | the agent runs them, per `AGENTS.md` | whatever MCP setup it has | n/a |
 
 **Claude Code.** Open the workspace folder and start a session. `SessionStart` runs boot, `Stop` runs close at the end of every turn, `SessionEnd` runs `close --final`.
 
@@ -64,8 +81,6 @@ Harold is not tied to one AI tool. Every tool that matters reads `AGENTS.md` (Cl
 **Codex.** Codex reads `AGENTS.md` directly. The hooks are in `.codex/hooks.json`, but Codex runs a project's hooks only when you trust the project and the hooks themselves: start Codex in the workspace, type `/hooks`, review the three Harold hooks and trust them. Codex records trust against the exact hook definition, so do it again after any edit to that file. Codex's `SessionEnd` hook may run for three seconds at most, so `close --final` there hands its work to a background process (`--detach`) and returns at once; its output goes to `harold/active-sessions/.state/<session>.detached.log`. For the CRM tools: `cp .codex/config.example.toml .codex/config.toml` and put in the absolute path, or run `codex mcp add harold-mcp -- /absolute/path/to/bin/harold-mcp`.
 
 **Cursor.** Cursor reads `AGENTS.md` and runs `.cursor/hooks.json` in a trusted workspace: `sessionStart` runs boot (its output becomes context), `stop` runs close (if filing is missing, Cursor gets a follow-up message and keeps going; after four attempts Harold stops asking and reports what is unfiled), `sessionEnd` runs `close --final`. Cursor also loads Claude Code's `.claude/settings.json` hooks by default (Settings → Agents → Third-Party Imports), so each event would fire twice. It doesn't: when the Claude Code hook fires inside Cursor and `.cursor/hooks.json` exists, it answers `{}` and does nothing, and Cursor's own hook does the work. If you delete `.cursor/hooks.json`, the imported Claude Code hooks take over and answer in Cursor's format. For the CRM tools: `cp .cursor/mcp.example.json .cursor/mcp.json` (no path to edit). Cursor's cloud agents do not run `sessionStart` or `sessionEnd`; there the agent runs boot itself, as `AGENTS.md` says.
-
-**Any other agent.** If it reads `AGENTS.md`, it is told to run `bin/harold boot` first and `bin/harold close` at the end of every turn. If it does not, paste that instruction into its own rules file. Every command also works by hand in a terminal.
 
 Each hook command passes `--via=claude|codex|cursor`, so `bin/harold` answers in that tool's format: plain text or `{"additional_context"}` at start, `{"decision":"block"}` or `{"followup_message"}` when filing is missing. `tests/hooks.test.js` feeds each tool's documented hook input to boot and close and checks the answers. That proves Harold's side against the published hook formats of Codex and Cursor; if either tool behaves differently from its documentation, the fallback is the instruction in `AGENTS.md`, and please report it.
 
@@ -105,7 +120,7 @@ tools/
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
   morning-brief.yml        OPTIONAL scheduled morning brief, in your time zone at your time, written by
-                           Claude Code, Codex or Cursor (see below)
+                           any agent with a headless mode; a switch for Claude Code, Codex or Cursor (see below)
 tests/
   brief-gate.test.js       tests for the brief schedule gate: node --test tests/brief-gate.test.js
   hooks.test.js            boot and close as Claude Code, Codex and Cursor hooks: node --test tests/hooks.test.js
@@ -121,7 +136,7 @@ Say "good morning" and Harold runs the morning brief (`playbook/core/morning-bri
 
 `.github/workflows/morning-brief.yml` does it on GitHub's machines, so no computer of yours needs to be on. GitHub schedules only in UTC, so the workflow wakes every hour (at :35, so a 6:30 brief starts about 6:35) and asks `bin/harold brief start` whether the brief is due: a weekday in your zone, at or after your time, and no brief yet today. Every other hour it stops in seconds, and daylight saving takes care of itself. The draft lands in `harold/briefs/YYYY-MM-DD.md`; the next time you boot, Harold sees it and shows it instead of re-running those steps.
 
-To turn it on, add one repository secret for the AI tool that writes it and set two repository **variables** (Settings → Secrets and variables → Actions → Variables). Claude Code is the default and needs `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. To use Codex instead, set the variable `HAROLD_AGENT` to `codex` and add the secret `OPENAI_API_KEY` (the workflow uses the official `openai/codex-action`); for Cursor, set `HAROLD_AGENT` to `cursor` and add `CURSOR_API_KEY` (the workflow uses Cursor's headless CLI, `agent -p`). An optional `HAROLD_AGENT_MODEL` variable picks the model for Codex or Cursor.
+Any agent with a headless (non-interactive) mode can write it; the workflow has a switch for three. To turn it on, add one repository secret for the agent that writes it and set two repository **variables** (Settings → Secrets and variables → Actions → Variables). Claude Code is the default and needs `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. To use Codex instead, set the variable `HAROLD_AGENT` to `codex` and add the secret `OPENAI_API_KEY` (the workflow uses the official `openai/codex-action`); for Cursor, set `HAROLD_AGENT` to `cursor` and add `CURSOR_API_KEY` (the workflow uses Cursor's headless CLI, `agent -p`). An optional `HAROLD_AGENT_MODEL` variable picks the model for Codex or Cursor.
 
 | Variable | Example | Default |
 |---|---|---|
