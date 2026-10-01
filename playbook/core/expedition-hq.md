@@ -39,7 +39,7 @@ Expedition HQ is a small zero-dependency Node server at `tools/visualizer/serve.
 - Active sessions sort to the top; ended sessions dim, and ended sessions older than about 2 hours are retired from the view.
 - If a session stops updating its file, the server can infer recent activity from the harness's local session logs so the view does not freeze.
 - It is local-only. Do not expose port 3210 to the internet.
-- Optional: start it at login with your OS's service manager (launchd, systemd, Task Scheduler).
+- Optional: start it at login with your operating system's service manager. It is a local viewer only: nothing else in Harold needs it running.
 
 ---
 

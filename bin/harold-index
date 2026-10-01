@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 harold-index — SQLite FTS5 search over Harold's markdown. Replaces the Obsidian Local REST API
-(localhost-only, Mac-only). No app, no server, no machine dependency: one file, harold/search.db,
+(localhost-only, tied to one desktop app on one computer). No app, no server, no machine dependency: one file, harold/search.db,
 gitignored and rebuilt from the markdown in seconds (bin/harold boot rebuilds it whenever it is stale).
 
   harold-index build            rebuild harold/search.db from scratch

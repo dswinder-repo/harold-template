@@ -16,8 +16,8 @@
  *
  * Then open http://localhost:3210 in your browser.
  *
- * Local-only by design: it listens on 127.0.0.1 (override with HOST=...) and sends no CORS
- * headers, because /api/preview-file can read files in your workspace. Do not expose the port.
+ * Local-only by design: it listens on 127.0.0.1 only and sends no CORS headers, because
+ * /api/preview-file can read files in your workspace. Do not expose the port.
  * Zero dependencies (Node 18+).
  */
 
@@ -31,7 +31,7 @@ const { exec } = require('child_process');
 // --- Config ---
 const args = process.argv.slice(2);
 const PORT = getArg('--port', 3210);
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = '127.0.0.1'; // never 0.0.0.0: the preview endpoint serves workspace files
 const SESSIONS_DIR = getArg('--sessions',
   path.resolve(__dirname, '..', '..', 'harold', 'active-sessions')
 );
@@ -64,6 +64,14 @@ function getArg(flag, fallback) {
 
 // --- Server ---
 const server = http.createServer((req, res) => {
+  // Loopback only also means loopback names only: refusing any other Host header stops a web page
+  // from reaching this server through DNS rebinding.
+  const host = String(req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(host)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
   if (req.url === '/api/sessions') {
     return serveSessions(req, res);
   }
@@ -730,7 +738,7 @@ function handleGit(res, command) {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n  Expedition HQ running at http://${HOST === '127.0.0.1' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`\n  Expedition HQ running at http://localhost:${PORT}`);
   console.log(`  Registered sessions: ${SESSIONS_DIR}`);
   console.log(`  Auto-detect:     ${CLAUDE_PROJECTS_DIR}`);
   console.log();
