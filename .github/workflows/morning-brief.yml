@@ -14,6 +14,9 @@ name: Harold morning brief
 #   HAROLD_TZ           your IANA time zone, e.g. America/Chicago, Europe/London, Asia/Singapore
 #                       (unset = UTC here, and every run prints a warning saying so)
 #   HAROLD_BRIEF_TIME   HH:MM, 24-hour, local time in that zone (unset = 06:30)
+# It wakes at 35 minutes past each hour, so the default 06:30 brief starts at about 06:35 (GitHub can
+# start scheduled runs a few minutes late). If your brief time is on another minute, or your zone is
+# offset by a half hour, move the cron minute to just after your time in UTC.
 # If a run fails, the next hourly run tries again, for up to 6 hours after the brief time
 # (repository variable HAROLD_BRIEF_WINDOW_HOURS changes that; 0 = no limit).
 #
@@ -26,14 +29,14 @@ name: Harold morning brief
 #
 # Cost: about 720 short runs a month. On a private repository each run counts as at least one Actions
 # minute (the Free plan includes 2,000 a month). To use fewer, narrow the cron hours to your morning in
-# UTC, wide enough to cover both daylight-saving offsets, e.g. '15 10-14 * * *' for 06:30 in New York.
+# UTC, wide enough to cover both daylight-saving offsets, e.g. '35 11-14 * * *' for 06:30 in Chicago.
 #
 # Prefer a Claude Code routine? Delete this file and create a routine whose prompt is the contents of
 # harold/brief-prompt.md, scheduled for your brief time. Its own schedule is the clock; the same gate
 # still keeps it to weekdays and one brief a day.
 on:
   schedule:
-    - cron: '15 * * * *'
+    - cron: '35 * * * *'
   workflow_dispatch:
     inputs:
       force:
