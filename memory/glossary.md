@@ -29,7 +29,7 @@
 | Boot | `bin/harold boot`: loads and verifies everything at session start; refuses if a core file or playbook cannot be read |
 | Close | `bin/harold close`: verifies filing at the end of each turn, then commits and pushes |
 | Type | The one category a contact belongs to (your list, e.g. investor, partner, founder, team, other) |
-| Label | Any number of extra tags on a contact (e.g. `ecosystem`, `board`) |
+| Label | Any number of extra tags on a contact (e.g. `board`, `advisor`) |
 | Warmth | Hot, Warm, Lukewarm, Cold, or unset: your judgment of how close a relationship is |
 | Pipeline entry | A contact in the one pipeline for a stated purpose, at one of seven stages |
 | Context Engine | The table in `dashboard/processes.md` that maps what you say to the playbook it fires |

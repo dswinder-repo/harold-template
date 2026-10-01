@@ -20,12 +20,12 @@
 | Type | Who it covers |
 |------|---------------|
 | investor | [e.g. VCs, angels, family offices] |
-| partner | [e.g. distribution, channel, ecosystem bodies] |
+| partner | [e.g. distribution, channel, trade bodies] |
 | founder | [e.g. founders you advise or peer with] |
 | team | Your own colleagues |
 | other | Everyone else worth knowing |
 
-**Labels** add anything else worth seeing at a glance (e.g. `ecosystem`, `board`, `advisor`). Any number per contact; never a copy of the type.
+**Labels** add anything else worth seeing at a glance (e.g. `board`, `advisor`, `press`). Any number per contact; never a copy of the type.
 
 ---
 

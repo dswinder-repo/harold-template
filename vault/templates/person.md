@@ -1,7 +1,7 @@
 ---
 tags: [person]
 type:          # exactly one, from your own list (e.g. investor | partner | founder | team | other)
-labels: []     # any number of extra tags, e.g. [ecosystem, board]. Never a copy of the type
+labels: []     # any number of extra tags, e.g. [board, advisor]. Never a copy of the type
 company:
 role:
 warmth:        # Hot | Warm | Lukewarm | Cold | (leave blank = not rated yet)

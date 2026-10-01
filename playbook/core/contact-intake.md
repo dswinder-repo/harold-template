@@ -57,7 +57,7 @@ Every contact has **exactly one type**, chosen from **your own short list**. Def
 
 ### Labels (any number, or none)
 
-Anything else worth tagging is a **label**, stored separately: e.g. `ecosystem` (economic development, government, trade bodies), `board`, `customer-prospect`, `media`. **A label never duplicates the type** (no `investor` label on an investor).
+Anything else worth tagging is a **label**, stored separately: e.g. `board`, `advisor`, `press`, `customer-prospect`. **A label never duplicates the type** (no `investor` label on an investor).
 
 ### Warmth (a judgment about closeness)
 
@@ -104,7 +104,7 @@ All of these, together, for every new contact:
    ```yaml
    tags: [person]
    type: other          # exactly one, from your list
-   labels: []           # e.g. [ecosystem]
+   labels: []           # e.g. [advisor]
    company: Acme Corp
    role: Head of Partnerships
    warmth:              # Hot | Warm | Lukewarm | Cold | blank
@@ -120,7 +120,7 @@ All of these, together, for every new contact:
 ### Additions by type (adapt to your list)
 
 - **investor** — record firm and investor style (VC / angel / family office / PE) in notes. If you run a raise, add them to that project's tracker (`bin/harold where <raise>`) and let the raise's own playbook take over research and outreach. Run `playbook/core/analyst.md`: does their portfolio, thesis or network create an angle? Surface them in the next morning brief's pipeline health if they're in the pipeline.
-- **partner** — add the `ecosystem` label for chambers, trade offices, economic-development and government contacts. If they're tied to a project, update that project's card or README. Run the analyst playbook: any recent news about their organization or region?
+- **partner** — add a label when it helps you find them later (e.g. `government` for trade offices and public bodies, `advisor` for someone who also advises you). If they're tied to a project, update that project's card or README. Run the analyst playbook: any recent news about their organization or region?
 - **founder** — record what the company does. Create or link a `vault/companies/` card if the company matters. Pipeline only if something is in motion (an investment, a partnership, a piece of work). Analyst playbook: what does this company change about anything you're doing?
 - **team** — update `dashboard/people.md` if they change operational context (new role, new reporting line). Onboarding checklist task if needed.
 - **other** — default warmth `Cold` or unset, status `pending`. **Watch for reclassification:** if investor, partner or founder context appears later, change the type with `harold_upsert_contact` and run that type's additions.
@@ -133,7 +133,7 @@ All of these, together, for every new contact:
 
 Queue each CRM action (the payload uses `harold_upsert_contact`'s field names: `org`, `category` for the type, `categories` for labels). `bin/harold boot` and `bin/harold close` apply the queue automatically the next time they run with the CRM reachable, skipping anything already applied; `bin/harold replay` does it on demand (`--dry-run` to preview):
 ```bash
-bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{"org":"Acme Corp","category":"partner","categories":["ecosystem"],"status":"pending"}}'
+bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{"org":"Acme Corp","category":"partner","categories":["advisor"],"status":"pending"}}'
 bin/harold file crm '{"contact":"Jane Doe","action":"crm_task","payload":{"title":"Initial outreach: Jane Doe (Acme Corp)","due_date":"YYYY-MM-DD"}}'
 ```
 The vault profile is written now regardless.
@@ -182,10 +182,10 @@ Date added:  [today, from bin/harold boot, never inferred]
 4. Pipeline: only if the call established a purpose ("considering the seed round") — then `harold_pipeline add` with that purpose, stage In Conversation.
 5. Confirm: "Added Jane Doe (Globex Ventures) as investor, Warm. Follow-up task created. Pipeline: Raising the seed round, In Conversation."
 
-### Ecosystem partner
+### Trade-office partner
 **Operator:** "Got a reply from Sam Lee at the regional trade office."
 1. Duplicate check.
-2. Type `partner`, label `ecosystem`.
+2. Type `partner`, label `government`.
 3. Cascade. Pipeline only if you're actually working something with them; otherwise the record is enough.
 
 ### Ambiguous

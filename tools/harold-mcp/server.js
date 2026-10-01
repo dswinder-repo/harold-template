@@ -1296,13 +1296,13 @@ server.tool(
 
 server.tool(
   "harold_upsert_contact",
-  "Create or update a contact in the CRM. Use when new people are encountered (meetings, intros, research) or when contact details change.\n\nFor NEW contacts: provide name + at minimum org and category (the contact's one type).\nFor UPDATES: provide contact_id to target exact record, OR name+org to find and update.\n\nType (category): exactly one, from your own list (e.g. investor, partner, founder, team, other).\nLabels (categories): any number of extra tags, e.g. ecosystem, board.\nWarmth: Cold, Lukewarm, Warm, Hot, or empty (not rated)\nStatus: active, pending, cold, archived",
+  "Create or update a contact in the CRM. Use when new people are encountered (meetings, intros, research) or when contact details change.\n\nFor NEW contacts: provide name + at minimum org and category (the contact's one type).\nFor UPDATES: provide contact_id to target exact record, OR name+org to find and update.\n\nType (category): exactly one, from your own list (e.g. investor, partner, founder, team, other).\nLabels (categories): any number of extra tags, e.g. board, advisor.\nWarmth: Cold, Lukewarm, Warm, Hot, or empty (not rated)\nStatus: active, pending, cold, archived",
   {
     contact_id: z.string().optional().describe("For updates: exact CRM UUID to update"),
     name: z.string().describe("Contact full name"),
     org: z.string().optional().describe("Organization / company name"),
     category: z.string().optional().describe("The contact's one type, from your own list (e.g. investor, partner, founder, team, other)"),
-    categories: z.array(z.string()).optional().describe("Labels to add (any number, e.g. ['ecosystem', 'board']). Stored in contact_categories, never a copy of the type. Existing labels are kept."),
+    categories: z.array(z.string()).optional().describe("Labels to add (any number, e.g. ['board', 'advisor']). Stored in contact_categories, never a copy of the type. Existing labels are kept."),
     warmth: z.enum(["", "Cold", "Lukewarm", "Warm", "Hot"]).optional().describe("Relationship closeness: Cold (no connection) → Lukewarm → Warm → Hot (actively engaged). Empty string = not rated yet. Warmth is a judgment, independent of type."),
     status: z.enum(["active", "pending", "cold", "archived"]).optional().describe("Contact status. Default: pending for new, unchanged for updates."),
     priority: z.enum(["high", "medium", "low"]).optional().describe("Priority level. Default: medium"),

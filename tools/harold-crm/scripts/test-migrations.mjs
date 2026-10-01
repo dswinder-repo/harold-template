@@ -132,7 +132,7 @@ const c1 = (await db.query(
 const c2 = (await db.query(
   `insert into contacts (name, org, category, email) values ('Ada Exampel', '', 'founder', 'ada@example.com') returning id`
 )).rows[0].id
-await db.query(`insert into contact_categories (contact_id, category_name) values ($1, 'board'), ($2, 'ecosystem')`, [c1, c2])
+await db.query(`insert into contact_categories (contact_id, category_name) values ($1, 'board'), ($2, 'advisor')`, [c1, c2])
 const entry = (await db.query(
   `insert into contact_pipelines (contact_id, purpose) values ($1, 'raising the seed round') returning id`, [c1]
 )).rows[0].id

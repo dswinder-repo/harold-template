@@ -32,7 +32,7 @@ const contacts = [
     location: 'Hamburg, Germany', region: 'Europe', email: 't.renner@meridianfreight.example',
     phone: '+49 40 555 0198', website: 'meridianfreight.example',
     focus_area: 'Logistics',
-    notes: 'Pilot scoped for Q1. Legal review is the long pole.',
+    notes: 'Distribution trial scoped for Q1. Legal review is the long pole.',
     last_contacted_at: days(9), created_at: days(160), updated_at: days(9),
   },
   {
@@ -48,7 +48,7 @@ const contacts = [
     category: 'partner', warmth: 'Lukewarm', status: 'active', priority: 'medium',
     location: 'Dakar, Senegal', region: 'Africa', email: 'a.diallo@portcity.example',
     focus_area: 'Trade facilitation',
-    notes: 'Met at the corridor summit. Invited us to their February delegation.',
+    notes: 'Met at the corridor summit. Offered introductions to local distributors on their February delegation.',
     last_contacted_at: days(34), created_at: days(70), updated_at: days(34),
   },
   {
@@ -64,7 +64,7 @@ const contacts = [
     category: 'investor', warmth: 'Warm', status: 'active', priority: 'medium',
     location: 'Austin, TX', region: 'North America', email: 'elena@cardinalvc.example',
     investor_type: 'VC', focus_area: 'B2B software',
-    notes: 'Passed last time on stage, asked to be kept posted on revenue.',
+    notes: 'Knows everyone in the Austin scene. Offered to host a dinner for the launch.',
     last_contacted_at: days(21), created_at: days(180), updated_at: days(21),
   },
   {
@@ -72,14 +72,14 @@ const contacts = [
     category: 'partner', warmth: 'Lukewarm', status: 'pending', priority: 'low',
     location: 'Osaka, Japan', region: 'Asia', email: 'h.nakamura@kestrel.example',
     focus_area: 'Manufacturing',
-    notes: 'Early conversation. Waiting on their internal budget cycle.',
+    notes: 'Could carry us through their dealer network. Waiting on their internal budget cycle.',
     last_contacted_at: days(41), created_at: days(60), updated_at: days(41),
   },
   {
     id: 'd8', name: 'Fiona Brennan', org: 'Lantern Group',
     category: 'other', warmth: 'Warm', status: 'active', priority: 'medium',
     location: 'Dublin, Ireland', region: 'Europe', email: 'fiona@lanterngroup.example',
-    notes: 'Excellent connector. Has offered two introductions already.',
+    notes: 'Excellent connector. Has sent two head-of-sales candidates already.',
     last_contacted_at: days(12), created_at: days(120), updated_at: days(12),
   },
   {
@@ -94,7 +94,7 @@ const contacts = [
     category: 'founder', warmth: 'Hot', status: 'active', priority: 'high',
     location: 'Accra, Ghana', region: 'Africa', email: 'clara@vantage.example',
     focus_area: 'Data infrastructure',
-    notes: 'Both raising and evaluating a pilot with us. Two separate threads.',
+    notes: 'Evaluating a pilot and open to reselling us. Two separate threads.',
     last_contacted_at: days(1), created_at: days(88), updated_at: days(1),
   },
   {
@@ -109,7 +109,7 @@ const contacts = [
     category: 'partner', warmth: 'Warm', status: 'active', priority: 'medium',
     location: 'Geneva, Switzerland', region: 'Europe', email: 'i.moreau@calder.example',
     focus_area: 'Grant programs',
-    notes: 'Next funding window opens in April. Application needs a partner of record.',
+    notes: 'Weighing whether to sponsor the March roundtable. Decides at their April board.',
     last_contacted_at: days(18), created_at: days(75), updated_at: days(18),
   },
 ]
@@ -117,10 +117,10 @@ const contacts = [
 /** Labels are independent of type, and most contacts have none. */
 const contact_categories = [
   { id: 'l1', contact_id: 'd4', category_name: 'government', created_at: days(70) },
-  { id: 'l2', contact_id: 'd4', category_name: 'ecosystem', created_at: days(70) },
+  { id: 'l2', contact_id: 'd5', category_name: 'advisor', created_at: days(140) },
   { id: 'l3', contact_id: 'd10', category_name: 'customer-prospect', created_at: days(40) },
   { id: 'l4', contact_id: 'd12', category_name: 'government', created_at: days(75) },
-  { id: 'l5', contact_id: 'd8', category_name: 'ecosystem', created_at: days(120) },
+  { id: 'l5', contact_id: 'd8', category_name: 'advisor', created_at: days(120) },
   { id: 'l6', contact_id: 'd1', category_name: 'board', created_at: days(200) },
 ]
 
@@ -134,14 +134,16 @@ const categories = [
 
 /** One pipeline. A contact may hold more than one entry, each with its own purpose. */
 const contact_pipelines = [
-  { id: 'p1', contact_id: 'd1', purpose: 'raising the Series A', stage: 'Advancing', entered_at: days(22) },
-  { id: 'p2', contact_id: 'd2', purpose: 'closing the logistics pilot', stage: 'Advancing', entered_at: days(30) },
-  { id: 'p3', contact_id: 'd5', purpose: 'co-hosting the March roundtable', stage: 'Committed', entered_at: days(14) },
-  { id: 'p4', contact_id: 'd6', purpose: 'raising the Series A', stage: 'In Conversation', entered_at: days(40) },
-  { id: 'p5', contact_id: 'd10', purpose: 'raising the Series A', stage: 'Identified', entered_at: days(12) },
-  { id: 'p6', contact_id: 'd10', purpose: 'closing a data pilot', stage: 'In Conversation', entered_at: days(9) },
-  { id: 'p7', contact_id: 'd7', purpose: 'manufacturing partnership', stage: 'Reached Out', entered_at: days(41) },
-  { id: 'p8', contact_id: 'd12', purpose: 'April grant application', stage: 'In Conversation', entered_at: days(18) },
+  { id: 'p1', contact_id: 'd4', purpose: 'finding a distribution partner', stage: 'Identified', entered_at: days(34) },
+  { id: 'p2', contact_id: 'd7', purpose: 'finding a distribution partner', stage: 'Reached Out', entered_at: days(41) },
+  { id: 'p3', contact_id: 'd10', purpose: 'finding a distribution partner', stage: 'In Conversation', entered_at: days(9) },
+  { id: 'p4', contact_id: 'd2', purpose: 'finding a distribution partner', stage: 'Advancing', entered_at: days(30) },
+  { id: 'p5', contact_id: 'd5', purpose: 'co-hosting the March roundtable', stage: 'Committed', entered_at: days(14) },
+  { id: 'p6', contact_id: 'd12', purpose: 'co-hosting the March roundtable', stage: 'In Conversation', entered_at: days(18) },
+  { id: 'p7', contact_id: 'd6', purpose: 'launching in Austin', stage: 'In Conversation', entered_at: days(21) },
+  { id: 'p8', contact_id: 'd8', purpose: 'hiring a head of sales', stage: 'In Conversation', entered_at: days(12) },
+  { id: 'p9', contact_id: 'd10', purpose: 'closing a data pilot', stage: 'In Conversation', entered_at: days(9) },
+  { id: 'p10', contact_id: 'd1', purpose: 'raising the Series A', stage: 'Advancing', entered_at: days(22) },
 ]
 
 const pipeline_stages = [
@@ -167,11 +169,11 @@ const interactions = [
   { id: 'i4', contact_id: 'd1', type: 'note', subject: 'Introduced by Fiona Brennan',
     body: 'Fiona offered the introduction unprompted after the Dublin event.',
     occurred_at: days(40), created_at: days(40) },
-  { id: 'i5', contact_id: 'd2', type: 'meeting', subject: 'Pilot scoping',
-    body: 'Agreed a three-month pilot on the Hamburg route. Legal review is the long pole; Tobias is chasing internally.',
+  { id: 'i5', contact_id: 'd2', type: 'meeting', subject: 'Distribution terms',
+    body: 'Agreed a three-month distribution trial on the Hamburg route. Legal review is the long pole; Tobias is chasing internally.',
     occurred_at: days(9), created_at: days(9) },
   { id: 'i6', contact_id: 'd10', type: 'call', subject: 'Two threads, kept separate',
-    body: 'Clara is raising and also wants to pilot. Agreed to keep the conversations apart so neither holds up the other.',
+    body: 'Clara wants to pilot and is also open to reselling us. Agreed to keep the conversations apart so neither holds up the other.',
     occurred_at: days(1), created_at: days(1) },
   { id: 'i7', contact_id: 'd5', type: 'email', subject: 'Roundtable logistics',
     body: 'Venue confirmed. Still waiting on the speaker list from Daniel.',
@@ -181,7 +183,7 @@ const interactions = [
 const tasks = [
   { id: 't1', contact_id: 'd1', title: 'Send cohort retention breakdown', status: 'pending',
     priority: 'high', due_date: new Date(now + 2 * 86_400_000).toISOString().slice(0, 10), created_at: days(3) },
-  { id: 't2', contact_id: 'd2', title: 'Chase legal review on pilot terms', status: 'in_progress',
+  { id: 't2', contact_id: 'd2', title: 'Chase legal review on distribution terms', status: 'in_progress',
     priority: 'medium', due_date: new Date(now + 5 * 86_400_000).toISOString().slice(0, 10), created_at: days(9) },
   { id: 't3', contact_id: 'd5', title: 'Collect speaker list for roundtable', status: 'pending',
     priority: 'high', due_date: new Date(now - 1 * 86_400_000).toISOString().slice(0, 10), created_at: days(6) },
@@ -197,7 +199,7 @@ const audit_log = [
   { id: 'a3', user_id: 'u1', contact_id: 'd1', action: 'update', field_name: 'status',
     old_value: 'pending', new_value: 'active', created_at: days(3) },
   { id: 'a4', user_id: 'u1', contact_id: 'd2', action: 'update', field_name: 'notes',
-    old_value: null, new_value: 'Pilot scoped', created_at: days(9) },
+    old_value: null, new_value: 'Distribution trial scoped', created_at: days(9) },
   { id: 'a5', user_id: 'u1', contact_id: 'd12', action: 'create', field_name: null,
     old_value: null, new_value: null, created_at: days(18) },
 ]
@@ -213,8 +215,9 @@ export const DEMO_TABLES: DemoTables = {
   enum_options: [
     { id: 'e1', group_name: 'label', value: 'board', label: 'board', sort_order: 1, is_default: false },
     { id: 'e2', group_name: 'label', value: 'customer-prospect', label: 'customer-prospect', sort_order: 2, is_default: false },
-    { id: 'e3', group_name: 'label', value: 'ecosystem', label: 'ecosystem', sort_order: 3, is_default: false },
+    { id: 'e3', group_name: 'label', value: 'advisor', label: 'advisor', sort_order: 3, is_default: false },
     { id: 'e4', group_name: 'label', value: 'government', label: 'government', sort_order: 4, is_default: false },
+    { id: 'e5', group_name: 'label', value: 'press', label: 'press', sort_order: 5, is_default: false },
   ],
   custom_fields: [],
   contact_custom_values: [],

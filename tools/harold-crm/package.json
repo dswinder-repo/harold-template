@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:migrations": "node scripts/test-migrations.mjs"
+    "test:migrations": "node scripts/test-migrations.mjs",
+    "capture": "node scripts/capture-screenshots.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
