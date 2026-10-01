@@ -5,21 +5,33 @@
       {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/harold boot", "timeout": 60 }
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" boot --via=claude",
+            "timeout": 60
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/harold close", "timeout": 240 }
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" close --via=claude",
+            "timeout": 240
+          }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/harold close --final", "timeout": 240 }
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" close --final --via=claude",
+            "timeout": 240
+          }
         ]
       }
     ]

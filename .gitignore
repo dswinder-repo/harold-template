@@ -18,6 +18,8 @@ build/
 .env.*
 *.env
 .mcp.json
+.cursor/mcp.json
+.codex/config.toml
 *.key
 *.pem
 **/credentials.json

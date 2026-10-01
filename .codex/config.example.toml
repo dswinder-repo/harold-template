@@ -1,0 +1,10 @@
+# Codex: copy to .codex/config.toml (gitignored) to give Codex the Harold MCP tools, and put the absolute
+# path to bin/harold-mcp below. Codex loads a project's .codex/config.toml only once you trust the project;
+# you can put the same table in ~/.codex/config.toml instead. Or run once:
+#   codex mcp add harold-mcp -- /ABSOLUTE/PATH/TO/your-harold-workspace/bin/harold-mcp
+# Credentials live in ~/.harold/env, read by bin/harold-mcp. Never put keys in this file.
+# First: bin/harold-setup-crm and (cd tools/harold-mcp && npm install).
+
+[mcp_servers.harold-mcp]
+command = "/ABSOLUTE/PATH/TO/your-harold-workspace/bin/harold-mcp"
+args = []

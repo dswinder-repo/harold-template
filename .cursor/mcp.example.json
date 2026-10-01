@@ -1,0 +1,9 @@
+{
+  "_comment": "Cursor: copy to .cursor/mcp.json (gitignored) to give Cursor's agent the Harold MCP tools. ${workspaceFolder} is the folder that holds .cursor/, so no path to edit. Credentials live in ~/.harold/env, read by bin/harold-mcp. Never put keys in this file. First: bin/harold-setup-crm and (cd tools/harold-mcp && npm install).",
+  "mcpServers": {
+    "harold-mcp": {
+      "command": "${workspaceFolder}/bin/harold-mcp",
+      "args": []
+    }
+  }
+}

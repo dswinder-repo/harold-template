@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "\"${CURSOR_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" boot --via=cursor",
+        "timeout": 60
+      }
+    ],
+    "stop": [
+      {
+        "command": "\"${CURSOR_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" close --via=cursor",
+        "timeout": 240
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "\"${CURSOR_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" close --final --via=cursor",
+        "timeout": 240
+      }
+    ]
+  }
+}

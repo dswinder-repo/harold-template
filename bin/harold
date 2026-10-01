@@ -199,6 +199,54 @@ function readStdinJson() {
   try { if (process.stdin.isTTY) return null; const raw = fs.readFileSync(0, 'utf8'); return raw.trim() ? JSON.parse(raw) : null; } catch (_) { return null; }
 }
 
+// ───────────────────────── hook harnesses ─────────────────────────
+// boot and close run as lifecycle hooks in three harnesses. Each hook file passes --via=<harness>, so
+// the answer format never depends on guessing; the input is the fallback when the flag is absent.
+//   claude  Claude Code (.claude/settings.json). Input: session_id, hook_event_name SessionStart|Stop|
+//           SessionEnd, stop_hook_active. SessionStart: plain stdout becomes context. Stop: {} or
+//           {"decision":"block","reason"}; {"systemMessage"} for a notice.
+//   codex   Codex (.codex/hooks.json). Same event names, fields and answers as Claude Code; Stop also
+//           carries turn_id. SessionEnd may run for 3 seconds at most, so it is handed to a detached
+//           process (--detach).
+//   cursor  Cursor (.cursor/hooks.json). Input: conversation_id, cursor_version, workspace_roots,
+//           hook_event_name sessionStart|stop|sessionEnd; session_id on sessionStart/sessionEnd; stop has
+//           status and loop_count. sessionStart answers {"additional_context"}; stop answers {} or
+//           {"followup_message"}; sessionEnd's answer is ignored.
+// Cursor also runs Claude Code hooks from .claude/settings.json by default ("third-party configs"), as
+// well as its own. When the Claude Code file's hook (--via=claude) fires inside Cursor and the
+// workspace has .cursor/hooks.json, it steps aside: Cursor's own hook does the work, once.
+const CURSOR_EVENTS = new Set(['sessionStart', 'stop', 'sessionEnd']);
+function isCursorInput(h) { return !!(h && (typeof h.cursor_version === 'string' || Array.isArray(h.workspace_roots) || CURSOR_EVENTS.has(h.hook_event_name))); }
+function hookContext(raw, via) {
+  const h = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  let harness = null;
+  if (isCursorInput(h)) harness = 'cursor';
+  else if (via === 'claude' || via === 'codex' || via === 'cursor') harness = via;
+  else if (h && h.hook_event_name) harness = 'turn_id' in h ? 'codex' : 'claude';
+  if (!harness) return null;  // a terminal, a script, an agent running it by hand
+  const event = (h && h.hook_event_name) || `(${via || harness})`;
+  return {
+    ...(h || {}),
+    hook_event_name: event,
+    session_id: (h && (h.session_id || h.conversation_id)) || undefined,
+    stop_hook_active: !!(h && (h.stop_hook_active || (typeof h.loop_count === 'number' && h.loop_count > 0))),
+    _harness: harness,
+    _via: via || null,
+  };
+}
+// What close says back to the harness. kind: ok | block | notice.
+function closeReply(hook, kind, text) {
+  if (hook._harness === 'cursor') {
+    // A follow-up restarts the agent: only after a normal finish, never after the operator aborted it.
+    if (kind === 'block' && (!hook.status || hook.status === 'completed')) return console.log(JSON.stringify({ followup_message: text }));
+    if (text) console.error(text);  // Cursor's stop has no notice field; this lands in its Hooks output channel
+    return console.log('{}');
+  }
+  if (kind === 'block') return console.log(JSON.stringify({ decision: 'block', reason: text }));
+  if (kind === 'notice' && text) return console.log(JSON.stringify({ systemMessage: text }));
+  return console.log('{}');
+}
+
 // ───────────────────────── knowledge loaders ─────────────────────────
 const CORE = [
   'AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md',
@@ -371,7 +419,7 @@ function computeTriggers(root, today, ctx) {
 // ───────────────────────── session state ─────────────────────────
 const SESSIONS_DIR = 'harold/active-sessions';
 const STATE_DIR = 'harold/active-sessions/.state';
-function sessionId(hook) { return (hook && hook.session_id) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || `terminal-${process.ppid}`; }
+function sessionId(hook) { return (hook && (hook.session_id || hook.conversation_id)) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || `terminal-${process.ppid}`; }
 function statePath(root, id) { return path.join(root, STATE_DIR, `${id.replace(/[^A-Za-z0-9_-]/g, '_')}.json`); }
 function loadState(root, id) { try { return JSON.parse(readFull(statePath(root, id))); } catch (_) { return null; } }
 function saveState(root, id, st) { const p = statePath(root, id); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(st, null, 2)); }
@@ -482,6 +530,8 @@ function cmdCheck(root, today, opts) {
 }
 
 function cmdBoot(root, today, opts, hook) {
+  // Cursor answers sessionStart in JSON; Claude Code and Codex take plain stdout as context.
+  const emit = text => console.log(hook && hook._harness === 'cursor' ? JSON.stringify({ additional_context: text }) : text);
   // Other writers may push to origin (the scheduled brief, another machine, a phone session). Fast-forward
   // first so this session reads their latest files; never merge, never block boot on it.
   const up = git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
@@ -489,8 +539,9 @@ function cmdBoot(root, today, opts, hook) {
   const c = runCheck(root, today);
   if (pull && pull.code !== 0) c.warnings.push(`git pull --ff-only did not complete (${(pull.err || 'timeout').split('\n')[0].slice(0, 140)}); files from other writers may be stale`);
   if (c.failures.length) {
-    console.log(`⛔ HAROLD BOOT REFUSED — ${today.iso} ${today.weekday}\nroot: ${root}\n` + c.failures.map(f => `  FAIL ${f}`).join('\n') + `\n\nThe contract cannot be met. Do not improvise from memory. Fix the failures above (iCloud eviction: run\n  find "${root}" -path '*/node_modules' -prune -o -type f -print0 | xargs -0 -n50 head -c1 >/dev/null 2>&1\nthen retry) and tell the operator in your first message that boot refused and why.`);
-    return 2;
+    emit(`⛔ HAROLD BOOT REFUSED — ${today.iso} ${today.weekday}\nroot: ${root}\n` + c.failures.map(f => `  FAIL ${f}`).join('\n') + `\n\nThe contract cannot be met. Do not improvise from memory. Fix the failures above (iCloud eviction: run\n  find "${root}" -path '*/node_modules' -prune -o -type f -print0 | xargs -0 -n50 head -c1 >/dev/null 2>&1\nthen retry) and tell the operator in your first message that boot refused and why.`);
+    // As a hook, exit 0: harnesses only hand stdout to the model on success, and the model must see this.
+    return hook ? 0 : 2;
   }
   const id = sessionId(hook);
   let st = loadState(root, id);
@@ -499,7 +550,7 @@ function cmdBoot(root, today, opts, hook) {
   // Two harnesses can both wire boot (project hooks + a plugin). A second boot within two minutes
   // prints one line instead of the whole context again: idempotent, no guessing which harness fired.
   if (st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000 && !opts.full) {
-    console.log(`Harold already booted ${Math.round((nowMs - st.bootedAtMs) / 1000)}s ago for this session (${st.harness}); context above still applies. Session file: ${path.join(root, st.sessionFile)}`);
+    emit(`Harold already booted ${Math.round((nowMs - st.bootedAtMs) / 1000)}s ago for this session (${st.harness}); context above still applies. Session file: ${path.join(root, st.sessionFile)}`);
     return 0;
   }
   if (st && st.sessionFile && fs.existsSync(path.join(root, st.sessionFile)) && nowMs - st.bootedAtMs < 12 * 3600000) resumed = true;
@@ -508,7 +559,7 @@ function cmdBoot(root, today, opts, hook) {
     const rel = path.join(SESSIONS_DIR, `${slug}.json`);
     fs.mkdirSync(path.join(root, SESSIONS_DIR), { recursive: true });
     fs.writeFileSync(path.join(root, rel), JSON.stringify(blankSession('Booting — set this to what the session is doing'), null, 2));
-    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: (hook && hook.hook_event_name) ? 'claude-code-hook' : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
+    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: hook ? `${hook._harness === 'claude' ? 'claude-code' : hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
     saveState(root, id, st);
   }
   // Cloud runners are throwaway checkouts: tidying session files there only creates a commit to push.
@@ -572,7 +623,7 @@ function cmdBoot(root, today, opts, hook) {
     c.playbooks.items.forEach(i => { L.push(`\n\n===== playbook/${i.name} =====\n`); L.push(readFull(P('playbook/' + i.name))); });
     L.push('\n\n===== harold/learnings.jsonl =====\n'); L.push(readFull(P('harold/learnings.jsonl')));
   }
-  console.log(L.join('\n'));
+  emit(L.join('\n'));
   return 0;
 }
 
@@ -893,7 +944,22 @@ function changedSince(root, sinceMs, dirs) {
   return out.map(p => path.relative(root, p));
 }
 
+// One close per session at a time. Two wirings of the same Stop event (project hooks plus a plugin, or a
+// harness that loads another tool's hook file) can start close twice at once, and two closes racing
+// through git add/commit/push corrupt each other. The second one steps aside; the first does the work.
 function cmdClose(root, today, opts, hook) {
+  const id = sessionId(hook);
+  const lock = statePath(root, id).replace(/\.json$/, '.closing');
+  try { fs.mkdirSync(path.dirname(lock), { recursive: true }); fs.mkdirSync(lock); }
+  catch (e) {
+    let fresh = false; try { fresh = Date.now() - fs.statSync(lock).mtimeMs < 300000; } catch (_) {}
+    if (fresh) { if (hook) closeReply(hook, 'ok'); else console.log('harold close: another close for this session is running right now; it does the work'); return 0; }
+    try { fs.rmSync(lock, { recursive: true, force: true }); fs.mkdirSync(lock); } catch (_) {}
+  }
+  try { return closeOnce(root, today, opts, hook); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} }
+}
+
+function closeOnce(root, today, opts, hook) {
   if (isCloudRunner() && (loadJob(root) || {}).date === today.iso) return closeBriefJob(root, today, opts, hook);
   const id = sessionId(hook);
   let st = loadState(root, id);
@@ -902,7 +968,7 @@ function cmdClose(root, today, opts, hook) {
   const problems = [], notes = [];
   const nowMs = Date.now();
   if (st && st.lastCloseOkMs && nowMs - st.lastCloseOkMs < 20000 && !final) {
-    if (hook && hook.hook_event_name) console.log('{}'); else console.log('harold close: already closed cleanly seconds ago, nothing to do');
+    if (hook) closeReply(hook, 'ok'); else console.log('harold close: already closed cleanly seconds ago, nothing to do');
     return 0;
   }
   const bootMs = st ? st.bootedAtMs : nowMs - 6 * 3600000;
@@ -1050,20 +1116,20 @@ function cmdClose(root, today, opts, hook) {
   const archived = isCloudRunner() ? [] : archiveStaleSessions(root, nowMs);
 
   st = st || { id, bootedAtMs: bootMs, blocks: 0 };
-  const isHook = !!(hook && hook.hook_event_name);
+  const isHook = !!hook;
   if (problems.length) {
     st.blocks = (st.blocks || 0) + 1; saveState(root, id, st);
     const reason = `⛔ HAROLD CLOSE: filing incomplete (attempt ${st.blocks}). Fix these, then finish:\n` + problems.map(p => `  • ${p}`).join('\n') + (gitNote ? `\n  git: ${gitNote}` : '');
     if (isHook) {
-      if (stopHookActive && st.blocks > 3) { console.log(JSON.stringify({ systemMessage: `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}` })); return 0; }
-      console.log(JSON.stringify({ decision: 'block', reason })); return 0;
+      if (stopHookActive && st.blocks > 3) { closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); return 0; }
+      closeReply(hook, 'block', reason); return 0;
     }
     console.error(reason); return 2;
   }
   st.blocks = 0; st.lastCloseOkMs = Date.now(); if (final) { try { fs.unlinkSync(statePath(root, id)); } catch (_) {} } else saveState(root, id, st);
   const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
   const pushFailed = gitNote.startsWith('PUSH FAILED');
-  if (isHook) { console.log(JSON.stringify(pushFailed ? { systemMessage: summary } : {})); return 0; }
+  if (isHook) { closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); return 0; }
   console.log(summary); return pushFailed ? 1 : 0;
 }
 
@@ -1330,29 +1396,50 @@ function cmdBrief(root, today, argv, now) {
 }
 // harold close inside a cloud brief job: the job is the unit of work, not a session.
 function closeBriefJob(root, today, opts, hook) {
-  const job = loadJob(root); const isHook = !!(hook && hook.hook_event_name);
-  if (job.finished) { if (isHook) console.log('{}'); else console.log(`harold close: brief job ${job.date} ${job.skipped ? 'not due (' + job.skipped + ')' : 'finished and pushed (' + (job.pushedSha || '').slice(0, 7) + ')'}`); return 0; }
+  const job = loadJob(root); const isHook = !!hook;
+  if (job.finished) { if (isHook) closeReply(hook, 'ok'); else console.log(`harold close: brief job ${job.date} ${job.skipped ? 'not due (' + job.skipped + ')' : 'finished and pushed (' + (job.pushedSha || '').slice(0, 7) + ')'}`); return 0; }
   job.closeBlocks = (job.closeBlocks || 0) + 1; saveJob(root, job);
   const reason = `⛔ HAROLD CLOSE (scheduled brief job ${job.date}): not finished. Write harold/briefs/${job.date}.md, then run ${CLI(root)} brief finish. If the brief cannot be written, say why in one line and stop.`;
   if (!isHook) { console.error(reason); return 2; }
-  if (opts.final || job.closeBlocks > 2) { console.log(JSON.stringify({ systemMessage: `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.` })); return 0; }
-  console.log(JSON.stringify({ decision: 'block', reason })); return 0;
+  if (opts.final || job.closeBlocks > 2) { closeReply(hook, 'notice', `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.`); return 0; }
+  closeReply(hook, 'block', reason); return 0;
 }
 
 // ───────────────────────── main ─────────────────────────
 function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
-  const opts = { json: argv.includes('--json'), full: argv.includes('--full'), final: argv.includes('--final'), repair: argv.includes('--repair'), dryRun: argv.includes('--dry-run') };
+  const via = ((argv.find(a => a.startsWith('--via=')) || '').slice(6) || '').toLowerCase() || null;
+  const opts = { json: argv.includes('--json'), full: argv.includes('--full'), final: argv.includes('--final'), repair: argv.includes('--repair'), dryRun: argv.includes('--dry-run'), detach: argv.includes('--detach'), via };
   const args = argv.slice(1).filter(a => !a.startsWith('--'));
-  const hook = (cmd === 'boot' || cmd === 'close') ? readStdinJson() : null;
+  const hook = (cmd === 'boot' || cmd === 'close') ? hookContext(readStdinJson(), via) : null;
   const root = findRoot();
   const now = nowDate();
   const today = todayParts(now);
   if (!root) {
     const msg = `⛔ HAROLD: cannot resolve the workspace root from ${process.cwd()} (need a directory containing AGENTS.md, playbook/, harold/). Set HAROLD_ROOT or invoke bin/harold by its own path.`;
-    if (cmd === 'close' && hook) { console.log(JSON.stringify({ systemMessage: msg })); process.exit(0); }
+    if (cmd === 'close' && hook) { closeReply(hook, 'notice', msg); process.exit(0); }
+    if (cmd === 'boot' && hook) { console.log(hook._harness === 'cursor' ? JSON.stringify({ additional_context: msg }) : msg); process.exit(0); }
     console.error(msg); process.exit(2);
+  }
+  // Cursor runs the Claude Code hook file too. With Cursor's own file present, the Claude one steps aside.
+  if (hook && hook._harness === 'cursor' && via === 'claude' && fs.existsSync(path.join(root, '.cursor/hooks.json'))) {
+    console.log('{}'); process.exit(0);
+  }
+  // A hook with a hard time limit (Codex SessionEnd: 3 seconds at most) hands the work to a detached
+  // process and returns at once. Its output goes to harold/active-sessions/.state/<session>.detached.log.
+  if (opts.detach && cmd === 'close' && !process.env.HAROLD_DETACHED) {
+    const id = sessionId(hook);
+    const log = statePath(root, id).replace(/\.json$/, '.detached.log');
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    const fd = fs.openSync(log, 'a');
+    const { spawn } = require('child_process');
+    const child = spawn(process.execPath, [CLI(root), 'close', ...argv.slice(1).filter(a => a !== '--detach' && !a.startsWith('--via='))], {
+      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1' },
+    });
+    child.unref();
+    if (hook) closeReply(hook, 'ok'); else console.log(`harold close: running detached (pid ${child.pid}); output in ${path.relative(root, log)}`);
+    process.exit(0);
   }
   let code = 0;
   switch (cmd) {
@@ -1367,7 +1454,7 @@ function main() {
     case 'index': console.log(rebuildIndex(root)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=claude|codex|cursor picks the answer format; close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

@@ -1,0 +1,42 @@
+{
+  "description": "Harold: boot at session start, enforce filing at the end of every turn, close at session end. Codex runs these only after you trust them: type /hooks, review, trust (again after any edit to this file). bin/harold resolves the workspace from its own location; the git root keeps the path right when Codex starts in a subfolder.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" boot --via=codex",
+            "timeout": 60,
+            "statusMessage": "Booting Harold",
+            "additionalContextLimit": 20000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" close --via=codex",
+            "timeout": 240,
+            "statusMessage": "Harold close: checking filing, committing, pushing"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" close --final --via=codex --detach",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
