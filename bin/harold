@@ -14,7 +14,15 @@
  *   harold close   verify filing happened; clear session state; record triggers;
  *                  commit + push the knowledge base. Blocks when filing is missing.
  *   harold file    deposit knowledge (trigger | daily | crm | learning)
+ *   harold replay  apply queued CRM writes now (boot and close also do it) [--dry-run]
+ *   harold brief   the scheduled morning brief: start | finish | status | notify
  *   harold where   resolve a topic or alias to a folder via harold/projects.md
+ *
+ * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path):
+ *   HAROLD_TZ          IANA time zone, e.g. America/Chicago. Default: the zone of the machine running this.
+ *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
+ *   HAROLD_NOW         TESTING ONLY: pretend it is this time ("2026-10-05T06:10:00" is wall-clock time
+ *                      in HAROLD_TZ; add Z or an offset for an absolute instant).
  *
  * Lives at bin/harold because harold/ (the state directory) already owns the
  * name at repo root. Zero dependencies. Node >= 18. Works from any cwd: it
@@ -41,22 +49,74 @@ function findRoot() {
 }
 const CLI = root => path.join(root, 'bin', 'harold');
 
-// Time zone: HAROLD_TZ (IANA name, e.g. Europe/London) wins; otherwise the system zone of whatever machine runs this.
-const TZ = process.env.HAROLD_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-function todayParts(d = new Date()) {
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false });
+// ───────────────────────── settings ─────────────────────────
+// The environment wins; ~/.harold/env (where credentials already live) is the fallback, so a setting
+// written there works in hooks and cron-like runners that never source a shell profile.
+function envFilePath() { return process.env.HAROLD_ENV_FILE || path.join(os.homedir(), '.harold/env'); }
+let envFileCache = null;
+function envFileSetting(name) {
+  if (envFileCache === null) { try { envFileCache = fs.readFileSync(envFilePath(), 'utf8'); } catch (_) { envFileCache = ''; } }
+  const re = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\s#\\n]*))`, 'm');
+  const m = envFileCache.match(re);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '').trim() : '';
+}
+function setting(name) { const v = process.env[name]; return v !== undefined && v.trim() !== '' ? v.trim() : envFileSetting(name); }
+function isCloudRunner() { return !!(process.env.CLAUDE_CODE_REMOTE || process.env.GITHUB_ACTIONS); }
+
+// Time zone: HAROLD_TZ (IANA name) wins; otherwise the zone of whatever machine runs this. A cloud
+// runner's zone is almost always UTC, which is never what the operator means, so say so.
+function validTz(z) { try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return true; } catch (_) { return false; } }
+function resolveTz() {
+  const sys = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const raw = setting('HAROLD_TZ');
+  if (raw && validTz(raw)) return { tz: raw, source: 'HAROLD_TZ' };
+  if (raw) return { tz: sys, source: 'system', warning: `HAROLD_TZ "${raw}" is not an IANA time zone name (e.g. America/Chicago, Europe/London); using this machine's zone, ${sys}` };
+  if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set the repository variable HAROLD_TZ to your zone, e.g. America/Chicago (Settings → Secrets and variables → Actions → Variables)` };
+  if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ in the environment of the routine or cloud environment, e.g. America/Chicago` };
+  return { tz: sys, source: 'system' };
+}
+const TZ_INFO = resolveTz();
+const TZ = TZ_INFO.tz;
+function resolveBriefTime() {
+  const raw = setting('HAROLD_BRIEF_TIME') || '06:30';
+  const m = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!m) return { hm: '06:30', warning: `HAROLD_BRIEF_TIME "${raw}" is not HH:MM (24-hour); using 06:30` };
+  return { hm: `${m[1].padStart(2, '0')}:${m[2]}` };
+}
+const BRIEF_TIME = resolveBriefTime();
+
+function todayParts(d = new Date(), tz = TZ) {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long', hour: '2-digit', minute: '2-digit', hour12: false });
   const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
   const hour = parts.hour === '24' ? '00' : parts.hour;
   return { iso: `${parts.year}-${parts.month}-${parts.day}`, weekday: parts.weekday, hm: `${hour}:${parts.minute}`, y: +parts.year, m: +parts.month, d: +parts.day };
 }
-function tzOffsetMs(d) {
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+function tzOffsetMs(d, tz = TZ) {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   const p = Object.fromEntries(fmt.formatToParts(d).map(x => [x.type, x.value]));
   const h = p.hour === '24' ? '00' : p.hour;
   return Date.UTC(+p.year, +p.month - 1, +p.day, +h, +p.minute, +p.second) - d.getTime();
 }
+// epoch ms of a wall-clock time (date + HH:MM) in a zone, re-checked across DST boundaries
+function utcForLocal(iso, hm, tz = TZ) {
+  const [h, m] = hm.split(':').map(Number); const [y, mo, d] = iso.split('-').map(Number);
+  const wall = Date.UTC(y, mo - 1, d, h, m);
+  let guess = wall - tzOffsetMs(new Date(wall), tz);
+  guess = wall - tzOffsetMs(new Date(guess), tz);
+  return guess;
+}
+// "Now", overridable for tests only. A value without Z or an offset is wall-clock time in HAROLD_TZ.
+function nowDate() {
+  const s = (process.env.HAROLD_NOW || '').trim();
+  if (!s) return new Date();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (m) return new Date(utcForLocal(m[1], `${m[2]}:${m[3]}`) + (+m[4] || 0) * 1000);
+  const d = new Date(s);
+  if (isNaN(d)) { console.error(`HAROLD_NOW "${s}" is not a date-time (e.g. 2026-10-05T06:10:00)`); process.exit(2); }
+  return d;
+}
 // epoch ms of local midnight for the day `d` falls in, re-checked across DST boundaries
-function startOfLocalDayMs(d = new Date()) {
+function startOfLocalDayMs(d = nowDate()) {
   const t = todayParts(d);
   const off1 = tzOffsetMs(d);
   const guess = Date.UTC(t.y, t.m - 1, t.d) - off1;
@@ -221,6 +281,44 @@ function latestDaily(root) {
   return { count: files.length, last, lastDate: last ? last.slice(0, 10) : null };
 }
 
+// The branch the knowledge base lives on: origin's default branch, else the current one, else main.
+function defaultBranch(root) {
+  const h = git(root, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  if (h.code === 0 && h.out) return h.out.replace(/^origin\//, '');
+  const cur = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).out;
+  return cur && cur !== 'HEAD' ? cur : 'main';
+}
+// Today's morning brief draft (harold/briefs/<date>.md), written by the scheduled brief job before the
+// operator sits down. Boot says where it is so a "good morning" shows it instead of re-running Steps 1-2:
+// in this checkout, only on origin (not pulled yet), or nowhere. It reports, it never pulls.
+function briefDraft(root, today, opts = {}) {
+  const rel = `harold/briefs/${today.iso}.md`;
+  const p = path.join(root, rel);
+  if (fs.existsSync(p)) { const t = tryRead(p); return { where: 'local', rel, bytes: t.text.length, fm: frontmatter(t.text) }; }
+  if (git(root, ['remote', 'get-url', 'origin']).code !== 0) return { where: 'none', rel, noRemote: true };
+  const branch = defaultBranch(root);
+  if (opts.fetch !== false) {
+    const f = git(root, ['fetch', '-q', 'origin', branch], { timeout: 12000 });
+    if (f.code !== 0) return { where: 'unknown', rel, branch, err: (f.err || 'git fetch failed').split('\n')[0].slice(0, 160) };
+  }
+  const show = git(root, ['show', `origin/${branch}:${rel}`]);
+  if (show.code === 0) return { where: 'origin', rel, branch, bytes: show.out.length, fm: frontmatter(show.out) };
+  return { where: 'none', rel, branch };
+}
+function briefDraftLines(root, today, opts = {}) {
+  const b = opts.draft || briefDraft(root, today, opts);
+  const stamp = b.fm ? [b.fm.fired && `job fired ${b.fm.fired}`, b.fm.generated && `generated ${b.fm.generated}`, b.fm.source && `source ${b.fm.source}`].filter(Boolean).join(', ') : '';
+  const weekday = ![0, 6].includes(dateOf(today.iso).getUTCDay());
+  const L = [`## Today's morning brief draft — ${today.iso}`];
+  if (b.where === 'local') L.push(`READY: ${path.join(root, b.rel)} (${b.bytes}b${stamp ? ', ' + stamp : ''}). On a start-of-day opener, put it on screen instead of re-running Steps 1-2, then continue per playbook/core/morning-brief.md Step 0 (ask the overnight question, then Step 3).`);
+  else if (b.where === 'origin') L.push(`READY on origin/${b.branch}, not in this checkout yet (${b.bytes}b${stamp ? ', ' + stamp : ''}). On a start-of-day opener: git -C "${root}" pull --ff-only; if the pull refuses, read it with: git -C "${root}" show origin/${b.branch}:${b.rel}`);
+  else if (b.where === 'unknown') L.push(`UNKNOWN: not in this checkout and origin could not be checked (${b.err}). On a start-of-day opener, retry once; if it still fails, run the brief live.`);
+  else if (!weekday) L.push('NONE (weekend: no scheduled brief). Run the brief live if asked.');
+  else if (today.hm < BRIEF_TIME.hm) L.push(`NONE yet: if you run the scheduled brief, it is due at ${BRIEF_TIME.hm} ${TZ}. Run the brief live if asked before then.`);
+  else L.push(`NONE: no draft in this checkout${b.noRemote ? ' (no origin remote)' : ' or on origin'}. If you run the scheduled brief (due ${BRIEF_TIME.hm} ${TZ}), it has not written one: say so in one line, then run the brief live.`);
+  return L;
+}
+
 function rawUncompiled(root) {
   return walk(path.join(root, 'raw'), p => path.basename(p) !== 'README.md' && !/\.DS_Store$/.test(p))
     .filter(p => !p.endsWith('.md') || !/^true$/i.test(frontmatter(readFull(p)).compiled || ''))
@@ -327,6 +425,9 @@ function runCheck(root, today) {
   const idx = indexStale(root); if (idx) warnings.push(`search index ${idx} (boot rebuilds it)`);
   const cm = tryRead(path.join(root, 'CLAUDE.md'));
   if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
+  if (TZ_INFO.warning) warnings.push(TZ_INFO.warning);
+  if (BRIEF_TIME.warning) warnings.push(BRIEF_TIME.warning);
+  if (process.env.HAROLD_NOW) warnings.push(`HAROLD_NOW=${process.env.HAROLD_NOW} is set: "now" is overridden (testing only)`);
   return { failures, warnings, playbooks: pb, learnings: lr, projects: pj, ctx, triggers };
 }
 
@@ -381,7 +482,12 @@ function cmdCheck(root, today, opts) {
 }
 
 function cmdBoot(root, today, opts, hook) {
+  // Other writers may push to origin (the scheduled brief, another machine, a phone session). Fast-forward
+  // first so this session reads their latest files; never merge, never block boot on it.
+  const up = git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  const pull = up.code === 0 ? git(root, ['pull', '--ff-only', '-q'], { timeout: 20000 }) : null;
   const c = runCheck(root, today);
+  if (pull && pull.code !== 0) c.warnings.push(`git pull --ff-only did not complete (${(pull.err || 'timeout').split('\n')[0].slice(0, 140)}); files from other writers may be stale`);
   if (c.failures.length) {
     console.log(`⛔ HAROLD BOOT REFUSED — ${today.iso} ${today.weekday}\nroot: ${root}\n` + c.failures.map(f => `  FAIL ${f}`).join('\n') + `\n\nThe contract cannot be met. Do not improvise from memory. Fix the failures above (iCloud eviction: run\n  find "${root}" -path '*/node_modules' -prune -o -type f -print0 | xargs -0 -n50 head -c1 >/dev/null 2>&1\nthen retry) and tell the operator in your first message that boot refused and why.`);
     return 2;
@@ -405,7 +511,9 @@ function cmdBoot(root, today, opts, hook) {
     st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: (hook && hook.hook_event_name) ? 'claude-code-hook' : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
     saveState(root, id, st);
   }
-  const archived = archiveStaleSessions(root, nowMs);
+  // Cloud runners are throwaway checkouts: tidying session files there only creates a commit to push.
+  const archived = isCloudRunner() ? [] : archiveStaleSessions(root, nowMs);
+  const crmQueue = replayCrmQueue(root, { budgetMs: 15000 }); // the SessionStart hook allows 60s in all
   const idxState = indexStale(root); const idxNote = idxState ? rebuildIndex(root) : 'search index current';
 
   const L = [];
@@ -416,6 +524,10 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`Session file: ${P(st.sessionFile)}   ← set "task" and the working activity on your first tool call; all activities back to "sleeping" on your last. Rename it to a descriptive slug if you like; harold close will find it.`);
   if (archived.length) L.push(`Archived stale session files (>48h): ${archived.join(', ')}`);
   L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown; ${idxNote}; replaces Obsidian)`);
+  L.push(crmQueue.line);
+  L.push('');
+  // A successful pull already fetched origin: no second network round trip inside the 60s hook.
+  L.push(...briefDraftLines(root, today, { fetch: !(pull && pull.code === 0) }));
   L.push('');
   L.push('## Constitution and core files (all verified readable this boot)');
   CORE.forEach(rel => L.push(`- ${P(rel)}`));
@@ -453,7 +565,7 @@ function cmdBoot(root, today, opts, hook) {
   c.triggers.info.forEach(i => L.push(`- NOTE     ${i}`));
   if (c.warnings.length) { L.push(''); L.push('## Warnings'); c.warnings.forEach(w => L.push(`- ${w}`)); }
   L.push('');
-  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every external contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl), with the internal-team gate respected (type: team → never). harold close verifies these and commits + pushes the repo.`);
+  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every external contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers), with the internal-team gate respected (type: team → never). harold close verifies these and commits + pushes the repo.`);
   if (opts.full) {
     L.push('\n\n# FULL CONTEXT DUMP (--full)\n');
     ['AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
@@ -479,19 +591,291 @@ function git(root, args, opts = {}) { const r = spawnSync('git', args, { cwd: ro
 // Empty set when the CRM is unreachable or unconfigured, which falls the check back to the queue.
 function crmTouchedToday(root, today) {
   const out = new Set();
-  const env = path.join(os.homedir(), '.harold/env');
-  let url = process.env.SUPABASE_URL || '', key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-  try {
-    const t = fs.readFileSync(env, 'utf8');
-    url = url || (t.match(/SUPABASE_URL\s*=\s*"?([^"\n]+)"?/) || [])[1] || '';
-    key = key || (t.match(/SUPABASE_SERVICE_ROLE_KEY\s*=\s*"?([^"\n]+)"?/) || [])[1] || '';
-  } catch (_) {}
-  if (!url || !key) return out;
-  const q = `${url.replace(/\/$/, '')}/rest/v1/contacts?select=name&updated_at=gte.${today.iso}T00:00:00`;
-  const r = spawnSync('curl', ['-s', '-m', '8', q, '-H', `apikey: ${key}`, '-H', `Authorization: Bearer ${key}`], { encoding: 'utf8' });
-  if (r.status !== 0 || !r.stdout) return out;
-  try { JSON.parse(r.stdout).forEach(c => c && c.name && out.add(String(c.name).toLowerCase())); } catch (_) {}
+  const cfg = crmConfig();
+  if (!cfg) return out;
+  const since = new Date(startOfLocalDayMs()).toISOString();
+  const r = crmRequest(cfg, 'GET', `contacts?select=name&updated_at=gte.${encodeURIComponent(since)}`, undefined, { timeout: 8 });
+  if (r.ok && Array.isArray(r.data)) r.data.forEach(c => c && c.name && out.add(String(c.name).toLowerCase()));
   return out;
+}
+
+// ───────────────────────── CRM queue replay ─────────────────────────
+// `harold file crm` queues CRM writes while the CRM cannot be reached. This applies them once it answers
+// again, from wherever bin/harold runs with the CRM credentials (any computer, or a cloud job that has
+// them as secrets): boot and close do it automatically, `harold replay [--dry-run]` does it by hand.
+// Same semantics as the harold-mcp tools harold_upsert_contact, harold_log_interaction and
+// harold_crm_task (tools/harold-mcp/server.js), plus two guards: a replay never creates a second contact
+// for a name the CRM already holds (it stops and says so), and never logs an interaction for a team
+// contact. Every write looks for its own result first, so a crash between the CRM write and the queue
+// update cannot apply the same row twice on the next run. The queue is a fallback, not a workflow.
+const CRM_QUEUE = 'harold/crm-queue.jsonl';
+const CRM_ACTIONS = ['log_interaction', 'upsert_contact', 'crm_task'];
+const WARMTH_VALUES = ['', 'Cold', 'Lukewarm', 'Warm', 'Hot'];
+const CONTACT_STATUSES = ['active', 'pending', 'cold', 'archived'];
+const PRIORITIES = ['high', 'medium', 'low'];
+const INTERACTION_TYPES = ['call', 'email', 'meeting', 'note', 'linkedin', 'other'];
+const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
+// harold_upsert_contact's fields (tools/harold-mcp/schema.sql → contacts).
+const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'focus_area', 'investor_type'];
+// The words the vault cards and playbooks use, mapped to the CRM's column names.
+const CONTACT_ALIASES = { company: 'org', type: 'category', labels: 'categories' };
+
+function crmConfig() {
+  const url = setting('SUPABASE_URL'), key = setting('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) return null;
+  const u = url.replace(/\/$/, '');
+  let ref = u; try { ref = new URL(u).hostname.split('.')[0]; } catch (_) {}
+  return { url: u, key, ref };
+}
+// One PostgREST call through curl. The key goes in on stdin (curl -K -), so it never shows in ps.
+function crmRequest(cfg, method, route, body, opts = {}) {
+  const args = ['-sS', '-m', String(opts.timeout || 10), '--connect-timeout', '5', '-K', '-', '-X', method, `${cfg.url}/rest/v1/${route}`, '-w', '\n%{http_code}', '-H', 'Accept: application/json'];
+  if (body !== undefined) args.push('-H', 'Content-Type: application/json', '-H', `Prefer: ${opts.prefer || 'return=representation'}`, '--data-binary', JSON.stringify(body));
+  const k = cfg.key.replace(/[\\"]/g, '\\$&');
+  const r = spawnSync('curl', args, { input: `header = "apikey: ${k}"\nheader = "Authorization: Bearer ${k}"\n`, encoding: 'utf8' });
+  const out = r.stdout || ''; const nl = out.lastIndexOf('\n');
+  const status = +out.slice(nl + 1) || 0; const text = nl >= 0 ? out.slice(0, nl) : '';
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch (_) {}
+  if (r.status !== 0 || status < 200 || status >= 300) {
+    const err = (data && (data.message || data.hint)) || (r.stderr || '').trim().split('\n')[0] || (r.error && r.error.message) || `HTTP ${status}`;
+    return { ok: false, status, data, err: status ? `HTTP ${status}: ${err}` : err };
+  }
+  return { ok: true, status, data };
+}
+const enc = encodeURIComponent;
+const likeExact = s => String(s).replace(/[\\%_]/g, '\\$&');
+const orgMatches = (a, b) => { a = (a || '').toLowerCase().trim(); b = (b || '').toLowerCase().trim(); return !!a && !!b && (a.includes(b) || b.includes(a)); };
+const CONTACT_COLS = 'id,name,org,category';
+
+function contactsByName(cfg, name, partial) {
+  const pat = partial ? `*${likeExact(name)}*` : likeExact(name);
+  const r = crmRequest(cfg, 'GET', `contacts?select=${CONTACT_COLS}&name=ilike.${enc(pat)}`);
+  if (!r.ok) throw new Error(`contact lookup failed: ${r.err}`);
+  return r.data || [];
+}
+function contactById(cfg, id) {
+  const r = crmRequest(cfg, 'GET', `contacts?select=${CONTACT_COLS}&id=eq.${enc(id)}`);
+  if (!r.ok) throw new Error(`contact lookup failed: ${r.err}`);
+  if (!r.data || !r.data.length) throw new Error(`no contact with id ${id}`);
+  return r.data[0];
+}
+const listed = rows => rows.slice(0, 5).map(m => `${m.name} (${m.org || 'no org'}) ${m.id}`).join('; ');
+// harold-mcp resolveContact: exact name (case-insensitive), then partial, narrowed by org. More than one → stop.
+function resolveCrmContact(cfg, name, org, id) {
+  if (id) return contactById(cfg, id);
+  if (!name) throw new Error('no contact name or contact_id');
+  let m = contactsByName(cfg, name, false);
+  if (!m.length) m = contactsByName(cfg, name, true);
+  if (!m.length) throw new Error(`no CRM contact matches "${name}"${org ? ` at ${org}` : ''}; queue an upsert_contact for them first`);
+  if (m.length > 1 && org) { const f = m.filter(x => orgMatches(x.org, org)); if (f.length) m = f; }
+  if (m.length > 1) throw new Error(`${m.length} CRM contacts match "${name}", add org or contact_id to the row: ${listed(m)}`);
+  return m[0];
+}
+// Internal-team gate: CRM type team, a team label, or a vault card whose type (or older category) is team.
+function cardIsTeam(root, name) {
+  const card = path.join(root, 'vault/people', `${name}.md`);
+  try { if (!fs.existsSync(card)) return false; const fm = frontmatter(readFull(card)); return (fm.type || fm.category || '').toLowerCase() === 'team'; } catch (_) { return false; }
+}
+function isTeamContact(cfg, root, c) {
+  if ((c.category || '').toLowerCase() === 'team' || cardIsTeam(root, c.name)) return true;
+  const r = crmRequest(cfg, 'GET', `contact_categories?select=category_name&contact_id=eq.${enc(c.id)}`);
+  if (!r.ok) throw new Error(`label lookup failed: ${r.err}`);
+  return (r.data || []).some(x => (x.category_name || '').toLowerCase() === 'team');
+}
+// "2026-07" and "2026" are how people remember dates; Postgres wants a day.
+function normalizeWhen(s) {
+  if (s === undefined || s === null || s === '') return null;
+  s = String(s).trim();
+  if (/^\d{4}$/.test(s)) return `${s}-01-01`;
+  if (/^\d{4}-\d{2}$/.test(s)) return `${s}-01`;
+  if (!isNaN(Date.parse(s))) return s;
+  throw new Error(`unreadable date "${s}"`);
+}
+function checkEnum(field, v, allowed) { if (v !== undefined && !allowed.includes(v)) throw new Error(`${field} "${v}" is not one of: ${allowed.map(a => a || '(blank)').join(', ')}`); }
+class Refusal extends Error {}
+
+function replayUpsertContact(cfg, root, row, dry) {
+  const p = { ...(row.payload || {}) };
+  for (const [from, to] of Object.entries(CONTACT_ALIASES)) if (p[from] !== undefined && p[to] === undefined) { p[to] = p[from]; delete p[from]; }
+  const name = p.name || row.contact;
+  checkEnum('warmth', p.warmth, WARMTH_VALUES); checkEnum('status', p.status, CONTACT_STATUSES); checkEnum('priority', p.priority, PRIORITIES);
+  const record = {};
+  CONTACT_FIELDS.forEach(k => { if (p[k] !== undefined) record[k] = p[k]; });
+  record.name = name;
+  const ignored = Object.keys(p).filter(k => !CONTACT_FIELDS.includes(k) && k !== 'contact_id' && k !== 'categories');
+  if (record.org === null) record.org = ''; // no org is a blank org, as the schema stores it
+  // One contact with this name: that is who the update is about, and an org in the row rewrites theirs
+  // (people change jobs). Several with this name: the row's org picks one. Never guess, and never create
+  // a second record for a name the CRM already holds.
+  let target = null;
+  if (p.contact_id) target = contactById(cfg, p.contact_id);
+  else {
+    const same = contactsByName(cfg, name, false);
+    if (same.length === 1) target = same[0];
+    else if (same.length > 1) {
+      const byOrg = p.org ? same.filter(x => orgMatches(x.org, p.org)) : [];
+      if (byOrg.length === 1) target = byOrg[0];
+      else throw new Error(`${same.length} CRM contacts are named "${name}" and ${p.org ? `the row's org "${p.org}" does not single one out` : 'the row names no org'}; add contact_id to the row: ${listed(same)}`);
+    }
+  }
+  const note = ignored.length ? ` (not saved, the CRM has no field called: ${ignored.join(', ')})` : '';
+  const orgChange = target && p.org !== undefined && (target.org || '') !== (record.org || '') ? `, org "${target.org || ''}" → "${record.org}"` : '';
+  if (dry) return target ? `would update contact ${target.name} (${target.org || 'no org'}) ${target.id}${orgChange}${note}` : `would create contact ${name}${record.org ? ` (${record.org})` : ' (no org)'}${note}`;
+  let saved;
+  if (target) {
+    record.updated_at = new Date().toISOString();
+    const r = crmRequest(cfg, 'PATCH', `contacts?id=eq.${enc(target.id)}&select=${CONTACT_COLS}`, record);
+    if (!r.ok) throw new Error(`update failed: ${r.err}`);
+    if (!r.data || !r.data.length) throw new Error(`update matched no row for ${target.id}`);
+    saved = r.data[0];
+  } else {
+    if (!record.status) record.status = 'pending';
+    if (!record.priority) record.priority = 'medium';
+    if (!record.category) record.category = 'other';
+    if (record.org === undefined) record.org = '';
+    const r = crmRequest(cfg, 'POST', `contacts?select=${CONTACT_COLS}`, record);
+    if (!r.ok) throw new Error(`create failed: ${r.err}`);
+    saved = r.data[0];
+  }
+  if (Array.isArray(p.categories) && p.categories.length) {
+    const rows = [...new Set(p.categories.map(c => String(c).trim().toLowerCase()).filter(Boolean))].map(category_name => ({ contact_id: saved.id, category_name }));
+    const r = crmRequest(cfg, 'POST', 'contact_categories?on_conflict=contact_id,category_name', rows, { prefer: 'resolution=ignore-duplicates,return=minimal' });
+    if (!r.ok) throw new Error(`contact ${target ? 'updated' : 'created'} (${saved.id}) but labels failed: ${r.err}`);
+  }
+  return `${target ? 'updated' : 'created'} contact ${saved.name} ${saved.id}${orgChange}${note}`;
+}
+
+function replayLogInteraction(cfg, root, row, dry) {
+  const p = row.payload || {};
+  checkEnum('type', p.type, INTERACTION_TYPES);
+  if (!p.type) throw new Error('type is required');
+  if (typeof p.subject !== 'string') throw new Error('subject is required');
+  const when = normalizeWhen(p.occurred_at) || row.ts;
+  const c = resolveCrmContact(cfg, p.contact_name || row.contact, p.org || p.company, p.contact_id);
+  if (isTeamContact(cfg, root, c)) throw new Refusal(`${c.name} is team: internal conversations are never logged as CRM interactions`);
+  const q = `interactions?select=id&contact_id=eq.${enc(c.id)}&type=eq.${enc(p.type)}&subject=eq.${enc(p.subject)}&occurred_at=eq.${enc(when)}`;
+  const dup = crmRequest(cfg, 'GET', q);
+  if (!dup.ok) throw new Error(`duplicate check failed: ${dup.err}`);
+  if (dup.data && dup.data.length) return `already in the CRM: ${p.type} "${p.subject}" for ${c.name} (${dup.data[0].id}), nothing written`;
+  if (dry) return `would log ${p.type} "${p.subject}" for ${c.name} (${c.id}) at ${when}`;
+  const r = crmRequest(cfg, 'POST', 'interactions?select=id', { contact_id: c.id, type: p.type, subject: p.subject, body: p.body || '', occurred_at: when });
+  if (!r.ok) throw new Error(`insert failed: ${r.err}`);
+  return `logged ${p.type} "${p.subject}" for ${c.name} ${r.data[0].id}`;
+}
+
+function replayCrmTask(cfg, root, row, dry) {
+  const p = row.payload || {};
+  const act = p.action || 'create';
+  checkEnum('priority', p.priority, PRIORITIES); checkEnum('status', p.status, TASK_STATUSES);
+  if (act === 'list') throw new Refusal('a queued "list" writes nothing; dropped');
+  if (['update', 'complete', 'cancel'].includes(act)) {
+    if (!p.task_id) throw new Error(`task_id is required to ${act} a task`);
+    const now = new Date().toISOString();
+    const u = { updated_at: now };
+    if (act === 'complete') Object.assign(u, { status: 'completed', completed_at: now });
+    else if (act === 'cancel') u.status = 'cancelled';
+    else {
+      ['title', 'description', 'priority', 'due_date', 'status'].forEach(k => { if (p[k] !== undefined) u[k] = p[k]; });
+      if (p.status === 'completed') u.completed_at = now;
+    }
+    if (dry) return `would ${act} task ${p.task_id}`;
+    const r = crmRequest(cfg, 'PATCH', `tasks?id=eq.${enc(p.task_id)}&select=id,title,status`, u);
+    if (!r.ok) throw new Error(`${act} failed: ${r.err}`);
+    if (!r.data || !r.data.length) throw new Error(`no task with id ${p.task_id}`);
+    return `${act} task "${r.data[0].title}" ${r.data[0].id} → ${r.data[0].status}`;
+  }
+  if (act !== 'create') throw new Error(`unknown crm_task action "${act}"`);
+  if (!p.title) throw new Error('title is required to create a task');
+  const c = resolveCrmContact(cfg, p.contact_name || row.contact, p.org || p.company, p.contact_id);
+  const dup = crmRequest(cfg, 'GET', `tasks?select=id&contact_id=eq.${enc(c.id)}&title=eq.${enc(p.title)}&status=in.(pending,in_progress)`);
+  if (!dup.ok) throw new Error(`duplicate check failed: ${dup.err}`);
+  if (dup.data && dup.data.length) return `already in the CRM: open task "${p.title}" for ${c.name} (${dup.data[0].id}), nothing written`;
+  if (dry) return `would create task "${p.title}" for ${c.name} (${c.id})`;
+  const rec = { title: p.title, description: p.description || '', status: 'pending', priority: p.priority || 'medium', contact_id: c.id };
+  if (p.due_date) rec.due_date = p.due_date;
+  const r = crmRequest(cfg, 'POST', 'tasks?select=id', rec);
+  if (!r.ok) throw new Error(`insert failed: ${r.err}`);
+  return `created task "${p.title}" for ${c.name} ${r.data[0].id}`;
+}
+
+function readQueue(qp) {
+  if (!fs.existsSync(qp)) return [];
+  return readFull(qp).split('\n').filter(l => l.trim()).map(line => { try { return { line, row: JSON.parse(line) }; } catch (_) { return { line, row: null }; } });
+}
+const queuePending = r => !!r && r.replayed !== true && !r.refused;
+const sameQueueRow = (a, b) => !!a && !!b && a.ts === b.ts && a.contact === b.contact && a.action === b.action;
+// Rewrites one row under the queue lock (never held across network calls), preserving every other line
+// byte for byte, including any that do not parse. Atomic: temp file, then rename.
+function patchQueueRow(qp, idx, orig, patch) {
+  return withLock(qp, () => {
+    const items = readQueue(qp);
+    const i = items[idx] && sameQueueRow(items[idx].row, orig) ? idx : items.findIndex(it => sameQueueRow(it.row, orig));
+    if (i < 0) return false;
+    const row = { ...items[i].row, ...patch };
+    Object.keys(row).forEach(k => row[k] === undefined && delete row[k]);
+    items[i] = { line: JSON.stringify(row), row };
+    const tmp = `${qp}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, items.map(it => it.line).join('\n') + '\n');
+    fs.renameSync(tmp, qp);
+    return true;
+  });
+}
+
+function replayCrmQueue(root, opts = {}) {
+  const dry = !!opts.dryRun, budgetMs = opts.budgetMs || 20000, t0 = Date.now();
+  const qp = path.join(root, CRM_QUEUE);
+  const pending = readQueue(qp).map((it, idx) => ({ ...it, idx })).filter(it => queuePending(it.row));
+  const res = { pending: pending.length, applied: [], failed: [], refused: [], deferred: 0, details: [], line: '' };
+  if (!pending.length) { res.line = 'CRM queue: nothing waiting'; return res; }
+  const n = `${pending.length} queued CRM write${pending.length === 1 ? '' : 's'}`;
+  const cfg = crmConfig();
+  if (!cfg) { res.line = `CRM queue: ${n} waiting; no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in the environment or ${envFilePath()}, so nothing was replayed here. They go in from the next boot or close that has the CRM credentials`; return res; }
+  const probe = crmRequest(cfg, 'GET', 'contacts?select=id&limit=1', undefined, { timeout: 6 });
+  if (!probe.ok) { res.line = `CRM queue: ${n} waiting; the CRM is not answering (${probe.err}), kept queued for the next boot or close`; return res; }
+  // One replayer at a time: two harnesses can boot the same workspace within a second of each other.
+  const claim = `${qp}.replaying`;
+  if (!dry) {
+    try { fs.mkdirSync(claim); } catch (e) {
+      let stale = true; try { stale = Date.now() - fs.statSync(claim).mtimeMs > 120000; } catch (_) {}
+      if (!stale) { res.line = `CRM queue: ${n} waiting; another session is replaying them right now`; return res; }
+      fs.rmSync(claim, { recursive: true, force: true }); fs.mkdirSync(claim);
+    }
+  }
+  try {
+    for (const it of pending) {
+      if (Date.now() - t0 > budgetMs) { res.deferred++; continue; }
+      const row = it.row, label = `${row.contact} ${row.action}${row.action === 'crm_task' ? ':' + ((row.payload || {}).action || 'create') : ''}`;
+      const at = new Date().toISOString();
+      try {
+        if (!CRM_ACTIONS.includes(row.action)) throw new Error(`unknown action "${row.action}"`);
+        const fn = { upsert_contact: replayUpsertContact, log_interaction: replayLogInteraction, crm_task: replayCrmTask }[row.action];
+        const result = fn(cfg, root, row, dry);
+        res.applied.push(label); res.details.push(`  ${dry ? 'DRY' : 'OK '}  ${label}: ${result}`);
+        if (!dry) patchQueueRow(qp, it.idx, row, { replayed: true, replayed_at: at, replayed_to: `CRM (${cfg.ref})`, result, last_error: undefined });
+      } catch (e) {
+        if (e instanceof Refusal) {
+          res.refused.push(label); res.details.push(`  NO   ${label}: ${e.message}`);
+          if (!dry) patchQueueRow(qp, it.idx, row, { refused: true, refused_at: at, result: e.message, last_error: undefined });
+        } else {
+          res.failed.push(`${label}: ${e.message}`); res.details.push(`  FAIL ${label}: ${e.message}`);
+          if (!dry) patchQueueRow(qp, it.idx, row, { attempts: (row.attempts || 0) + 1, last_attempt_at: at, last_error: e.message });
+        }
+      }
+    }
+  } finally { if (!dry) fs.rmSync(claim, { recursive: true, force: true }); }
+  const parts = [`${dry ? 'would replay' : 'replayed'} ${res.applied.length} of ${pending.length}`];
+  if (res.failed.length) parts.push(`${res.failed.length} ${dry ? 'would fail' : 'failed and stay queued'} (${res.failed[0].length > 140 ? res.failed[0].slice(0, 139) + '…' : res.failed[0]}${res.failed.length > 1 ? `; +${res.failed.length - 1} more` : ''})`);
+  if (res.refused.length) parts.push(`${res.refused.length} ${dry ? 'would be refused' : 'refused'} (${res.refused.join(', ')})`);
+  if (res.deferred) parts.push(`${res.deferred} left for next time (time budget)`);
+  res.line = `CRM queue${dry ? ' (dry run)' : ''}: ${parts.join('; ')}${res.failed.length ? `. Detail: ${CLI(root)} replay --dry-run` : ''}`;
+  return res;
+}
+
+function cmdReplay(root, opts) {
+  const r = replayCrmQueue(root, { dryRun: opts.dryRun, budgetMs: 120000 });
+  if (r.details.length) console.log(r.details.join('\n'));
+  console.log(r.line);
+  return r.failed.length ? 1 : 0;
 }
 
 // Where knowledge lives: the standard directories plus every project folder in harold/projects.md.
@@ -510,6 +894,7 @@ function changedSince(root, sinceMs, dirs) {
 }
 
 function cmdClose(root, today, opts, hook) {
+  if (isCloudRunner() && (loadJob(root) || {}).date === today.iso) return closeBriefJob(root, today, opts, hook);
   const id = sessionId(hook);
   let st = loadState(root, id);
   const final = !!opts.final;
@@ -533,6 +918,9 @@ function cmdClose(root, today, opts, hook) {
     catch (e) { problems.push(`session file unreadable: ${sf} (${e.message})`); }
   } else problems.push(`no session file found in ${SESSIONS_DIR}/ — register one (the constitution says every session does)`);
 
+  // 1b. queued CRM writes go in as soon as the CRM answers. Never a block: an outage is not a filing failure.
+  if (readQueue(path.join(root, CRM_QUEUE)).some(it => queuePending(it.row))) notes.push(replayCrmQueue(root).line);
+
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
   const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && !f.endsWith('search.db'));
@@ -543,16 +931,27 @@ function cmdClose(root, today, opts, hook) {
   if (final && changed.length && !todaysNotes.length) problems.push(`final close: knowledge changed this session, a vault/daily note for ${today.iso} is required`);
 
   // 3. contacts filed: a vault/people card touched this session must carry today's last_updated and a
-  //    crm-queue entry (CRM unreachable) — unless type: team (internal-team gate; `category: team` on older cards counts too).
-  // A card counts as touched when substance changed: new file, or any changed line that is not a [[link]] bullet,
-  // a ## Related header, or blank. Cross-link maintenance is structural and never a CRM touchpoint.
+  //    CRM write or crm-queue entry (CRM unreachable) — unless type: team (internal-team gate; `category: team` on older cards counts too).
+  // A card counts as touched only when something about the person changed: a new card, a changed frontmatter
+  // field other than the structural ones (tags, aliases, dates), or a changed body line that is not a [[link]]
+  // bullet, a ## Related header or blank. Tidying (tag normalization, cross-links, date fixes) is housekeeping,
+  // never a CRM touchpoint: treating it as one blocks maintenance jobs and loses their work.
+  // `type` and `labels` are NOT structural here: they are the contact's CRM type and labels.
+  const STRUCTURAL_FM = new Set(['tags', 'aliases', 'last_updated', 'updated', 'created', 'cssclasses', 'cssclass']);
+  const splitCard = t => { const m = t.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/); return m ? { fm: frontmatter(t), body: t.slice(m[0].length) } : { fm: {}, body: t }; };
+  const bodyLines = b => b.split('\n').map(l => l.trim()).filter(l => l && !/^- \[\[/.test(l) && !/^## Related/.test(l));
   const substantive = f => {
-    const d = git(root, ['diff', '-U0', 'HEAD', '--', f]);
-    if (d.code !== 0) return true;
-    const tracked = git(root, ['ls-files', '--error-unmatch', f]).code === 0;
-    if (!tracked) return true;
-    const lines = d.out.split('\n').filter(l => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l)).map(l => l.slice(1).trim());
-    return lines.some(l => l && !/^- \[\[/.test(l) && !/^## Related/.test(l) && !/^last_updated:/.test(l));
+    if (git(root, ['ls-files', '--error-unmatch', f]).code !== 0) return true;  // new card
+    const before = git(root, ['show', `HEAD:${f}`]);
+    if (before.code !== 0) return true;
+    let after; try { after = readFull(path.join(root, f)); } catch (_) { return true; }
+    const a = splitCard(before.out), b = splitCard(after);
+    const keys = new Set([...Object.keys(a.fm), ...Object.keys(b.fm)]);
+    for (const k of keys) if (!STRUCTURAL_FM.has(k) && (a.fm[k] || '') !== (b.fm[k] || '')) return true;
+    const x = bodyLines(a.body), y = bodyLines(b.body);
+    if (x.length !== y.length) return true;
+    const count = new Map(); x.forEach(l => count.set(l, (count.get(l) || 0) + 1));
+    return y.some(l => { const n = count.get(l) || 0; if (!n) return true; count.set(l, n - 1); return false; });
   };
   const peopleTouched = changed.filter(f => f.startsWith('vault/people/') && f.endsWith('.md') && substantive(f));
   const queue = readJsonl(path.join(root, 'harold/crm-queue.jsonl')).rows.filter(q => (q.date || '').startsWith(today.iso));
@@ -586,7 +985,21 @@ function cmdClose(root, today, opts, hook) {
 
   // 6. commit + push. The repo is the authoritative copy; unpushed work is invisible work.
   let gitNote = '';
-  if (!problems.length || final) {
+  // A cloud run is a throwaway checkout: if close is about to give up (its 4th block), save the work anyway
+  // and leave the unresolved problems where the next morning brief shows them. Otherwise everything the job
+  // did is lost with the container.
+  const cloudGiveUp = problems.length && !final && isCloudRunner() && stopHookActive && st && (st.blocks || 0) >= 3;
+  if (cloudGiveUp) {
+    const hn = path.join(root, 'harold/briefs/housekeeping-notes.md');
+    try {
+      const t = fs.existsSync(hn) ? readFull(hn) : '# Housekeeping notes for the morning brief\n\n*Written by unattended jobs. The morning brief shows anything under "New" once, then moves it under "Shown".*\n\n## New\n\n## Shown\n';
+      const line = `- ${today.iso} cloud job saved with unresolved close problems: ${problems.map(p => p.split(' — ')[0]).join('; ').slice(0, 400)}`;
+      fs.mkdirSync(path.dirname(hn), { recursive: true });
+      fs.writeFileSync(hn, t.includes('## New\n') ? t.replace('## New\n', `## New\n\n${line}\n`) : `${t}\n## New\n\n${line}\n`);
+    } catch (_) {}
+    notes.push('cloud run: close could not be satisfied; saving the work anyway (problems noted in harold/briefs/housekeeping-notes.md)');
+  }
+  if (!problems.length || final || cloudGiveUp) {
     const add = git(root, ['add', '-A']);
     if (add.code !== 0) gitNote = `git add failed: ${add.err.slice(0, 200)}`;
     else {
@@ -601,14 +1014,40 @@ function cmdClose(root, today, opts, hook) {
           if (cm.code !== 0) gitNote = `commit failed: ${cm.err.slice(0, 200)}`;
         }
       }
+      if (!gitNote && !refused && isCloudRunner() && git(root, ['remote', 'get-url', 'origin']).code === 0) {
+        // Cloud checkouts (routines, Actions) are often detached with no upstream, so a plain push does
+        // nothing. Push to the knowledge-base branch explicitly, replaying onto whatever landed meanwhile.
+        const branch = defaultBranch(root);
+        git(root, ['fetch', '-q', 'origin', branch], { timeout: 120000 });
+        const ahead = git(root, ['rev-list', '--count', `origin/${branch}..HEAD`]).out;
+        if (ahead && ahead !== '0') {
+          let ps = { code: 1, err: '' };
+          for (let i = 0; i < 3 && ps.code !== 0; i++) {
+            const rb = git(root, ['pull', '-q', '--rebase', '--autostash', 'origin', branch], { timeout: 180000 });
+            if (rb.code !== 0) { git(root, ['rebase', '--abort']); ps = { code: 1, err: `pull --rebase failed: ${(rb.err || rb.out).split('\n')[0]}` }; break; }
+            ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
+          }
+          gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to ${branch}` : `PUSH FAILED (${ahead} commit(s) unpushed): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
+        } else gitNote = 'nothing to push';
+      }
       if (!gitNote && !refused) {
         const ahead = git(root, ['rev-list', '--count', '@{u}..HEAD']).out;
-        if (ahead && ahead !== '0') { const ps = git(root, ['push', '-q'], { timeout: 180000 }); gitNote = ps.code === 0 ? `pushed ${ahead} commit(s)` : `PUSH FAILED (${ahead} commit(s) unpushed): ${ps.err.split('\n')[0].slice(0, 160)} — invisible until pushed; retry: git -C "${root}" push`; }
-        else gitNote = 'nothing to push';
+        if (ahead && ahead !== '0') {
+          let ps = git(root, ['push', '-q'], { timeout: 180000 });
+          // Other writers (the scheduled brief, another machine) also push, so a rejected push usually just
+          // means "behind": replay local commits on top and retry once.
+          if (ps.code !== 0 && /rejected|non-fast-forward|fetch first/.test(ps.err)) {
+            const rb = git(root, ['pull', '-q', '--rebase', '--autostash'], { timeout: 180000 });
+            if (rb.code === 0) ps = git(root, ['push', '-q'], { timeout: 180000 });
+            else { git(root, ['rebase', '--abort']); ps = { code: 1, err: `behind origin and pull --rebase failed: ${(rb.err || rb.out).split('\n')[0]}` }; }
+          }
+          gitNote = ps.code === 0 ? `pushed ${ahead} commit(s)` : `PUSH FAILED (${ahead} commit(s) unpushed): ${ps.err.split('\n')[0].slice(0, 160)} — invisible until pushed; retry: git -C "${root}" push`;
+        } else gitNote = 'nothing to push';
       }
     }
   }
-  const archived = archiveStaleSessions(root, nowMs);
+  // Cloud runners are throwaway checkouts: tidying session files there only creates a commit to push.
+  const archived = isCloudRunner() ? [] : archiveStaleSessions(root, nowMs);
 
   st = st || { id, bootedAtMs: bootMs, blocks: 0 };
   const isHook = !!(hook && hook.hook_event_name);
@@ -616,7 +1055,7 @@ function cmdClose(root, today, opts, hook) {
     st.blocks = (st.blocks || 0) + 1; saveState(root, id, st);
     const reason = `⛔ HAROLD CLOSE: filing incomplete (attempt ${st.blocks}). Fix these, then finish:\n` + problems.map(p => `  • ${p}`).join('\n') + (gitNote ? `\n  git: ${gitNote}` : '');
     if (isHook) {
-      if (stopHookActive && st.blocks > 3) { console.log(JSON.stringify({ systemMessage: `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}` })); return 0; }
+      if (stopHookActive && st.blocks > 3) { console.log(JSON.stringify({ systemMessage: `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}` })); return 0; }
       console.log(JSON.stringify({ decision: 'block', reason })); return 0;
     }
     console.error(reason); return 2;
@@ -648,10 +1087,18 @@ function cmdFile(root, today, args, opts = {}) {
   if (kind === 'crm') {
     let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error('usage: harold file crm \'{"contact":"Name","action":"log_interaction|upsert_contact|crm_task","payload":{...}}\''); return 2; }
     if (!obj.contact || !obj.action) { console.error('crm entry needs "contact" and "action"'); return 2; }
-    const card = path.join(root, 'vault/people', `${obj.contact}.md`);
-    if (fs.existsSync(card) && (() => { const fm = frontmatter(readFull(card)); return (fm.type || fm.category || '').toLowerCase() === 'team'; })()) { console.error(`REFUSED: ${obj.contact} is type: team. Internal team interactions are never logged in the CRM.`); return 3; }
-    appendLine(path.join(root, 'harold/crm-queue.jsonl'), { ...obj, date: today.iso, ts: now, replayed: false });
-    console.log(`queued ${obj.action} for ${obj.contact} (CRM unreachable — replays when reconnected)`); return 0;
+    if (!CRM_ACTIONS.includes(obj.action)) { console.error(`action must be one of: ${CRM_ACTIONS.join(', ')}`); return 2; }
+    if (cardIsTeam(root, obj.contact)) { console.error(`REFUSED: ${obj.contact} is type: team. Internal team interactions are never logged in the CRM.`); return 3; }
+    const qp = path.join(root, CRM_QUEUE);
+    // "applied":"connector" records a write already made through a CRM connector or MCP tool in a harness
+    // where bin/harold cannot see the CRM itself (no credentials here): it counts as filed, never replayed.
+    if (obj.applied !== undefined) {
+      if (obj.applied !== 'connector') { console.error('"applied" can only be "connector" (a write already made through a CRM connector or MCP tool)'); return 2; }
+      withLock(qp, () => appendLine(qp, { ...obj, date: today.iso, ts: now, replayed: true }));
+      console.log(`recorded ${obj.action} for ${obj.contact} (already written through a connector; not replayed)`); return 0;
+    }
+    withLock(qp, () => appendLine(qp, { ...obj, date: today.iso, ts: now, replayed: false }));
+    console.log(`queued ${obj.action} for ${obj.contact}. harold boot and harold close apply it once the CRM answers; to try now: ${CLI(root)} replay`); return 0;
   }
   if (kind === 'learning') {
     if (opts.repair) {
@@ -718,15 +1165,190 @@ function cmdWhere(root, args) {
   return 0;
 }
 
+// ───────────────────────── brief (the scheduled morning brief) ─────────────────────────
+// One code path for every runner: the GitHub Actions workflow (.github/workflows/morning-brief.yml, which
+// runs hourly and lets this gate decide), a Claude Code routine on its own schedule, or a person at a
+// terminal. The model writes the brief; this makes everything around it deterministic:
+//   brief start    gate: weekday in HAROLD_TZ, at or after HAROLD_BRIEF_TIME, no brief yet today.
+//                  Not due → one line, exit 0, nothing written. Due → boot --full into the context file.
+//   brief finish   validate, stamp, record the trigger, commit ONLY the brief paths, push
+//   brief status   where today's draft is (the same text boot prints) and whether the brief is due
+//   brief notify   optional phone push through ntfy (NTFY_TOPIC), carrying no brief content
+// While a job marker for today exists in a cloud runner, harold close checks the job instead of session
+// filing: a fresh clone looks like every file changed.
+const BRIEF_JOB = 'harold/.brief-job.json';
+const BRIEF_CONTEXT = 'harold/.brief-context.md';
+const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/crm-queue.jsonl'];
+// Hourly retries stop this many hours after the brief time, so a job that keeps failing (a missing
+// credential, say) fails a few times, not all day. HAROLD_BRIEF_WINDOW_HOURS=0 removes the limit.
+const BRIEF_WINDOW_H = (() => { const v = setting('HAROLD_BRIEF_WINDOW_HOURS'); return v !== '' && !isNaN(+v) && +v >= 0 ? +v : 6; })();
+function flag(argv, name) { const a = argv.find(x => x === `--${name}` || x.startsWith(`--${name}=`)); return a === undefined ? undefined : (a.includes('=') ? a.slice(a.indexOf('=') + 1) : true); }
+function briefRunner() {
+  if (process.env.GITHUB_ACTIONS) return { runner: 'github', url: `${process.env.GITHUB_SERVER_URL || 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` };
+  if (process.env.CLAUDE_CODE_REMOTE) { const s = process.env.CLAUDE_CODE_REMOTE_SESSION_ID || ''; return { runner: 'routine', url: s ? `https://claude.ai/code/${s.replace(/^cse_/, 'session_')}` : '' }; }
+  return { runner: 'local', url: '' };
+}
+function loadJob(root) { try { return JSON.parse(readFull(path.join(root, BRIEF_JOB))); } catch (_) { return null; } }
+function saveJob(root, j) { fs.writeFileSync(path.join(root, BRIEF_JOB), JSON.stringify(j, null, 2)); }
+function fmtLocal(ms) { const t = todayParts(new Date(ms)); const s = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(ms)); return `${t.iso} ${s} ${TZ}`; }
+function ghOutput(kv) { const f = process.env.GITHUB_OUTPUT; if (f) try { fs.appendFileSync(f, Object.entries(kv).map(([k, v]) => `${k}=${v}\n`).join('')); } catch (_) {} }
+
+/**
+ * Is the scheduled morning brief due? Pure: no I/O, so it can be tested with any clock and zone.
+ * Due when it is a weekday in `tz`, the local time is at or after `time` (and, when windowH > 0, no more
+ * than windowH hours after it), and no brief exists yet for today's LOCAL date. `force` overrides all of
+ * it; `ignoreTime` skips the clock checks (a runner whose own schedule is the clock).
+ */
+function briefGate({ nowMs, tz = TZ, time = BRIEF_TIME.hm, windowH = BRIEF_WINDOW_H, draftExists = false, force = false, ignoreTime = false }) {
+  const t = todayParts(new Date(nowMs), tz);
+  const g = { date: t.iso, weekday: t.weekday, localTime: t.hm, tz, time };
+  if (force) return { ...g, due: true, reason: 'forced with --force' };
+  if ([0, 6].includes(dateOf(t.iso).getUTCDay())) return { ...g, due: false, reason: `it is ${t.weekday} in ${tz}; the brief runs on weekdays` };
+  if (!ignoreTime) {
+    if (t.hm < time) return { ...g, due: false, reason: `it is ${t.hm} in ${tz}; the brief is due at ${time}` };
+    if (windowH > 0 && nowMs - utcForLocal(t.iso, time, tz) > windowH * 3600000) return { ...g, due: false, reason: `it is ${t.hm} in ${tz}, more than ${windowH}h after ${time}; the scheduled brief stops trying for today (run it live, or use --force)` };
+  }
+  if (draftExists) return { ...g, due: false, reason: `today's brief (harold/briefs/${t.iso}.md) already exists` };
+  return { ...g, due: true, reason: `${t.weekday} ${t.hm} in ${tz}, at or after ${time}, and no brief yet for ${t.iso}` };
+}
+const draftFound = b => b.where === 'local' || b.where === 'origin';
+function settingsNote(time) { return `HAROLD_TZ=${TZ} (${TZ_INFO.source === 'HAROLD_TZ' ? 'set' : 'not set: this machine\'s zone'}), HAROLD_BRIEF_TIME=${time}`; }
+function warnTz() {
+  if (!TZ_INFO.warning) return;
+  if (process.env.GITHUB_ACTIONS) console.log(`::warning::${TZ_INFO.warning}`); else console.error(`note: ${TZ_INFO.warning}`);
+}
+
+function cmdBrief(root, today, argv, now) {
+  const sub = argv[0];
+  const force = !!flag(argv, 'force');
+  const ignoreTime = !!flag(argv, 'ignore-time');
+  const t = flag(argv, 'time');
+  if (t !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t))) { console.error('--time must be HH:MM (24-hour)'); return 2; }
+  const time = t || BRIEF_TIME.hm;
+  const nowMs = now.getTime();
+  const rel = `harold/briefs/${today.iso}.md`;
+
+  if (sub === 'status') {
+    const b = briefDraft(root, today);
+    const g = briefGate({ nowMs, time, draftExists: draftFound(b) });
+    console.log([...briefDraftLines(root, today, { draft: b }), `Scheduled brief: ${g.due ? 'DUE now' : 'not due'} (${g.reason}). ${settingsNote(time)}`].join('\n'));
+    warnTz(); return 0;
+  }
+
+  if (sub === 'start') {
+    const r = briefRunner();
+    const prev = loadJob(root);
+    // A second start in the same run (the workflow's gate step, then the prompt) keeps the first one.
+    if (prev && prev.date === today.iso && !prev.finished && !prev.skipped && fs.existsSync(path.join(root, BRIEF_CONTEXT))) {
+      ghOutput({ due: 'true', date: today.iso });
+      console.log(`START (already started ${prev.firedLocal}) — context: ${path.join(root, BRIEF_CONTEXT)}. Write ${path.join(root, rel)}, then run: ${CLI(root)} brief finish`); return 0;
+    }
+    const gopts = { nowMs, time, force, ignoreTime };
+    let g = briefGate(gopts), b = null;
+    if (g.due && !force) { b = briefDraft(root, today); g = briefGate({ ...gopts, draftExists: draftFound(b) }); }
+    if (!g.due) {
+      // A not-due run still leaves a finished marker, so harold close inside a cloud runner has nothing to demand.
+      saveJob(root, { date: today.iso, runner: r.runner, runUrl: r.url, time, firedAt: new Date(nowMs).toISOString(), firedLocal: fmtLocal(nowMs), skipped: g.reason, finished: true });
+      ghOutput({ due: 'false', date: today.iso });
+      console.log(`NOT DUE: ${g.reason}. Nothing to do: write nothing, commit nothing, stop here.`);
+      warnTz(); return 0;
+    }
+    // stdout straight to the file: through a pipe, boot's process.exit can cut the output at 64 KB
+    const ctxPath = path.join(root, BRIEF_CONTEXT); const fd = fs.openSync(ctxPath, 'w');
+    const boot = spawnSync(process.execPath, [CLI(root), 'boot', '--full'], { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, HAROLD_SESSION_ID: `brief-job-${today.iso}` }, stdio: ['ignore', fd, 'pipe'] });
+    fs.closeSync(fd); const ctx = readFull(ctxPath);
+    if (boot.status !== 0) { console.log(`FAIL: bin/harold boot --full refused (exit ${boot.status}). The brief cannot run on an unmet contract:\n${ctx.slice(0, 2000)}${(boot.stderr || '').slice(0, 500)}`); return 2; }
+    saveJob(root, { date: today.iso, runner: r.runner, runUrl: r.url, time, firedAt: new Date(nowMs).toISOString(), firedLocal: fmtLocal(nowMs), finished: false, closeBlocks: 0 });
+    ghOutput({ due: 'true', date: today.iso });
+    const L = [`START ${today.iso} — runner: ${r.runner}${r.url ? ' ' + r.url : ''}`, `fired: ${fmtLocal(nowMs)}; ${g.reason}. ${settingsNote(time)}`];
+    if (b && b.where === 'unknown') L.push(`note: origin could not be checked for an existing brief (${b.err}); going by this checkout`);
+    L.push(`context: ${ctxPath} (${Buffer.byteLength(ctx)} bytes, the output of bin/harold boot --full). Read it first.`);
+    L.push(`write: ${path.join(root, rel)} — then run: ${CLI(root)} brief finish`);
+    console.log(L.join('\n')); warnTz(); return 0;
+  }
+
+  if (sub === 'finish') {
+    const job = loadJob(root) || { date: today.iso, ...briefRunner(), firedAt: null };
+    const p = path.join(root, `harold/briefs/${job.date}.md`);
+    const tr = tryRead(p);
+    if (!tr.ok) { console.log(`FAIL: ${path.relative(root, p)} was not written (${tr.err}). Write the brief there, then run brief finish again.`); return 2; }
+    if (tr.text.length < 1500) { console.log(`FAIL: ${path.relative(root, p)} is only ${tr.text.length} bytes; that is not a brief.`); return 2; }
+    if (job.finished && job.pushedSha) { console.log(`FINISH: already pushed to ${job.pushedTo || 'origin'} (${job.pushedSha.slice(0, 7)}). Nothing to do.`); return 0; }
+    // Stamp the frontmatter deterministically: when the job fired, when it finished, where it ran.
+    const fm = frontmatter(tr.text); const body = tr.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+    const stamp = { date: job.date, source: 'cloud', steps: fm.steps || '1-2', ...fm, runner: job.runner, fired: job.firedLocal || fm.fired || '', generated: new Date().toISOString(), run_url: job.runUrl || job.url || '' };
+    fs.writeFileSync(p, `---\n${Object.entries(stamp).filter(([, v]) => v !== '' && v != null).map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n${body.replace(/^\n+/, '')}`);
+    appendLine(path.join(root, 'harold/trigger-log.jsonl'), { id: 'cloud-brief', status: 'ran', reason: `${job.runner} ${job.runUrl || job.url || ''}`.trim(), date: job.date, ts: new Date().toISOString() });
+    const add = BRIEF_PATHS.filter(x => fs.existsSync(path.join(root, x)));
+    git(root, ['add', '--', ...add]);
+    const staged = git(root, ['diff', '--cached', '--name-only']).out.split('\n').filter(Boolean);
+    const hits = secretScan(root, staged); if (hits.length) { git(root, ['reset', '-q']); console.log(`FAIL: refusing to commit, possible secrets in ${hits.join('; ')}`); return 2; }
+    // A cloud runner usually has no git identity; use a neutral one rather than fail.
+    const ident = ['-c', 'core.hooksPath=/dev/null'];
+    if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (scheduled brief)', '-c', 'user.email=harold-brief@users.noreply.github.com');
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+    if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) { console.log(`FAIL: commit failed: ${cm.err.slice(0, 300)}`); return 2; }
+    if (git(root, ['remote', 'get-url', 'origin']).code !== 0) {
+      Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: git(root, ['rev-parse', 'HEAD']).out, pushedTo: '(no origin remote: committed locally)' }); saveJob(root, job);
+      console.log(`FINISH ok: ${path.relative(root, p)} committed locally (no origin remote to push to).`); return 0;
+    }
+    // Push the branch the job runs on (the knowledge base's branch in production; a test branch in a test).
+    const cur = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).out; const branch = cur && cur !== 'HEAD' ? cur : defaultBranch(root);
+    let pushed = null, err = '';
+    for (let i = 0; i < 3 && !pushed; i++) {
+      git(root, [...ident, 'pull', '-q', '--rebase', 'origin', branch], { timeout: 120000 });
+      const ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
+      if (ps.code === 0) pushed = git(root, ['rev-parse', 'HEAD']).out; else err = (ps.err || ps.out).split('\n').slice(0, 3).join(' | ');
+    }
+    if (!pushed) { console.log(`FAIL: push to ${branch} failed after 3 attempts: ${err}`); return 2; }
+    Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: pushed, pushedTo: branch }); saveJob(root, job);
+    console.log(`FINISH ok: ${path.relative(root, p)} pushed to ${branch} as ${pushed.slice(0, 7)} (fired ${job.firedLocal || '?'}, finished ${fmtLocal(Date.now())}).`);
+    return 0;
+  }
+
+  if (sub === 'notify') {
+    // ntfy: free, no account, any phone (ntfy app) or browser. The topic name is the only secret, so the
+    // message carries no brief content: just that it is ready, and a link to open it.
+    const topic = process.env.NTFY_TOPIC; const server = (process.env.NTFY_SERVER || 'https://ntfy.sh').replace(/\/$/, '');
+    if (!topic) { console.log('notify: NTFY_TOPIC not set, skipped'); return 0; }
+    const date = flag(argv, 'date') || today.iso; const status = flag(argv, 'status') || 'ready';
+    const p = path.join(root, `harold/briefs/${date}.md`); const fm = fs.existsSync(p) ? frontmatter(readFull(p)) : {};
+    const repo = process.env.GITHUB_REPOSITORY || '';
+    const dayName = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' }).format(dateOf(date));
+    const runLink = process.env.GITHUB_RUN_ID && repo ? `https://github.com/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}` : '';
+    const msg = status === 'ready'
+      ? { title: `Harold: morning brief ready (${dayName})`, body: `Steps 1-2 are written. Say good morning to Harold to see them and go to Step 3.`, click: fm.run_url && /claude\.ai/.test(fm.run_url) ? fm.run_url : (repo ? `https://github.com/${repo}/blob/${defaultBranch(root)}/harold/briefs/${date}.md` : ''), tags: 'sunrise', priority: '3' }
+      : { title: `Harold: morning brief ${status} (${dayName})`, body: flag(argv, 'message') || `The morning brief job reported: ${status}. Harold will run the brief live when you say good morning.`, click: runLink, tags: 'warning', priority: '4' };
+    const hdr = ['-H', `Title: ${msg.title}`, '-H', `Tags: ${msg.tags}`, '-H', `Priority: ${msg.priority}`];
+    if (msg.click) hdr.push('-H', `Click: ${msg.click}`);
+    const r = spawnSync('curl', ['-sS', '-m', '20', '-o', '/dev/null', '-w', '%{http_code}', ...hdr, '-d', msg.body, `${server}/${topic}`], { encoding: 'utf8', timeout: 30000 });
+    const code = (r.stdout || '').trim();
+    console.log(`notify: ${status} → ${server}/<topic> HTTP ${code || 'none'}${r.stderr ? ' ' + r.stderr.trim().slice(0, 200) : ''}`);
+    return code === '200' ? 0 : 1;
+  }
+  console.error('usage: harold brief start [--force] [--ignore-time] [--time=HH:MM] | finish | status | notify [--date=YYYY-MM-DD] [--status=ready|failed] [--message=...]'); return 2;
+}
+// harold close inside a cloud brief job: the job is the unit of work, not a session.
+function closeBriefJob(root, today, opts, hook) {
+  const job = loadJob(root); const isHook = !!(hook && hook.hook_event_name);
+  if (job.finished) { if (isHook) console.log('{}'); else console.log(`harold close: brief job ${job.date} ${job.skipped ? 'not due (' + job.skipped + ')' : 'finished and pushed (' + (job.pushedSha || '').slice(0, 7) + ')'}`); return 0; }
+  job.closeBlocks = (job.closeBlocks || 0) + 1; saveJob(root, job);
+  const reason = `⛔ HAROLD CLOSE (scheduled brief job ${job.date}): not finished. Write harold/briefs/${job.date}.md, then run ${CLI(root)} brief finish. If the brief cannot be written, say why in one line and stop.`;
+  if (!isHook) { console.error(reason); return 2; }
+  if (opts.final || job.closeBlocks > 2) { console.log(JSON.stringify({ systemMessage: `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.` })); return 0; }
+  console.log(JSON.stringify({ decision: 'block', reason })); return 0;
+}
+
 // ───────────────────────── main ─────────────────────────
 function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
-  const opts = { json: argv.includes('--json'), full: argv.includes('--full'), final: argv.includes('--final'), repair: argv.includes('--repair') };
+  const opts = { json: argv.includes('--json'), full: argv.includes('--full'), final: argv.includes('--final'), repair: argv.includes('--repair'), dryRun: argv.includes('--dry-run') };
   const args = argv.slice(1).filter(a => !a.startsWith('--'));
   const hook = (cmd === 'boot' || cmd === 'close') ? readStdinJson() : null;
   const root = findRoot();
-  const today = todayParts();
+  const now = nowDate();
+  const today = todayParts(now);
   if (!root) {
     const msg = `⛔ HAROLD: cannot resolve the workspace root from ${process.cwd()} (need a directory containing AGENTS.md, playbook/, harold/). Set HAROLD_ROOT or invoke bin/harold by its own path.`;
     if (cmd === 'close' && hook) { console.log(JSON.stringify({ systemMessage: msg })); process.exit(0); }
@@ -739,11 +1361,13 @@ function main() {
     case 'close': code = cmdClose(root, today, opts, hook); break;
     case 'file': code = cmdFile(root, today, args, opts); break;
     case 'where': code = cmdWhere(root, args); break;
+    case 'replay': code = cmdReplay(root, opts); break;
+    case 'brief': code = cmdBrief(root, today, argv.slice(1), now); break;
     case 'search': code = cmdSearch(root, args, opts); break;
     case 'index': console.log(rebuildIndex(root)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n  file trigger|daily|crm|learning ...\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);
