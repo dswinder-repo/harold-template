@@ -1,0 +1,6 @@
+{
+  "cloud": false,
+  "about": "Set \"cloud\" to true to hand the weekly scan (Fridays), the monthly full audit (the 1st) and the month-end review (last business day) to the scheduled job in .github/workflows/housekeeping.yml (or any scheduler running harold/housekeeping-prompt.md). Sessions then stop asking for them; results reach you once, in the next morning brief, through harold/briefs/housekeeping-notes.md. While false, sessions run them when boot lists them, and the scheduled job does nothing. Optional \"size_budgets\": {\"<file>\": <characters>} overrides the startup-file budgets the full audit slims down to.",
+  "notes_file": "harold/briefs/housekeeping-notes.md",
+  "prompt": "harold/housekeeping-prompt.md"
+}

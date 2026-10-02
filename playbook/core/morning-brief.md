@@ -139,7 +139,8 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
    Staleness: the stage cadence for pipeline entries; otherwise warmth (Hot 7 days, Warm 14, Lukewarm 28). Cold or unset warmth gets no nudge, and neither do the types in `HAROLD_NO_CADENCE_TYPES` (default `other`) or the optional `HAROLD_NO_LOG_TYPES`.
    - *If the CRM is unreachable:* say so, and fall back to `last_updated` in `vault/people/` profiles for the contacts tied to today's priorities.
 4. **Blockers and flags** — active blockers, deadlines in the next 7 days, overnight additions.
-5. **Scheduled triggers** — anything due today per `AGENTS.md` (weekly-scan on Fridays, full-audit on the 1st, month-end on the last business day). Due means it runs this session; say so here.
+5. **Scheduled triggers** — anything due today per `AGENTS.md` (weekly-scan on Fridays, full-audit on the 1st, month-end on the last business day). Due means it runs this session; say so here. With cloud housekeeping on (`harold/housekeeping.json`), those three run as scheduled jobs and boot lists them only as notes: do not run them here.
+   **Housekeeping notes:** anything under `## New` in `harold/briefs/housekeeping-notes.md` (left by unattended jobs) goes in one short **Housekeeping** line here, one item each as written; then move those lines under `## Shown`. Nothing there means say nothing.
 6. **Everything else** the knowledge base says needs attention.
 
 ### Finally: suggest priorities

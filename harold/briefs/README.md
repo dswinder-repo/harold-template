@@ -10,6 +10,7 @@ Optional. If you turn on the scheduled morning brief, one file per weekday lands
 | `bin/harold brief finish` | Validates the file, stamps when the job fired and finished, commits only the brief paths and pushes. |
 | `bin/harold brief status` | Where today's draft is and whether the brief is due right now. |
 | `bin/harold boot` | Prints "Today's morning brief draft": READY (here), READY on origin (pull first), or NONE. On "good morning", Harold shows the draft instead of re-running Steps 1-2 (`playbook/core/morning-brief.md`, Step 0). |
-| `housekeeping-notes.md` | Created when needed. Unattended jobs leave one-line notes under `## New`; the next brief shows them once and moves them under `## Shown`. |
+| `housekeeping-notes.md` | Created when needed. Unattended jobs (the housekeeping workflow, or a cloud job that could not finish) leave one-line notes under `## New`; the next brief shows them once and moves them under `## Shown`. |
+| `.github/workflows/housekeeping.yml` | Optional: the weekly scan, monthly full audit and month-end review as silent scheduled jobs, once `harold/housekeeping.json` says `"cloud": true`. Their notes land in `housekeeping-notes.md`. |
 
 Nothing here depends on a particular computer being on.

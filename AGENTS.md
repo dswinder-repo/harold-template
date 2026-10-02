@@ -89,9 +89,9 @@ After boot, proceed through these steps:
 
 | When | What runs | Where it's defined |
 |------|-----------|--------------------|
-| Any Friday | Weekly summary + quick KB scan | `playbook/core/knowledge-base-health.md` (Quick Scan) |
-| 1st of the month | Full KB health audit | `playbook/core/knowledge-base-health.md` (Full Audit) |
-| Last business day of month | Month-end review | `dashboard/processes.md` (Month-End Review) |
+| Any Friday | Weekly summary + quick KB scan (housekeeping) | `playbook/core/knowledge-base-health.md` (Quick Scan) |
+| 1st of the month | Full KB health audit + size slim-down (housekeeping) | `playbook/core/knowledge-base-health.md` (Full Audit) |
+| Last business day of month | Month-end review (housekeeping) | `dashboard/processes.md` (Month-End Review) |
 | `harold/alerts.md` timestamp >1 day old | Rebuild alerts from source | Step 4 below |
 | Any blocker in `blockers.md` aged >7 days | Escalation ladder | `playbook/core/blocker-escalation.md` |
 | Any event in `events.md` <10 days out with prep not complete | Event prep | `playbook/core/event-prep.md` |
@@ -105,6 +105,8 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ```
 
 **If a trigger is overdue by more than one cycle, say so out loud.** A missed Friday that nobody mentions becomes seven missed Fridays.
+
+**Cloud housekeeping.** When `harold/housekeeping.json` says `"cloud": true`, the three housekeeping rows run as silent scheduled jobs (`.github/workflows/housekeeping.yml`, or any scheduler running `harold/housekeeping-prompt.md`), not in sessions: boot shows them as a one-line NOTE, not DUE, and close never asks for them. Their results reach the operator once, through `harold/briefs/housekeeping-notes.md` in the next morning brief. Run one in a session only when the operator asks. While it is `false` (the default), sessions run them as above.
 
 ### Then:
 
@@ -181,6 +183,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 | **Scheduled-work log** | `harold/trigger-log.jsonl` (`bin/harold file trigger`) |
 | **Offline CRM queue** | `harold/crm-queue.jsonl` (`bin/harold file crm`; applied by boot/close, or `bin/harold replay`) |
 | **Morning brief drafts** | `harold/briefs/` (`bin/harold brief status`; schedule: `HAROLD_TZ`, `HAROLD_BRIEF_TIME`) |
+| **Cloud housekeeping** | `harold/housekeeping.json` (the switch), `harold/housekeeping-prompt.md`, notes in `harold/briefs/housekeeping-notes.md` (`bin/harold housekeeping status`) |
 | **Dashboard State** | `harold/active-sessions/` (one JSON per live session) |
 | **Knowledge Vault** | `vault/` (people, companies, projects, intel, decisions, meetings, daily; plain markdown, Obsidian optional) |
 | **Raw Source Inbox** | `raw/` (unprocessed sources, compiled into the vault by `playbook/core/compile.md`) |
@@ -192,7 +195,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ## System Rules
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
-- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
+- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the optional hosted MCP server that reaches the knowledge base and CRM from any chat app; boot and close do not run there), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
 - **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.

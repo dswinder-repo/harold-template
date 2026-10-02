@@ -18,7 +18,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SRC = path.resolve(__dirname, '..');
-const SKIP = new Set(['.git', 'node_modules', 'search.db', '.brief-job.json', '.brief-context.md']);
+const SKIP = new Set(['.git', 'node_modules', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md']);
 
 function workspace() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harold-brief-gate-'));

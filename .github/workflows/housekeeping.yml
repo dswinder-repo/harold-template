@@ -1,0 +1,176 @@
+name: Harold housekeeping
+
+# OPTIONAL. Runs Harold's three housekeeping jobs on GitHub's machines (no computer of yours needs to be
+# on), silently, and pushes the results:
+#   weekly-scan   Fridays                          playbook/core/knowledge-base-health.md (Weekly Quick Scan)
+#   full-audit    the 1st of the month              the same playbook (Full Audit), plus the size slim-down
+#   month-end     the last business day (Mon-Fri)   dashboard/processes.md (Month-End Review), read-only
+# The prompt is harold/housekeeping-prompt.md. Anything worth your attention lands as one line in
+# harold/briefs/housekeeping-notes.md, and the next morning brief shows it once.
+#
+# THE SWITCH. Nothing happens until harold/housekeeping.json says "cloud": true. That one line also tells
+# your sessions to stop treating these three jobs as due work, so they are never done twice or not at all.
+# While it is false, every run stops in seconds at the gate, before the model step, and costs nothing else.
+#
+# YOUR TIME ZONE. GitHub schedules run in UTC only, so this workflow wakes every three hours and lets
+# `bin/harold housekeeping start` decide: it runs a job only when it is that job's day in HAROLD_TZ and the
+# job has not been recorded as ran or skipped today. The first wake-up after your local midnight does it,
+# so it is usually done before your morning brief. When two jobs fall on one day (a Friday that is the 1st,
+# or the last business day), they run on two consecutive wake-ups. Repository variables (Settings →
+# Secrets and variables → Actions → Variables):
+#   HAROLD_TZ   your IANA time zone, e.g. America/Chicago (unset = UTC here, and every run warns)
+# If a run fails (a missing secret, a model error), the next wake-up tries again, for the rest of that day.
+#
+# WHICH AI TOOL DOES IT. The same switch and secrets as morning-brief.yml: repository variable HAROLD_AGENT
+# (claude, the default | codex | cursor), secret CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (claude),
+# OPENAI_API_KEY (codex) or CURSOR_API_KEY (cursor); optional HAROLD_AGENT_MODEL for codex or cursor.
+#
+# THE CRM. The agent here gets no MCP servers and no CRM credentials, so the full audit's CRM consistency
+# step is skipped (the audit says so, and leaves you a note when vault people cards changed). To run that
+# step unattended, use a scheduler that has a CRM tool attached instead (for example a Claude Code routine
+# with the hosted connector in tools/harold-connector); the step's own limits in the playbook still apply.
+#
+# To enable:
+#   1. The model secret for your agent (above). If the morning brief already runs, it is already there.
+#   2. The variable HAROLD_TZ (and HAROLD_AGENT if you are not using Claude Code).
+#   3. Set "cloud": true in harold/housekeeping.json, commit and push.
+#   4. Try it: Actions → "Harold housekeeping" → Run workflow, with job=weekly-scan, force=true and
+#      dry_run=true first (gate and context only), then without dry_run.
+#
+# Cost: about 240 short runs a month; on a private repository each counts as at least one Actions minute.
+# Only the three job days run a model.
+#
+# Prefer a Claude Code routine (or any other scheduler)? Delete this file and schedule a daily run whose
+# prompt is the contents of harold/housekeeping-prompt.md, with HAROLD_TZ in its environment. The same gate
+# decides which job, if any, is due; harold close inside the routine saves the work.
+on:
+  schedule:
+    - cron: '50 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "auto (whatever is due today), weekly-scan, full-audit or month-end"
+        default: "auto"
+      force:
+        description: "Run the named job even when it is not its day or cloud housekeeping is off (true/false)"
+        default: "false"
+      dry_run:
+        description: "Gate and context only, no model call (true/false)"
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: housekeeping
+  cancel-in-progress: false
+
+jobs:
+  housekeeping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HAROLD_TZ: ${{ vars.HAROLD_TZ }}
+      HAROLD_SESSION_ID: github-actions-${{ github.run_id }}
+      HAROLD_AGENT: ${{ vars.HAROLD_AGENT || 'claude' }}
+      JOB: ${{ inputs.job }}
+      FORCE: ${{ inputs.force }}
+      DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # Cheap: the runner's preinstalled Node, no install, no model. Not due → one line and done.
+      - name: Is a housekeeping job due? (cloud on, the job's day in HAROLD_TZ, not run today)
+        id: gate
+        run: |
+          set -- start
+          case "$JOB" in
+            ""|auto) ;;
+            weekly-scan|full-audit|month-end) set -- "$@" "$JOB" ;;
+            *) echo "::error::job must be auto, weekly-scan, full-audit or month-end"; exit 1 ;;
+          esac
+          if [ "$FORCE" = "true" ]; then set -- "$@" --force; fi
+          bin/harold housekeeping "$@" < /dev/null
+
+      - name: Require model credentials (for the agent HAROLD_AGENT names)
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
+        env:
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          APIKEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI: ${{ secrets.OPENAI_API_KEY }}
+          CURSORKEY: ${{ secrets.CURSOR_API_KEY }}
+          DUE_JOB: ${{ steps.gate.outputs.job }}
+        run: |
+          case "$HAROLD_AGENT" in
+            claude)
+              if [ -z "$OAUTH" ] && [ -z "$APIKEY" ]; then
+                echo "::error::No model credential for claude. Add repository secret CLAUDE_CODE_OAUTH_TOKEN (from 'claude setup-token') or ANTHROPIC_API_KEY."; exit 1
+              fi ;;
+            codex)
+              if [ -z "$OPENAI" ]; then echo "::error::No model credential for codex. Add repository secret OPENAI_API_KEY."; exit 1; fi ;;
+            cursor)
+              if [ -z "$CURSORKEY" ]; then echo "::error::No model credential for cursor. Add repository secret CURSOR_API_KEY."; exit 1; fi ;;
+            *)
+              echo "::error::Repository variable HAROLD_AGENT is '$HAROLD_AGENT'. Use claude, codex or cursor (or delete it for claude)."; exit 1 ;;
+          esac
+          echo "Agent: $HAROLD_AGENT; job: $DUE_JOB"
+
+      - uses: actions/setup-node@v4
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
+        with: { node-version: 22 }
+
+      - name: Do the job with Claude Code
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT == 'claude' }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+          claude -p "$(cat harold/housekeeping-prompt.md)" \
+            --output-format text \
+            --max-turns 200 \
+            --permission-mode acceptEdits \
+            --allowedTools "Read,Glob,Grep,Write,Edit,WebSearch,WebFetch,Bash(bin/harold *),Bash(cat *),Bash(date *),Bash(ls *),Bash(wc *),Bash(mkdir *),Bash(git log *),Bash(git status *),Bash(git diff *)" \
+            --strict-mcp-config --mcp-config '{"mcpServers":{}}' > /tmp/housekeeping-run.log 2>&1 || { tail -40 /tmp/housekeeping-run.log; echo "::error::housekeeping run failed"; exit 1; }
+          tail -20 /tmp/housekeeping-run.log
+
+      # Codex and Cursor: the same prompt, with one note in front. Their sandboxes may keep the agent away
+      # from git and the network, so the agent's own `housekeeping finish` can fail; the Finish step below
+      # runs it again outside the agent either way.
+      - name: Prepare the prompt (codex, cursor)
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT != 'claude' }}
+        run: |
+          {
+            echo "Note for this run: the workflow runs bin/harold housekeeping finish again after you, outside your sandbox. If housekeeping finish fails only because git or the network is not reachable from your sandbox, stop there: the recorded trigger, the daily note and your edits are what matter."
+            echo
+            cat harold/housekeeping-prompt.md
+          } > "$RUNNER_TEMP/housekeeping-prompt.md"
+
+      - name: Do the job with Codex
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT == 'codex' }}
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/housekeeping-prompt.md
+          sandbox: workspace-write
+          model: ${{ vars.HAROLD_AGENT_MODEL }}
+          codex-args: '["-c", "web_search=\"live\""]'
+
+      - name: Do the job with Cursor
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT == 'cursor' }}
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          MODEL: ${{ vars.HAROLD_AGENT_MODEL }}
+        run: |
+          curl https://cursor.com/install -fsS | bash >/dev/null 2>&1
+          export PATH="$HOME/.cursor/bin:$HOME/.local/bin:$PATH"
+          agent -p --force --trust --output-format text ${MODEL:+--model "$MODEL"} "$(cat "$RUNNER_TEMP/housekeeping-prompt.md")" > /tmp/housekeeping-run.log 2>&1 || { tail -40 /tmp/housekeeping-run.log; echo "::error::housekeeping run failed"; exit 1; }
+          tail -20 /tmp/housekeeping-run.log
+
+      # Saves what the job did even if it ended unfinished (the checkout is thrown away after this run):
+      # the problems go to harold/briefs/housekeeping-notes.md for the next brief, the job is recorded as
+      # skipped so it does not start again today, and the run is marked failed so you can see it.
+      - name: Finish (verify, commit everything the job changed, push)
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
+        run: bin/harold housekeeping finish --anyway

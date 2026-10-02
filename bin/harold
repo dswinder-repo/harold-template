@@ -16,6 +16,7 @@
  *   harold file    deposit knowledge (trigger | daily | crm | learning)
  *   harold replay  apply queued CRM writes now (boot and close also do it) [--dry-run]
  *   harold brief   the scheduled morning brief: start | finish | status | notify
+ *   harold housekeeping  the scheduled weekly scan / full audit / month-end review: start | finish | status
  *   harold where   resolve a topic or alias to a folder via harold/projects.md
  *
  * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path):
@@ -414,8 +415,39 @@ function computeTriggers(root, today, ctx) {
   if (ctx.raw.length) info.push(`${ctx.raw.length} item(s) in raw/ not compiled — flag, do not auto-compile (playbook/core/compile.md): ${ctx.raw.slice(0, 3).join(', ')}${ctx.raw.length > 3 ? '…' : ''}`);
   if (ctx.daily.lastDate) { const gap = daysBetween(ctx.daily.lastDate, t); if (gap >= 3) info.push(`No vault/daily note in ${gap} days (last: ${ctx.daily.last}). One is written this session; harold close enforces it.`); }
   else info.push('No vault/daily notes exist at all.');
+  // Housekeeping (weekly scan, full audit, month-end review) can run as unattended cloud jobs
+  // (.github/workflows/housekeeping.yml, or any scheduler running harold/housekeeping-prompt.md). When
+  // harold/housekeeping.json says {"cloud": true}, sessions are never asked to do it: today's job, or one
+  // the cloud missed, shows as a one-line note, never as a demand at close. Inside a housekeeping job the
+  // items stay listed, so the job's own context names them.
+  if (readHousekeeping(root).cloud === true && !inHousekeepingJob(root, today)) {
+    for (const list of [due, overdue]) for (let i = list.length - 1; i >= 0; i--) if (HK_JOBS.includes(list[i].id)) {
+      const d = list.splice(i, 1)[0];
+      const done = loggedToday(log, d.id, today).some(e => e.status === 'ran' || e.status === 'skipped');
+      info.push(list === due
+        ? `Housekeeping (cloud job): ${d.id} is today's (${d.what}); ${done ? 'already done' : 'the cloud job runs it'}. Nothing to do here.`
+        : `Housekeeping (cloud job): ${d.what}. It runs itself on its next scheduled day; nothing to do here unless the operator asks for it.`);
+    }
+  }
   [...due, ...overdue].forEach(d => { const l = loggedToday(log, d.id, today); d.logged = l.length ? l[l.length - 1].status : null; });
   return { due, overdue, info };
+}
+
+// harold/housekeeping.json: {"cloud": true|false, "size_budgets": {"<file>": <chars>}}. Missing or
+// unreadable means cloud off and the default budgets.
+const HK_FILE = 'harold/housekeeping.json';
+const HK_JOBS = ['weekly-scan', 'full-audit', 'month-end'];
+function readHousekeeping(root) { try { const j = JSON.parse(readFull(path.join(root, HK_FILE))); return j && typeof j === 'object' ? j : {}; } catch (_) { return {}; } }
+
+// Character budgets for the files every session loads at startup. Going over never breaks anything:
+// boot notes it, and the monthly full audit moves stale sections into an archive file beside it
+// (searchable with harold search, not loaded at startup). Nothing is deleted. Override per file in
+// harold/housekeeping.json → "size_budgets".
+const SIZE_BUDGETS = { 'AGENTS.md': 30000, 'memory/CLAUDE.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
+function sizeBudgets(root) {
+  const o = readHousekeeping(root).size_budgets; const b = { ...SIZE_BUDGETS };
+  if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (Number.isFinite(+v) && +v > 0) b[k] = +v;
+  return b;
 }
 
 // ───────────────────────── session state ─────────────────────────
@@ -477,6 +509,7 @@ function runCheck(root, today) {
   if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
   if (TZ_INFO.warning) warnings.push(TZ_INFO.warning);
   if (BRIEF_TIME.warning) warnings.push(BRIEF_TIME.warning);
+  for (const [rel, budget] of Object.entries(sizeBudgets(root))) { try { const n = fs.statSync(path.join(root, rel)).size; if (n > budget) warnings.push(`${rel} is ${Math.round(n / 1000)}k chars, over its ${Math.round(budget / 1000)}k budget: the monthly full audit moves stale sections into an archive file beside it (nothing is deleted)`); } catch (_) {} }
   if (process.env.HAROLD_NOW) warnings.push(`HAROLD_NOW=${process.env.HAROLD_NOW} is set: "now" is overridden (testing only)`);
   return { failures, warnings, playbooks: pb, learnings: lr, projects: pj, ctx, triggers };
 }
@@ -581,6 +614,8 @@ function cmdBoot(root, today, opts, hook) {
   L.push('');
   // A successful pull already fetched origin: no second network round trip inside the 60s hook.
   L.push(...briefDraftLines(root, today, { fetch: !(pull && pull.code === 0) }));
+  const hkNew = housekeepingNotesNew(root);
+  if (hkNew.length) L.push(`Housekeeping notes: ${hkNew.length} new under "## New" in ${P(HK_NOTES)} (left by unattended jobs). The next morning brief shows them once, then moves them under "## Shown".`);
   L.push('');
   L.push('## Constitution and core files (all verified readable this boot)');
   CORE.forEach(rel => L.push(`- ${P(rel)}`));
@@ -965,7 +1000,15 @@ function cmdClose(root, today, opts, hook) {
 }
 
 function closeOnce(root, today, opts, hook) {
-  if (isCloudRunner() && (loadJob(root) || {}).date === today.iso) return closeBriefJob(root, today, opts, hook);
+  if (isCloudRunner()) {
+    // A scheduled job, not a session: an unfinished housekeeping job first, then the brief job, then a
+    // finished or not-due housekeeping marker.
+    const bj = loadJob(root), hj = loadHkJob(root);
+    const hjLive = hj && hj.job && !hj.finished && (hj.date === today.iso || hj.date === addDays(today.iso, -1));
+    if (hjLive) return closeHousekeepingJob(root, today, opts, hook);
+    if (bj && bj.date === today.iso) return closeBriefJob(root, today, opts, hook);
+    if (hj && hj.date === today.iso) return closeHousekeepingJob(root, today, opts, hook);
+  }
   const id = sessionId(hook);
   let st = loadState(root, id);
   const final = !!opts.final;
@@ -1064,13 +1107,7 @@ function closeOnce(root, today, opts, hook) {
   // did is lost with the container.
   const cloudGiveUp = problems.length && !final && isCloudRunner() && stopHookActive && st && (st.blocks || 0) >= 3;
   if (cloudGiveUp) {
-    const hn = path.join(root, 'harold/briefs/housekeeping-notes.md');
-    try {
-      const t = fs.existsSync(hn) ? readFull(hn) : '# Housekeeping notes for the morning brief\n\n*Written by unattended jobs. The morning brief shows anything under "New" once, then moves it under "Shown".*\n\n## New\n\n## Shown\n';
-      const line = `- ${today.iso} cloud job saved with unresolved close problems: ${problems.map(p => p.split(' — ')[0]).join('; ').slice(0, 400)}`;
-      fs.mkdirSync(path.dirname(hn), { recursive: true });
-      fs.writeFileSync(hn, t.includes('## New\n') ? t.replace('## New\n', `## New\n\n${line}\n`) : `${t}\n## New\n\n${line}\n`);
-    } catch (_) {}
+    addHousekeepingNote(root, `${today.iso} cloud job saved with unresolved close problems: ${problems.map(p => p.split(' — ')[0]).join('; ').slice(0, 400)}`);
     notes.push('cloud run: close could not be satisfied; saving the work anyway (problems noted in harold/briefs/housekeeping-notes.md)');
   }
   if (!problems.length || final || cloudGiveUp) {
@@ -1413,6 +1450,219 @@ function closeBriefJob(root, today, opts, hook) {
   closeReply(hook, 'block', reason); return 0;
 }
 
+// ───────────────────────── housekeeping (weekly scan, monthly full audit, month-end review) ─────────────────────────
+// Optional unattended runs of the three housekeeping triggers, switched on by harold/housekeeping.json
+// {"cloud": true}. One code path for every runner: .github/workflows/housekeeping.yml (it wakes every three
+// hours and lets this gate decide), any other scheduler running harold/housekeeping-prompt.md, or a terminal.
+//   housekeeping start [job]   gate: cloud on, the job's day in HAROLD_TZ (weekly-scan: Friday; full-audit:
+//                              the 1st; month-end: the last business day, Monday to Friday), not already
+//                              recorded ran/skipped today. Without a job name it picks the first due one
+//                              (full-audit, month-end, weekly-scan); a day with two runs them on two wake-ups.
+//                              Not due → one line, exit 0. Due → boot --full into the context file.
+//   housekeeping finish        verify (recorded, daily note written), commit everything the job changed,
+//                              push. --anyway saves even when unfinished, with a note for the next brief.
+//   housekeeping status        cloud on or off, and the gate for each job today
+// While a job marker exists in a cloud runner, harold close checks the job instead of session filing, and
+// saves the work anyway when the job cannot be finished: a cloud checkout is thrown away afterwards.
+const HK_JOB_FILE = 'harold/.housekeeping-job.json';
+const HK_CONTEXT = 'harold/.housekeeping-context.md';
+const HK_NOTES = 'harold/briefs/housekeeping-notes.md';
+const HK_ORDER = ['full-audit', 'month-end', 'weekly-scan'];
+const HK_TITLE = { 'weekly-scan': 'WEEKLY SCAN', 'full-audit': 'FULL AUDIT', 'month-end': 'MONTH-END REVIEW' };
+function loadHkJob(root) { try { return JSON.parse(readFull(path.join(root, HK_JOB_FILE))); } catch (_) { return null; } }
+function saveHkJob(root, j) { fs.writeFileSync(path.join(root, HK_JOB_FILE), JSON.stringify(j, null, 2)); }
+function inHousekeepingJob(root, today) {
+  if (process.env.HAROLD_HOUSEKEEPING_JOB) return true;
+  const j = loadHkJob(root);
+  return !!(j && j.job && !j.finished && isCloudRunner() && (j.date === today.iso || j.date === addDays(today.iso, -1)));
+}
+function housekeepingNotesNew(root) {
+  let t = ''; try { t = readFull(path.join(root, HK_NOTES)); } catch (_) { return []; }
+  const m = t.match(/^## New[^\n]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m);
+  return m ? m[1].split('\n').filter(l => /^\s*[-*] \S/.test(l)) : [];
+}
+// The one channel from unattended jobs to the operator: a line under "## New", shown once by the next brief.
+function addHousekeepingNote(root, text) {
+  const hn = path.join(root, HK_NOTES);
+  try {
+    const t = fs.existsSync(hn) ? readFull(hn) : '# Housekeeping notes for the morning brief\n\n*Written by unattended jobs. The morning brief shows anything under "New" once, then moves it under "Shown".*\n\n## New\n\n## Shown\n';
+    const line = `- ${text}`;
+    fs.mkdirSync(path.dirname(hn), { recursive: true });
+    fs.writeFileSync(hn, t.includes('## New\n') ? t.replace('## New\n', `## New\n\n${line}\n`) : `${t}\n## New\n\n${line}\n`);
+    return true;
+  } catch (_) { return false; }
+}
+function hkDayCheck(job, t) {
+  const dow = dateOf(t.iso).getUTCDay();
+  if (job === 'weekly-scan') return dow === 5 ? null : `it is ${t.weekday} ${t.iso}; the weekly scan runs on Fridays`;
+  if (job === 'full-audit') return t.d === 1 ? null : `it is ${t.iso}; the full audit runs on the 1st of the month`;
+  const lbd = lastBusinessDayOfMonth(t.y, t.m);
+  return t.iso === lbd ? null : `it is ${t.iso}; the month-end review runs on the last business day of the month (${lbd})`;
+}
+/**
+ * Is a housekeeping job due? Pure: no I/O, so it can be tested with any clock and zone.
+ * `log` is harold/trigger-log.jsonl's rows. With `job` it judges that job; without, it returns the first
+ * due job in HK_ORDER. `force` needs a job and overrides everything, including cloud off.
+ */
+function housekeepingGate({ nowMs, tz = TZ, job = null, cloud = false, log = [], force = false }) {
+  const t = todayParts(new Date(nowMs), tz);
+  const g = { date: t.iso, weekday: t.weekday, localTime: t.hm, tz };
+  if (job && !HK_JOBS.includes(job)) return { ...g, due: false, error: true, reason: `unknown housekeeping job "${job}": use ${HK_JOBS.join(', ')}` };
+  if (force) return job ? { ...g, job, due: true, reason: 'forced with --force' } : { ...g, due: false, error: true, reason: `--force needs a job name: ${HK_JOBS.join(', ')}` };
+  if (!cloud) return { ...g, due: false, reason: `cloud housekeeping is off (${HK_FILE} does not say "cloud": true), so sessions run these jobs when boot lists them` };
+  const reasons = [];
+  for (const id of job ? [job] : HK_ORDER) {
+    const notDay = hkDayCheck(id, t);
+    if (notDay) { reasons.push(`${id}: ${notDay}`); continue; }
+    const done = log.filter(e => e.id === id && e.date === t.iso && (e.status === 'ran' || e.status === 'skipped')).pop();
+    if (done) { reasons.push(`${id}: already ${done.status} today (${t.iso})`); continue; }
+    return { ...g, job: id, due: true, reason: `${id} is due: ${t.weekday} ${t.iso} ${t.hm} in ${tz}, not yet run today` };
+  }
+  return { ...g, due: false, reason: reasons.join('; ') };
+}
+function hkProblems(root, job) {
+  const rec = triggerLog(root).filter(e => e.id === job.job && e.date >= job.date && (e.status === 'ran' || e.status === 'skipped')).pop() || null;
+  const problems = [];
+  if (!rec) problems.push(`not recorded: run ${CLI(root)} file trigger ${job.job} ran "<one-line summary>" (or skipped "<reason>")`);
+  if (!rec || rec.status === 'ran') {
+    const changed = git(root, ['status', '--porcelain', '--untracked-files=all', '--', 'vault/daily']).out.split('\n').filter(Boolean).map(l => l.slice(3).replace(/^"|"$/g, '').split(' -> ').pop());
+    if (!changed.some(f => path.basename(f).startsWith(job.date))) problems.push(`no daily note: write vault/daily/${job.date}-${job.job}.md listing what was checked and every file changed`);
+  }
+  return { rec, problems };
+}
+// Push HEAD to the branch the job runs on, replaying onto whatever other writers pushed meanwhile.
+function pushHead(root, ident) {
+  if (git(root, ['remote', 'get-url', 'origin']).code !== 0) return { ok: true, local: true, sha: git(root, ['rev-parse', 'HEAD']).out };
+  const cur = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).out; const branch = cur && cur !== 'HEAD' ? cur : defaultBranch(root);
+  let err = '';
+  for (let i = 0; i < 3; i++) {
+    const rb = git(root, [...ident, 'pull', '-q', '--rebase', 'origin', branch], { timeout: 120000 });
+    if (rb.code !== 0 && !/couldn't find remote ref/i.test(rb.err)) { git(root, ['rebase', '--abort']); err = `pull --rebase failed: ${(rb.err || rb.out).split('\n')[0]}`; break; }
+    const ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
+    if (ps.code === 0) return { ok: true, sha: git(root, ['rev-parse', 'HEAD']).out, branch };
+    err = (ps.err || ps.out).split('\n').slice(0, 3).join(' | ');
+  }
+  return { ok: false, err, branch };
+}
+function finishHousekeepingJob(root, job, { anyway = false } = {}) {
+  const { rec, problems } = hkProblems(root, job);
+  if (problems.length && !anyway) return { code: 2, text: `FAIL: housekeeping job ${job.job} ${job.date} is not finished:\n${problems.map(p => `  - ${p}`).join('\n')}\nFix these, then run ${CLI(root)} housekeeping finish again.` };
+  if (problems.length) {
+    addHousekeepingNote(root, `${job.date} ${job.job}: the unattended job ended unfinished (${problems.map(p => p.split(':')[0]).join(', ')}); what it did is saved. It runs again on its next scheduled day, or ask Harold to run it in a session.`);
+    // Recorded as skipped so the next wake-up today does not start the whole job again.
+    if (!rec) appendLine(path.join(root, 'harold/trigger-log.jsonl'), { id: job.job, status: 'skipped', reason: `unattended job ended unfinished (${job.runner}${job.runUrl ? ' ' + job.runUrl : ''})`, date: job.date, ts: new Date().toISOString() });
+  }
+  git(root, ['add', '-A']);
+  git(root, ['reset', '-q', '--', HK_JOB_FILE, HK_CONTEXT, BRIEF_JOB, BRIEF_CONTEXT, SESSIONS_DIR]);
+  const staged = git(root, ['diff', '--cached', '--name-only']).out.split('\n').filter(Boolean);
+  const hits = secretScan(root, staged);
+  if (hits.length) { git(root, ['reset', '-q']); return { code: 2, text: `FAIL: refusing to commit, possible secrets in ${hits.join('; ')}` }; }
+  // A cloud runner usually has no git identity; use a neutral one rather than fail.
+  const ident = ['-c', 'core.hooksPath=/dev/null'];
+  if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (housekeeping)', '-c', 'user.email=harold-housekeeping@users.noreply.github.com');
+  if (staged.length) {
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+    if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) return { code: 2, text: `FAIL: commit failed: ${cm.err.slice(0, 300)}` };
+  }
+  const ps = pushHead(root, ident);
+  if (!ps.ok) return { code: 2, text: `FAIL: push to ${ps.branch} failed: ${ps.err}` };
+  Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: ps.sha, pushedTo: ps.local ? '(no origin remote: committed locally)' : ps.branch, unfinished: problems.length ? problems : undefined });
+  saveHkJob(root, job);
+  const where = ps.local ? 'committed locally (no origin remote to push to)' : `pushed to ${ps.branch} as ${(ps.sha || '').slice(0, 7)}`;
+  return problems.length
+    ? { code: 1, text: `FINISH saved UNFINISHED: ${job.job} ${job.date}, ${staged.length} file(s) ${where}. Problems noted in ${HK_NOTES}: ${problems.map(p => p.split(':')[0]).join(', ')}.` }
+    : { code: 0, text: `FINISH ok: ${job.job} ${job.date}, ${staged.length} file(s) ${where} (fired ${job.firedLocal || '?'}, finished ${fmtLocal(Date.now())}).` };
+}
+
+function cmdHousekeeping(root, today, argv, now) {
+  const sub = argv[0];
+  const job = argv.slice(1).find(a => !a.startsWith('--')) || null;
+  const force = !!flag(argv, 'force');
+  const nowMs = now.getTime();
+  const cfg = readHousekeeping(root); const cloud = cfg.cloud === true;
+
+  if (sub === 'status') {
+    const log = triggerLog(root);
+    const L = [`Cloud housekeeping: ${cloud ? 'ON' : 'OFF'} (${HK_FILE}${cloud ? '' : ': sessions run weekly-scan, full-audit and month-end when boot lists them; set "cloud": true to hand them to the scheduled job'}). HAROLD_TZ=${TZ} (${TZ_INFO.source === 'HAROLD_TZ' ? 'set' : 'not set: this machine\'s zone'})`];
+    for (const id of HK_ORDER) {
+      const g = housekeepingGate({ nowMs, job: id, cloud: true, log });
+      const last = lastRun(log, id);
+      L.push(`- ${id}: ${g.due ? 'its day today, not run yet' : g.reason.replace(`${id}: `, '')}; last ran ${last || 'never'}`);
+    }
+    const n = housekeepingNotesNew(root).length;
+    L.push(`Notes waiting for the next brief: ${n} (${HK_NOTES})`);
+    console.log(L.join('\n')); warnTz(); return 0;
+  }
+
+  if (sub === 'start') {
+    const r = briefRunner();
+    const prev = loadHkJob(root);
+    // A second start in the same run (the workflow's gate step, then the prompt) keeps the first one.
+    if (prev && prev.job && prev.date === today.iso && !prev.finished && (!job || job === prev.job) && fs.existsSync(path.join(root, HK_CONTEXT))) {
+      ghOutput({ due: 'true', job: prev.job, date: today.iso });
+      console.log(`START (already started ${prev.firedLocal}) — job: ${prev.job} (${HK_TITLE[prev.job]}). Context: ${path.join(root, HK_CONTEXT)}. Do this job as harold/housekeeping-prompt.md says, then run: ${CLI(root)} housekeeping finish`); return 0;
+    }
+    const g = housekeepingGate({ nowMs, job, cloud, log: triggerLog(root), force });
+    if (g.error) { console.error(g.reason); return 2; }
+    if (!g.due) {
+      // A not-due run still leaves a finished marker, so harold close inside a cloud runner has nothing to demand.
+      saveHkJob(root, { date: today.iso, job: null, runner: r.runner, runUrl: r.url, firedAt: new Date(nowMs).toISOString(), firedLocal: fmtLocal(nowMs), skipped: g.reason, finished: true });
+      ghOutput({ due: 'false', date: today.iso });
+      console.log(`NOT DUE: ${g.reason}. Nothing to do: write nothing, commit nothing, stop here.`);
+      warnTz(); return 0;
+    }
+    const ctxPath = path.join(root, HK_CONTEXT); const fd = fs.openSync(ctxPath, 'w');
+    const boot = spawnSync(process.execPath, [CLI(root), 'boot', '--full'], { cwd: root, encoding: 'utf8', timeout: 180000, env: { ...process.env, HAROLD_SESSION_ID: `housekeeping-${g.job}-${today.iso}`, HAROLD_HOUSEKEEPING_JOB: g.job }, stdio: ['ignore', fd, 'pipe'] });
+    fs.closeSync(fd); const ctx = readFull(ctxPath);
+    if (boot.status !== 0) { console.log(`FAIL: bin/harold boot --full refused (exit ${boot.status}). Housekeeping cannot run on an unmet contract:\n${ctx.slice(0, 2000)}${(boot.stderr || '').slice(0, 500)}`); return 2; }
+    saveHkJob(root, { date: today.iso, job: g.job, runner: r.runner, runUrl: r.url, firedAt: new Date(nowMs).toISOString(), firedLocal: fmtLocal(nowMs), finished: false, closeBlocks: 0 });
+    ghOutput({ due: 'true', job: g.job, date: today.iso });
+    console.log([
+      `START ${g.job} (${HK_TITLE[g.job]}) ${today.iso} — runner: ${r.runner}${r.url ? ' ' + r.url : ''}`,
+      `fired: ${fmtLocal(nowMs)}; ${g.reason}.`,
+      `context: ${ctxPath} (${Buffer.byteLength(ctx)} bytes, the output of bin/harold boot --full). Read it first.`,
+      `Do the ${HK_TITLE[g.job]} as harold/housekeeping-prompt.md says. Record it with ${CLI(root)} file trigger ${g.job} ran "<one-line summary>", write vault/daily/${today.iso}-${g.job}.md, then run: ${CLI(root)} housekeeping finish`,
+    ].join('\n'));
+    warnTz(); return 0;
+  }
+
+  if (sub === 'finish') {
+    const j = loadHkJob(root);
+    if (!j) { console.log(`FAIL: no housekeeping job was started in this checkout (${HK_JOB_FILE} is missing). Run ${CLI(root)} housekeeping start first.`); return 2; }
+    if (!j.job) { console.log(`FINISH: nothing to do (not due: ${j.skipped || 'no job'}).`); return 0; }
+    if (j.finished && j.pushedSha) { console.log(`FINISH: already saved (${j.pushedTo}, ${j.pushedSha.slice(0, 7)}). Nothing to do.`); return 0; }
+    const res = finishHousekeepingJob(root, j, { anyway: !!flag(argv, 'anyway') });
+    console.log(res.text); return res.code;
+  }
+  console.error(`usage: harold housekeeping start [${HK_JOBS.join('|')}] [--force] | finish [--anyway] | status`); return 2;
+}
+// harold close inside a cloud housekeeping job: the job is the unit of work, not a session.
+function closeHousekeepingJob(root, today, opts, hook) {
+  let job = loadHkJob(root); const isHook = !!hook;
+  const done = j => { const m = `harold close: housekeeping ${j.job ? `job ${j.job} ${j.date} saved (${j.pushedTo || ''} ${(j.pushedSha || '').slice(0, 7)})` : `not due (${j.skipped})`}`; if (isHook) closeReply(hook, 'ok'); else console.log(m); return 0; };
+  if (job.finished) return done(job);
+  // Everything recorded: close does the saving, so the job never depends on remembering a last command.
+  if (!hkProblems(root, job).problems.length) {
+    const r = finishHousekeepingJob(root, job);
+    if (r.code === 0) return done(loadHkJob(root));
+    job = loadHkJob(root);
+    job.closeBlocks = (job.closeBlocks || 0) + 1; saveHkJob(root, job);
+    if (!isHook) { console.error(r.text); return 2; }
+    if (opts.final || job.closeBlocks > 2) { closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date}: ${r.text}`); return 0; }
+    closeReply(hook, 'block', `⛔ HAROLD CLOSE (housekeeping job ${job.job} ${job.date}): ${r.text}`); return 0;
+  }
+  job.closeBlocks = (job.closeBlocks || 0) + 1; saveHkJob(root, job);
+  const { problems } = hkProblems(root, job);
+  const reason = `⛔ HAROLD CLOSE (housekeeping job ${job.job} ${job.date}): not finished. ${problems.join('; ')}. Then end your turn (or run ${CLI(root)} housekeeping finish). If the job cannot be done, record it with: ${CLI(root)} file trigger ${job.job} skipped "<reason>".`;
+  if (!isHook) { console.error(reason); return 2; }
+  if (opts.final || job.closeBlocks > 2) {
+    // A cloud checkout is thrown away after the run: save what the job did, with the problems noted for the next brief.
+    const r = finishHousekeepingJob(root, job, { anyway: true });
+    closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date} ended unfinished after ${job.closeBlocks} close checks. ${r.text}`); return 0;
+  }
+  closeReply(hook, 'block', reason); return 0;
+}
+
 // ───────────────────────── main ─────────────────────────
 function main() {
   const argv = process.argv.slice(2);
@@ -1458,11 +1708,12 @@ function main() {
     case 'where': code = cmdWhere(root, args); break;
     case 'replay': code = cmdReplay(root, opts); break;
     case 'brief': code = cmdBrief(root, today, argv.slice(1), now); break;
+    case 'housekeeping': code = cmdHousekeeping(root, today, argv.slice(1), now); break;
     case 'search': code = cmdSearch(root, args, opts); break;
     case 'index': console.log(rebuildIndex(root)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=claude|codex|cursor picks the answer format; close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=claude|codex|cursor picks the answer format; close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

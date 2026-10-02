@@ -18,6 +18,8 @@ bin/harold file trigger weekly-scan skipped "<reason>"
 
 `bin/harold close` checks that due triggers were recorded. A skipped run with a reason is fine; a silent skip is how weeks of drift accumulate.
 
+**Unattended (cloud housekeeping).** With `"cloud": true` in `harold/housekeeping.json`, the weekly scan and the full audit (and the month-end review in `dashboard/processes.md`) run as silent scheduled jobs: `.github/workflows/housekeeping.yml`, or any scheduler running `harold/housekeeping-prompt.md`. Sessions then see them as notes, not due work. The job follows this playbook with the limits in that prompt: anything that needs the operator (a deletion, an escalation, a debrief prompt, a judgment call) becomes one line in `harold/briefs/housekeeping-notes.md` for the next morning brief; the task manager is read-only; the CRM is touched only by Step 9, within its limits, and only when the job has a CRM tool. `bin/harold housekeeping start` is the gate, and `bin/harold housekeeping finish` commits and pushes what the job changed.
+
 About the vault: `vault/` is plain markdown. Obsidian is an optional viewer, not a requirement. Search it with `bin/harold search "<query>"` (full-text over all markdown in the workspace; run `bin/harold index` first if results look stale).
 
 ---
@@ -216,7 +218,13 @@ Action: fix non-standard values; add missing frontmatter.
 
 List files in `raw/` without `compiled: true` in frontmatter. Report the count and age of the oldest. Do not compile them here; that is `playbook/core/compile.md`, run when the operator asks.
 
-### Step 11: Report and record
+### Step 11: Size budgets (slim-down)
+
+Every session loads a few files at startup, so their size is a cost paid on every boot. `bin/harold boot` warns when one is over its character budget (defaults: `AGENTS.md` 30k, `memory/CLAUDE.md` 10k, `dashboard/status.md` 10k, `dashboard/processes.md` 15k, `harold/alerts.md` 8k; change any of them under `"size_budgets"` in `harold/housekeeping.json`).
+
+For each file over budget, move the sections that are clearly stale (superseded, finished, or older than 90 days and not referenced by an active project in `harold/projects.md`) into an archive file beside it, `<same folder>/<name>-archive.md`, leaving a one-line pointer where they were. `bin/harold search` still finds them; sessions no longer load them. Never move rules, instructions or anything current. If a file cannot get under budget without a judgment call, leave the rest and tell the operator in one line. Nothing is deleted.
+
+### Step 12: Report and record
 
 - Write the report (template below) into today's daily note: `vault/daily/YYYY-MM-DD-kb-health.md`.
 - `bin/harold file trigger full-audit ran "<one-line summary>"` (or `skipped "<reason>"`).
@@ -296,7 +304,7 @@ When a new spelling or consistency error is found:
 - [ ] `bin/harold file trigger weekly-scan ran|skipped "<reason>"` recorded
 
 **Monthly Full Audit**
-- [ ] Steps 1-10 run (or each skipped step noted with a reason)
+- [ ] Steps 1-11 run (or each skipped step noted with a reason)
 - [ ] Report written to `vault/daily/YYYY-MM-DD-kb-health.md`
 - [ ] New error patterns added to Part 2, Step 2
 - [ ] `bin/harold file trigger full-audit ran|skipped "<reason>"` recorded

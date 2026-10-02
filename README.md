@@ -51,7 +51,9 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on.
 
-6. **Start a session and say good morning**, in whichever harness you use. Claude Code, Codex and Cursor run boot and close from the hook files already in this repository (Codex asks you to trust them once); in the Claude desktop app, install `tools/harold-plugin`. In any other harness, wire the same commands into its hooks or let the first instruction in `AGENTS.md` have the agent run them. Details below.
+6. **Optional: the scheduled jobs and the connector.** The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)); the hosted connector lets a chat app on your phone or in a browser read and write Harold ([below](#from-any-chat-app-the-hosted-connector)). Both are off until you set them up.
+
+7. **Start a session and say good morning**, in whichever harness you use. Claude Code, Codex and Cursor run boot and close from the hook files already in this repository (Codex asks you to trust them once); in the Claude desktop app, install `tools/harold-plugin`. In any other harness, wire the same commands into its hooks or let the first instruction in `AGENTS.md` have the agent run them. Details below.
 
 ## Any AI tool, any model
 
@@ -69,13 +71,13 @@ Any model the harness offers works; Harold doesn't depend on a particular one, b
 2. **With hooks.** From the workspace root, run `bin/harold boot` at session start, `bin/harold close` at the end of every turn and `bin/harold close --final` at session end, with no `--via` flag (that flag is only for the three harnesses below). If the hook passes input on stdin, add `< /dev/null` so Harold answers in plain text. Boot prints the context to hand the agent and exits 0, or prints `⛔ HAROLD BOOT REFUSED` and exits 2. Close exits 0 when everything is filed and pushed, 2 with the list of what is missing on stderr (send it back to the agent, which fixes it and closes again), or 1 when only the push failed.
 3. **Without hooks.** Nothing to wire: `AGENTS.md` tells the agent to run boot first and close at the end of every turn. Every command also works by hand in a terminal.
 4. **MCP.** Add `bin/harold-mcp` as a local (command) MCP server, with its absolute path. It reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
-5. **Scheduled brief.** Any harness with a headless mode can write it: run it on a schedule with `harold/brief-prompt.md` as the prompt (the prompt runs `bin/harold brief start` and `brief finish` itself). In `.github/workflows/morning-brief.yml`, add a step for it next to the three already there; the gate before it and the finish step after it stay the same.
+5. **Scheduled jobs.** Any harness with a headless mode can run them: on a schedule, with `harold/brief-prompt.md` (the morning brief) or `harold/housekeeping-prompt.md` (weekly scan, full audit, month-end review) as the prompt. Each prompt runs its own `start` gate and `finish` step. In `.github/workflows/morning-brief.yml` and `housekeeping.yml`, add a step for it next to the three already there; the gate before it and the finish step after it stay the same.
 
 ### Ready-made wiring
 
 This repository ships hook files and MCP examples for Claude Code (and the Claude desktop app, through a plugin), Codex and Cursor, as worked examples of the checklist. For any other harness, wire the same three commands.
 
-| Harness | Boot and close | Harold's MCP tools (CRM) | Scheduled brief (`HAROLD_AGENT`) |
+| Harness | Boot and close | Harold's MCP tools (CRM) | Scheduled jobs (`HAROLD_AGENT`) |
 |---|---|---|---|
 | Claude Code | `.claude/settings.json` hooks, automatic | `.mcp.json` from `.mcp.example.json` | `claude` (default) |
 | Claude desktop app (Cowork) | the plugin in `tools/harold-plugin/` | add `bin/harold-mcp` as a local MCP server | n/a |
@@ -105,7 +107,8 @@ CLAUDE.md                  one line: @AGENTS.md
 .cursor/mcp.example.json   Cursor MCP config for bin/harold-mcp (copy to .cursor/mcp.json, gitignored)
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
 bin/
-  harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | where | search | index | root
+  harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | housekeeping |
+                           where | search | index | root
   harold-index             SQLite FTS5 search index over every markdown file (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
   harold-linear            optional Linear task layer
@@ -113,6 +116,8 @@ bin/
 harold/                    operational state
   alerts.md  blockers.md  events.md  facts.md  projects.md  sync-map.md
   learnings.jsonl  trigger-log.jsonl  crm-queue.jsonl  active-sessions/  briefs/  brief-prompt.md
+  housekeeping.json        the switch for cloud housekeeping ("cloud": false until you turn it on)
+  housekeeping-prompt.md   the prompt the scheduled housekeeping job runs
 memory/                    CLAUDE.md (working memory), glossary.md
 dashboard/                 index.md, status.md, processes.md (Context Engine), people.md, strategy.md
 vault/                     people/ companies/ projects/ intel/ decisions/ meetings/ daily/ templates/
@@ -126,15 +131,19 @@ tools/
   harold-mcp/              MCP server (14 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
   harold-crm/              optional CRM web app (Next.js + Supabase) on the same database; deploy with root directory
                            tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-006 add the app's tables
+  harold-connector/        optional hosted MCP server (Vercel or any Node host): reach the knowledge base and
+                           the CRM from any chat app that supports remote MCP connectors, on any device
   harold-plugin/           Cowork plugin: the same hooks + a "boot Harold" skill
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
   morning-brief.yml        OPTIONAL scheduled morning brief, in your time zone at your time, written by
                            any agent with a headless mode; a switch for Claude Code, Codex or Cursor (see below)
+  housekeeping.yml         OPTIONAL weekly scan, monthly full audit and month-end review, silently, same switch
 tests/
   brief-gate.test.js       tests for the brief schedule gate: node --test tests/brief-gate.test.js
   hooks.test.js            boot and close as Claude Code, Codex and Cursor hooks: node --test tests/hooks.test.js
   crm.test.js              one CRM schema (001 = schema.sql) and the optional HAROLD_NO_LOG_TYPES: node --test tests/crm.test.js
+  housekeeping.test.js     the housekeeping gate across time zones, the job, and close inside it: node --test tests/housekeeping.test.js
 ```
 
 ### The CRM model
@@ -143,13 +152,19 @@ Every contact has exactly **one type**, from a short list you choose (for exampl
 
 Every conversation with a contact is logged unless you choose otherwise: the optional setting `HAROLD_NO_LOG_TYPES` in `~/.harold/env` (empty by default) lists contact types whose conversations are never logged, for example your own team. "CRM Filing Protocol" in `AGENTS.md` describes exactly what it changes.
 
+## Scheduled jobs in the cloud
+
+Two kinds of work run on a schedule, on GitHub's machines, so no computer of yours needs to be on: the morning brief and housekeeping. Both are GitHub Actions workflows in `.github/workflows/`, both are off until you set them up, and both use the same agent switch and secrets. Any agent with a headless (non-interactive) mode can do the work; the workflows have a switch for three. Claude Code is the default and needs the repository secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. To use Codex instead, set the repository variable `HAROLD_AGENT` to `codex` and add the secret `OPENAI_API_KEY` (the workflows use the official `openai/codex-action`); for Cursor, set `HAROLD_AGENT` to `cursor` and add `CURSOR_API_KEY` (the workflows use Cursor's headless CLI, `agent -p`). An optional `HAROLD_AGENT_MODEL` variable picks the model for Codex or Cursor. Variables live under Settings → Secrets and variables → Actions → Variables.
+
+GitHub Actions is the starter's way to schedule. Any other scheduler that can run a headless agent on your repository works the same way with the same prompt files, for example a Claude Code routine (see the end of each section).
+
 ### Morning brief: your time zone, your time
 
 Say "good morning" and Harold runs the morning brief (`playbook/core/morning-brief.md`). Optionally, Steps 1 and 2 can be written for you before you sit down, so the morning starts with them on screen. By default that happens at **6:30am on weekdays, in your time zone**.
 
 `.github/workflows/morning-brief.yml` does it on GitHub's machines, so no computer of yours needs to be on. GitHub schedules only in UTC, so the workflow wakes every hour (at :35, so a 6:30 brief starts about 6:35) and asks `bin/harold brief start` whether the brief is due: a weekday in your zone, at or after your time, and no brief yet today. Every other hour it stops in seconds, and daylight saving takes care of itself. The draft lands in `harold/briefs/YYYY-MM-DD.md`; the next time you boot, Harold sees it and shows it instead of re-running those steps.
 
-Any agent with a headless (non-interactive) mode can write it; the workflow has a switch for three. To turn it on, add one repository secret for the agent that writes it and set two repository **variables** (Settings → Secrets and variables → Actions → Variables). Claude Code is the default and needs `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. To use Codex instead, set the variable `HAROLD_AGENT` to `codex` and add the secret `OPENAI_API_KEY` (the workflow uses the official `openai/codex-action`); for Cursor, set `HAROLD_AGENT` to `cursor` and add `CURSOR_API_KEY` (the workflow uses Cursor's headless CLI, `agent -p`). An optional `HAROLD_AGENT_MODEL` variable picks the model for Codex or Cursor.
+To turn it on, add the secret for your agent (above) and set two repository **variables**:
 
 | Variable | Example | Default |
 |---|---|---|
@@ -159,6 +174,24 @@ Any agent with a headless (non-interactive) mode can write it; the workflow has 
 To change the time or zone later, change the variables; nothing else. Check the gate any time with `bin/harold brief status`. The workflow file explains the rest (dry runs, the optional ntfy phone push, and how to spend fewer Actions minutes).
 
 **Prefer a Claude Code routine?** Delete the workflow and create a routine whose prompt is `harold/brief-prompt.md`, on its own schedule (for example weekdays at your brief time). The routine's schedule is the clock; the same gate still skips weekends and days that already have a brief. Set `HAROLD_TZ` in the routine's environment so dates are yours, not the server's.
+
+### Housekeeping: weekly, monthly, month-end
+
+Three of the scheduled triggers are upkeep rather than conversation: the **weekly scan** (Fridays), the **monthly full audit** (the 1st, including the slim-down that moves stale sections of over-budget startup files into an archive file beside them) and the **month-end review** (the last business day, Monday to Friday). By default a session does them when boot lists them as due. Turned on, `.github/workflows/housekeeping.yml` does them instead, silently, and pushes the results; anything worth your attention lands as one line in `harold/briefs/housekeeping-notes.md`, and the next morning brief shows it once.
+
+**One switch.** In `harold/housekeeping.json`, set `"cloud": true`, commit and push. That line does two things at once: the workflow starts doing the jobs, and sessions stop treating them as due work (boot shows a one-line note instead, and close never asks for them), so a job is never done twice or not at all. While it is `false`, the workflow stops at its gate within seconds and costs nothing else. The same secret as the brief, plus `HAROLD_TZ`, is all it needs.
+
+GitHub schedules only in UTC, so the workflow wakes every three hours and asks `bin/harold housekeeping start` whether a job is due: that job's day in your zone, and not yet recorded as ran or skipped today. The first wake-up after your local midnight does it, usually before your brief. When two jobs share a day (a Friday that is the 1st, or the last business day), they run on two consecutive wake-ups. `bin/harold housekeeping status` shows the gate for each job today.
+
+The job ends with `bin/harold housekeeping finish`, which checks that the job was recorded and its daily note written, commits everything it changed (after the same secret scan as close) and pushes. A job that cannot finish is saved anyway, recorded as skipped so it does not start again that day, and noted for your next brief: a cloud checkout is thrown away after the run, so unsaved work would be lost.
+
+**The CRM.** The workflow gives the agent no MCP servers and no CRM credentials, so the full audit's CRM consistency step is skipped there (the audit says so, and leaves you a note when people cards changed). To run that step unattended too, schedule `harold/housekeeping-prompt.md` with a runner that has a CRM tool, for example a Claude Code routine with the hosted connector attached; the step's limits in `playbook/core/knowledge-base-health.md` (what it may correct, and the "Never" list) apply either way. No housekeeping job ever logs an interaction, moves a pipeline entry or creates a task.
+
+**Prefer a Claude Code routine (or another scheduler)?** Delete the workflow and schedule a daily run whose prompt is `harold/housekeeping-prompt.md`, with `HAROLD_TZ` in its environment. The same gate picks the job, if any; `bin/harold close` inside the routine saves the work.
+
+## From any chat app: the hosted connector
+
+Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the optional connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a custom connector in any chat app that supports remote MCP servers; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and uses Claude as the example. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed.
 
 ## Keeping it private
 
