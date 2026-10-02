@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    "typeRoots": ["./node_modules/@types"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["server.ts", "local.ts", "src/**/*.ts", "test/**/*.ts"]
+}
