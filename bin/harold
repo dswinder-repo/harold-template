@@ -664,7 +664,16 @@ function cmdBoot(root, today, opts, hook) {
   return 0;
 }
 
-const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/];
+// Commit trailers name the agent that did the work. Scheduled jobs say which one in HAROLD_AGENT; a hook says
+// it through its harness. Claude (and an unknown runner: a terminal, another harness) keeps the long-standing
+// Co-Authored-By line; Codex and Cursor get a neutral Harold-Agent line rather than an address we cannot vouch for.
+function agentTrailer(harness) {
+  const a = String(process.env.HAROLD_AGENT || harness || '').trim().toLowerCase();
+  return a && a !== 'claude' ? `Harold-Agent: ${a.replace(/[^a-z0-9._-]/g, '')}` : 'Co-Authored-By: Claude <noreply@anthropic.com>';
+}
+const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/,
+  // OpenAI keys, Cursor keys, and a pasted Codex/OAuth sign-in file (any agent the scheduled jobs can run).
+  /sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/, /crsr_[A-Za-z0-9_-]{20,}/, /"refresh_token"\s*:\s*"[^"\s]{20,}"/];
 function secretScan(root, files) {
   const hits = [];
   for (const f of files) {
@@ -1121,7 +1130,7 @@ function closeOnce(root, today, opts, hook) {
         if (hits.length) { git(root, ['reset', '-q']); refused = true; problems.push(`refusing to commit: possible secrets in ${hits.join('; ')} — move credentials out of the repo (~/.harold/env) or add the file to .gitignore`); }
         else {
           const label = sf ? path.basename(sf, '.json') : id;
-          const cm = git(root, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+          const cm = git(root, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\n${agentTrailer(hook && hook._harness)}`]);
           if (cm.code !== 0) gitNote = `commit failed: ${cm.err.slice(0, 200)}`;
         }
       }
@@ -1397,7 +1406,7 @@ function cmdBrief(root, today, argv, now) {
     // A cloud runner usually has no git identity; use a neutral one rather than fail.
     const ident = ['-c', 'core.hooksPath=/dev/null'];
     if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (scheduled brief)', '-c', 'user.email=harold-brief@users.noreply.github.com');
-    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}\n\n${agentTrailer()}`]);
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) { console.log(`FAIL: commit failed: ${cm.err.slice(0, 300)}`); return 2; }
     if (git(root, ['remote', 'get-url', 'origin']).code !== 0) {
       Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: git(root, ['rev-parse', 'HEAD']).out, pushedTo: '(no origin remote: committed locally)' }); saveJob(root, job);
@@ -1561,7 +1570,7 @@ function finishHousekeepingJob(root, job, { anyway = false } = {}) {
   const ident = ['-c', 'core.hooksPath=/dev/null'];
   if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (housekeeping)', '-c', 'user.email=harold-housekeeping@users.noreply.github.com');
   if (staged.length) {
-    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}\n\n${agentTrailer()}`]);
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) return { code: 2, text: `FAIL: commit failed: ${cm.err.slice(0, 300)}` };
   }
   const ps = pushHead(root, ident);
