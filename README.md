@@ -71,7 +71,7 @@ Any model the harness offers works; Harold doesn't depend on a particular one, b
 2. **With hooks.** From the workspace root, run `bin/harold boot` at session start, `bin/harold close` at the end of every turn and `bin/harold close --final` at session end, with no `--via` flag (that flag is only for the three harnesses below). If the hook passes input on stdin, add `< /dev/null` so Harold answers in plain text. Boot prints the context to hand the agent and exits 0, or prints `⛔ HAROLD BOOT REFUSED` and exits 2. Close exits 0 when everything is filed and pushed, 2 with the list of what is missing on stderr (send it back to the agent, which fixes it and closes again), or 1 when only the push failed.
 3. **Without hooks.** Nothing to wire: `AGENTS.md` tells the agent to run boot first and close at the end of every turn. Every command also works by hand in a terminal.
 4. **MCP.** Add `bin/harold-mcp` as a local (command) MCP server, with its absolute path. It reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
-5. **Scheduled jobs.** Any harness with a headless mode can run them: on a schedule, with `harold/brief-prompt.md` (the morning brief) or `harold/housekeeping-prompt.md` (weekly scan, full audit, month-end review) as the prompt. Each prompt runs its own `start` gate and `finish` step. In `.github/workflows/morning-brief.yml` and `housekeeping.yml`, add a step for it next to the three already there; the gate before it and the finish step after it stay the same.
+5. **Scheduled jobs.** Any harness with a headless mode can run them: on a schedule, with `harold/brief-prompt.md` (the morning brief) or `harold/housekeeping-prompt.md` (weekly scan, full audit, month-end review) as the prompt. Each prompt runs its own `start` gate and `finish` step. In the starter's workflows, set `HAROLD_AGENT` to one of the presets, or to `custom` with your CLI's command ([Scheduled jobs in the cloud](#scheduled-jobs-in-the-cloud)); the gate before it and the finish step after it stay the same.
 
 ### Ready-made wiring
 
@@ -94,6 +94,19 @@ This repository ships hook files and MCP examples for Claude Code (and the Claud
 
 Each hook command passes `--via=claude|codex|cursor`, so `bin/harold` answers in that tool's format: plain text or `{"additional_context"}` at start, `{"decision":"block"}` or `{"followup_message"}` when filing is missing. `tests/hooks.test.js` feeds each tool's documented hook input to boot and close and checks the answers. That proves Harold's side against the published hook formats of Codex and Cursor; if either tool behaves differently from its documentation, the fallback is the instruction in `AGENTS.md`, and please report it.
 
+### Other agent CLIs: session hooks
+
+These CLIs can run Harold too; the starter ships no hook files for them, so the first instruction in `AGENTS.md` (run boot first, close at the end of every turn) is what makes the checks run. What their documentation says about hooks, for anyone who wants to wire them:
+
+| CLI | Reads `AGENTS.md` | Session hooks it documents | Harold hook wiring |
+|---|---|---|---|
+| Gemini CLI | with `.gemini/settings.json` (shipped: `context.fileName`) | `SessionStart` (can add context), `AfterAgent` (can force another try), `SessionEnd` | none shipped: `AGENTS.md` instruction |
+| Antigravity CLI | global `~/.gemini/AGENTS.md`; a project's not confirmed | `.agents/hooks.json` with `Stop`; a session-start event not confirmed | none: point it at `AGENTS.md` |
+| GitHub Copilot CLI | yes | `sessionStart`, `agentStop`, `sessionEnd` (repo hooks in `.github/hooks/`) | none shipped: `AGENTS.md` instruction |
+| Grok Build | yes | `SessionStart`, `Stop`, `SessionEnd`; it also loads `.claude/settings.json` and `.cursor/hooks.json` after you trust the folder | not yet tested: Harold's existing hooks would run close, but Grok ignores `SessionStart` output, so the agent still runs boot itself |
+| Kimi Code CLI | yes | `SessionStart`, `Stop`, `SessionEnd` (`[[hooks]]` in its `config.toml`, beta) | none shipped: `AGENTS.md` instruction |
+| Qwen Code | yes | `SessionStart`, `Stop`, `SessionEnd` (in `.qwen/settings.json`) | none shipped: `AGENTS.md` instruction |
+
 ## What's included
 
 ```
@@ -105,6 +118,7 @@ CLAUDE.md                  one line: @AGENTS.md
 .codex/config.example.toml Codex MCP config for bin/harold-mcp (copy to .codex/config.toml, gitignored)
 .cursor/hooks.json         Cursor hooks: sessionStart → boot, stop → close, sessionEnd → close --final
 .cursor/mcp.example.json   Cursor MCP config for bin/harold-mcp (copy to .cursor/mcp.json, gitignored)
+.gemini/settings.json      Gemini CLI: read AGENTS.md as its context file
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
 bin/
   harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | housekeeping |
@@ -113,6 +127,8 @@ bin/
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
   harold-linear            optional Linear task layer
   harold-setup-crm         stores your Supabase URL + key outside the repo and tests them
+  harold-agent-auth        scheduled jobs: keeps a subscription sign-in file fresh between runs (encrypted
+                           in the Actions cache), and passes a custom agent only the secrets it names
 harold/                    operational state
   alerts.md  blockers.md  events.md  facts.md  projects.md  sync-map.md
   learnings.jsonl  trigger-log.jsonl  crm-queue.jsonl  active-sessions/  briefs/  brief-prompt.md
@@ -137,13 +153,18 @@ tools/
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
   morning-brief.yml        OPTIONAL scheduled morning brief, in your time zone at your time, written by
-                           any agent with a headless mode; a switch for Claude Code, Codex or Cursor (see below)
+                           any agent with a headless mode; HAROLD_AGENT picks it, subscription first (see below)
   housekeeping.yml         OPTIONAL weekly scan, monthly full audit and month-end review, silently, same switch
+.github/actions/harold-agent/
+  action.yml               runs the chosen agent for both jobs: Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI,
+                           Grok Build, Kimi Code, Qwen Code, or any other CLI through a custom command
 tests/
   brief-gate.test.js       tests for the brief schedule gate: node --test tests/brief-gate.test.js
   hooks.test.js            boot and close as Claude Code, Codex and Cursor hooks: node --test tests/hooks.test.js
   crm.test.js              one CRM schema (001 = schema.sql) and the optional HAROLD_NO_LOG_TYPES: node --test tests/crm.test.js
   housekeeping.test.js     the housekeeping gate across time zones, the job, and close inside it: node --test tests/housekeeping.test.js
+  agent-action.test.js     each agent's credential choice (subscription first) and what it is given, with stub CLIs
+  agent-auth.test.js       sign-in files kept fresh across runs, and a custom agent's secrets
 ```
 
 ### The CRM model
@@ -154,7 +175,80 @@ Every conversation with a contact is logged unless you choose otherwise: the opt
 
 ## Scheduled jobs in the cloud
 
-Two kinds of work run on a schedule, on GitHub's machines, so no computer of yours needs to be on: the morning brief and housekeeping. Both are GitHub Actions workflows in `.github/workflows/`, both are off until you set them up, and both use the same agent switch and secrets. Any agent with a headless (non-interactive) mode can do the work; the workflows have a switch for three. Claude Code is the default and needs the repository secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. To use Codex instead, set the repository variable `HAROLD_AGENT` to `codex` and add the secret `OPENAI_API_KEY` (the workflows use the official `openai/codex-action`); for Cursor, set `HAROLD_AGENT` to `cursor` and add `CURSOR_API_KEY` (the workflows use Cursor's headless CLI, `agent -p`). An optional `HAROLD_AGENT_MODEL` variable picks the model for Codex or Cursor. Variables live under Settings → Secrets and variables → Actions → Variables.
+Two kinds of work run on a schedule, on GitHub's machines, so no computer of yours needs to be on: the morning brief and housekeeping. Both are GitHub Actions workflows in `.github/workflows/`, both are off until you set them up, and both use the same agent switch and secrets. The repository variable `HAROLD_AGENT` picks the agent (unset means Claude Code), and `.github/actions/harold-agent` runs it the same way for both jobs: the same prompt, at the repository root, allowed to run `bin/harold` and a few read-only commands. Variables and secrets live under Settings → Secrets and variables → Actions.
+
+**Subscription first.** Wherever an agent's maker sells a subscription, the scheduled jobs can run on it, and that is what they use when its secret is present. An API key is only for people without a subscription; if both secrets are set, the subscription wins.
+
+### Which agent, and how it signs in
+
+| `HAROLD_AGENT` | With a subscription (repository secret) | Without a subscription | Status |
+|---|---|---|---|
+| `claude` (default) | `CLAUDE_CODE_OAUTH_TOKEN`: Claude Pro or Max | `ANTHROPIC_API_KEY` | documented by Anthropic |
+| `codex` | `CODEX_AUTH_JSON`: ChatGPT Plus, Pro, Business… | `OPENAI_API_KEY` | subscription path not yet tested |
+| `cursor` | `CURSOR_API_KEY`, a User API key from your Cursor account | the same key (Cursor has no other headless sign-in) | whether its use counts against your plan is not confirmed |
+| `gemini` | `GEMINI_OAUTH_CREDS`: Google AI Pro or Ultra | `GEMINI_API_KEY` | not yet tested; see the note below |
+| `copilot` | `COPILOT_GITHUB_TOKEN`: any Copilot plan | none: Copilot CLI needs a Copilot plan (Copilot Free is one) | not yet tested |
+| `grok` | `GROK_AUTH_JSON`: SuperGrok | `XAI_API_KEY` | not yet tested |
+| `kimi` | `KIMI_API_KEY`: a Kimi Code key | the same secret with a Moonshot platform key, plus `HAROLD_AGENT_BASE_URL` | not yet tested |
+| `qwen` | `QWEN_CODING_PLAN_KEY`: Alibaba Cloud Coding Plan | use `custom` with your provider's key | not yet tested |
+| `custom` | whatever your CLI needs (below) | | yours to test |
+
+"Not yet tested" means the setup follows the tool's own documentation or source code, and `tests/agent-action.test.js` checks what each agent is given, but no scheduled run has used it yet. Optional variables: `HAROLD_AGENT_MODEL` (a model name, for any agent) and `HAROLD_AGENT_BASE_URL` (the endpoint, for `kimi` and `qwen`).
+
+What to run once, on your own computer, for each:
+
+- **Claude Code.** `claude setup-token`, approve in the browser, and store the token it prints: `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (paste it) or add it in the Settings page. The token lasts a year.
+- **Codex.** Sign in once into a separate folder, just for the scheduled jobs, and store the file it writes:
+  ```bash
+  export CODEX_HOME="$HOME/.codex-harold"
+  codex -c 'cli_auth_credentials_store="file"' login     # add --device-auth if no browser opens
+  gh secret set CODEX_AUTH_JSON < "$CODEX_HOME/auth.json"
+  rm -rf "$CODEX_HOME"; unset CODEX_HOME                 # not `codex logout`: that revokes the sign-in
+  ```
+  Why a separate sign-in: `codex login` revokes the sign-in already in its folder, and a ChatGPT sign-in renews itself with a new refresh token each time (the old one stops working). If your own Codex and the jobs shared one, whichever renewed first would sign the other out. Because of that renewal, the secret is only the starting point: each run that renews the sign-in keeps the new copy in the Actions cache, encrypted with a key derived from the secret itself (`bin/harold-agent-auth`), and the next run uses it. Codex runs of the brief and of housekeeping never overlap, so two runs cannot renew at once. If the jobs stop for more than a week, GitHub drops the cached copy; if a renewal happened before that, sign in again the same way and replace the secret.
+- **Cursor.** Create a User API key in the Cursor dashboard (Integrations) and store it as `CURSOR_API_KEY`. Cursor's own SDK guide describes a User API key as running "as a specific user"; nothing published that could be checked here says whether headless use draws on your plan's included usage.
+- **Gemini CLI.** Sign in with Google once in a throwaway home folder, just for the scheduled jobs, and store the file it writes (run this inside your repository, so `gh` knows which one):
+  ```bash
+  export SIGNIN_HOME="$(mktemp -d)"
+  HOME="$SIGNIN_HOME" gemini        # choose "Sign in with Google", then /quit
+  gh secret set GEMINI_OAUTH_CREDS < "$SIGNIN_HOME/.gemini/oauth_creds.json"
+  rm -rf "$SIGNIN_HOME"
+  ```
+  The job sets `GOOGLE_GENAI_USE_GCA=true` so Gemini CLI uses it. Note: some reports say Google stopped serving Pro and Ultra personal sign-in in Gemini CLI on 2026-06-18 in favour of Antigravity CLI; Gemini CLI's own documentation (October 2026) still recommends that sign-in for subscribers, and nothing in its repository confirms the cut-off. If it no longer works for you, use `GEMINI_API_KEY`.
+- **Copilot CLI.** Create a fine-grained personal access token at github.com/settings/personal-access-tokens/new with the "Copilot Requests" permission, and store it as `COPILOT_GITHUB_TOKEN`. Each prompt uses your plan's premium requests.
+- **Grok Build.** `GROK_HOME="$HOME/.grok-harold" grok login` (or `--device-auth`), then `gh secret set GROK_AUTH_JSON < "$HOME/.grok-harold/auth.json"` and delete that folder. The renewal and cache handling is the same as for Codex.
+- **Kimi Code CLI.** Store your Kimi Code API key (the one its `/login` asks for) as `KIMI_API_KEY`. The job writes the provider settings its documentation gives (`https://api.kimi.com/coding/v1`, model `kimi-for-coding`).
+- **Qwen Code.** Store your Coding Plan key (`sk-sp-…`) as `QWEN_CODING_PLAN_KEY`. The job uses the international endpoint; for an account in the Beijing region set `HAROLD_AGENT_BASE_URL` to `https://coding.dashscope.aliyuncs.com/v1`.
+
+How tightly each agent is limited differs because the CLIs differ: Claude Code, Gemini CLI, Copilot CLI, Grok Build and Qwen Code get an explicit list of allowed commands; Codex runs in its workspace-write sandbox; Cursor (`--force`) and Kimi (`--print`) approve every tool call, because their headless modes have no per-command list. In every case the job's last step, outside the agent, checks the result, refuses to commit anything that looks like a credential, and pushes.
+
+### Claude Code with another model provider
+
+Several providers sell coding plans for their own models behind an Anthropic-compatible endpoint, so Claude Code can run on them. Add the repository secrets `ANTHROPIC_BASE_URL` (the provider's endpoint) and `ANTHROPIC_AUTH_TOKEN` (your plan's or account's key), and optionally `ANTHROPIC_MODEL` (a secret or a variable); leave `HAROLD_AGENT` as `claude`. When `ANTHROPIC_BASE_URL` is set, the job uses that provider and not your Claude credentials.
+
+| Provider | `ANTHROPIC_BASE_URL` | Example model |
+|---|---|---|
+| Moonshot (Kimi) | `https://api.moonshot.ai/anthropic` | `kimi-k2.5` |
+| Zhipu Z.ai (GLM Coding Plan) | `https://api.z.ai/api/anthropic` | `glm-5.1` |
+| DeepSeek | `https://api.deepseek.com/anthropic` | `deepseek-reasoner` |
+| MiniMax (Token Plan) | `https://api.minimax.io/anthropic` | `minimax-m2.7` |
+| Alibaba Cloud (DashScope) | `https://dashscope-intl.aliyuncs.com/apps/anthropic` | `qwen3.6-plus` |
+
+These endpoints come from the community reference [Alorse/cc-compatible-models](https://github.com/Alorse/cc-compatible-models) (April 2026); the providers' own pages could not be checked from here, so treat them as not yet verified and confirm them in your provider's documentation. A coding plan can use a different endpoint or key from pay-as-you-go access.
+
+### Any other agent CLI: the custom command
+
+Set `HAROLD_AGENT` to `custom` and the variable `HAROLD_AGENT_CMD` to the command that runs your CLI headless. The contract:
+
+- **The prompt** arrives on stdin; its path is also in `$HAROLD_PROMPT_FILE`, for CLIs that take the prompt as an argument (`mycli -p "$(cat "$HAROLD_PROMPT_FILE")"`). `$HAROLD_MODEL` holds `HAROLD_AGENT_MODEL`.
+- **It runs at the repository root** and should write only inside it.
+- **Its shell may run only `bin/harold`** and the read-only helpers listed in `$HAROLD_COMMANDS`: configure your CLI's permissions that way if it has them. The job's last step commits and pushes, outside the agent.
+- **Install** (optional): the variable `HAROLD_AGENT_INSTALL`, for example `npm install -g some-cli`.
+- **Secrets**: the variable `HAROLD_AGENT_SECRETS` lists repository secret names, comma-separated. `NAME` is exported as that environment variable; `NAME:~/path/file` is written to that file instead (for a CLI that keeps its sign-in in a file). Only the secrets named reach the agent.
+
+For example, Antigravity CLI (`agy`) runs headless with `-p` and accepts `GEMINI_API_KEY`: `HAROLD_AGENT_CMD` = `agy -p "$(cat "$HAROLD_PROMPT_FILE")"`, `HAROLD_AGENT_INSTALL` = `curl -fsSL https://antigravity.google/cli/install.sh | bash`, `HAROLD_AGENT_SECRETS` = `GEMINI_API_KEY` (its changelog says that also needs `modelProvider: "gemini"` in its `settings.json`). Its Google subscription sign-in lives in the system keyring, and how to carry that to a server is not documented, so Antigravity works via the custom command, but its subscription path is not yet verified.
+
+**Local open-weight models** (Ollama, LM Studio) work through any harness that supports them, via the custom command, with no API key or subscription; the model server must be reachable from where the job runs, which usually means your own runner rather than GitHub's.
 
 GitHub Actions is the starter's way to schedule. Any other scheduler that can run a headless agent on your repository works the same way with the same prompt files, for example a Claude Code routine (see the end of each section).
 

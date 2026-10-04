@@ -20,26 +20,28 @@ name: Harold morning brief
 # If a run fails, the next hourly run tries again, for up to 6 hours after the brief time
 # (repository variable HAROLD_BRIEF_WINDOW_HOURS changes that; 0 = no limit).
 #
-# WHICH AI TOOL WRITES IT, AND HOW IT SIGNS IN. Repository variable HAROLD_AGENT picks the agent; unset =
-# claude. Each agent runs on your subscription if you have one; an API key is only for when you don't. If
-# both secrets are present, the subscription is used. README.md → "Scheduled jobs in the cloud" has the
-# one-time commands.
-#   claude   Claude Code (`claude -p`).
-#            With a subscription (Pro, Max): secret CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`.
-#            Without: secret ANTHROPIC_API_KEY (pay as you go).
-#   codex    Codex (`codex exec`, workspace-write sandbox, live web search).
-#            With a subscription (ChatGPT Plus, Pro, Business...): secret CODEX_AUTH_JSON, the auth.json a
-#            separate `codex login` writes. Codex renews that sign-in by itself and each renewal replaces it,
-#            so the job keeps the renewed copy in the Actions cache, encrypted (bin/harold-codex-auth).
-#            Without: secret OPENAI_API_KEY (pay as you go), through the official openai/codex-action.
-#   cursor   Cursor's headless CLI (`agent -p --force`). Secret: CURSOR_API_KEY, a User API key from your
-#            Cursor account (dashboard → Integrations). Cursor has no other headless sign-in, so this one key
-#            serves both cases.
-#   Optional variable HAROLD_AGENT_MODEL passes a model name to codex or cursor (claude ignores it).
-#   The gate, the prompt (harold/brief-prompt.md) and the commit/push step are the same for all three.
+# WHICH AI TOOL WRITES IT, AND HOW IT SIGNS IN. Repository variable HAROLD_AGENT picks the agent (unset = claude):
+# claude, codex, cursor, gemini, copilot, grok, kimi, qwen, or custom (any other headless agent CLI, through
+# HAROLD_AGENT_CMD). Every agent runs on your subscription if you have one; an API key is only for when you
+# don't, and when both secrets are present the subscription is used. The secrets, per agent:
+#   claude   CLAUDE_CODE_OAUTH_TOKEN (Pro/Max, from `claude setup-token`) | ANTHROPIC_API_KEY
+#            or another provider's coding plan: ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (+ ANTHROPIC_MODEL)
+#   codex    CODEX_AUTH_JSON (ChatGPT plan: auth.json of a separate `codex login`) | OPENAI_API_KEY
+#   cursor   CURSOR_API_KEY (a User API key from your Cursor account)
+#   gemini   GEMINI_OAUTH_CREDS (Google sign-in: ~/.gemini/oauth_creds.json) | GEMINI_API_KEY
+#   copilot  COPILOT_GITHUB_TOKEN (fine-grained token with "Copilot Requests"; needs a Copilot plan)
+#   grok     GROK_AUTH_JSON (SuperGrok: auth.json of a separate `grok login`) | XAI_API_KEY
+#   kimi     KIMI_API_KEY (a Kimi Code key)        qwen  QWEN_CODING_PLAN_KEY (Alibaba Cloud Coding Plan)
+#   custom   HAROLD_AGENT_CMD, optional HAROLD_AGENT_INSTALL and HAROLD_AGENT_SECRETS (variables)
+# Optional variables: HAROLD_AGENT_MODEL (a model name, any agent), HAROLD_AGENT_BASE_URL (kimi, qwen).
+# README.md → "Scheduled jobs in the cloud" has the one-time commands and what is not yet tested.
+# .github/actions/harold-agent runs whichever you pick; the gate, the prompt
+# (harold/brief-prompt.md) and the commit/push step are the same for all.
 #
-# ONE AT A TIME FOR CODEX. A Codex sign-in renewal retires the previous refresh token, so two runs must not
-# renew it at once. With HAROLD_AGENT=codex this workflow and housekeeping.yml share one concurrency group.
+# ONE AT A TIME FOR SIGN-IN FILES. Codex, Gemini CLI and Grok keep a subscription sign-in in a file that the
+# agent renews by itself (a Codex renewal retires the previous token). The job keeps the renewed copy in the
+# Actions cache, encrypted (bin/harold-agent-auth), and with those agents this workflow and housekeeping.yml
+# share one concurrency group, so two runs never renew the same sign-in at once.
 #
 # To enable:
 #   1. Add the repository secret for your agent (above). With no HAROLD_AGENT variable that is
@@ -71,8 +73,8 @@ permissions:
   contents: write
 
 concurrency:
-  # Codex: shared with housekeeping.yml, so only one run at a time can renew the sign-in (see above).
-  group: ${{ vars.HAROLD_AGENT == 'codex' && 'harold-codex-signin' || 'morning-brief' }}
+  # Codex, Gemini CLI and Grok on a subscription: shared with housekeeping.yml (see above).
+  group: ${{ contains(fromJSON('["codex","gemini","grok"]'), vars.HAROLD_AGENT) && 'harold-agent-signin' || 'morning-brief' }}
   cancel-in-progress: false
 
 jobs:
@@ -98,37 +100,6 @@ jobs:
         run: |
           if [ "$FORCE" = "true" ]; then bin/harold brief start --force < /dev/null; else bin/harold brief start < /dev/null; fi
 
-      - name: Require model credentials (for the agent HAROLD_AGENT names; the subscription first)
-        id: creds
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
-        env:
-          CLAUDE_SUB: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          CLAUDE_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CODEX_SUB: ${{ secrets.CODEX_AUTH_JSON }}
-          CODEX_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CURSOR_KEY: ${{ secrets.CURSOR_API_KEY }}
-        run: |
-          case "$HAROLD_AGENT" in
-            claude) sub="$CLAUDE_SUB"; key="$CLAUDE_KEY"
-                    how="With a Claude subscription: run 'claude setup-token' and add the token as repository secret CLAUDE_CODE_OAUTH_TOKEN. Without one: add ANTHROPIC_API_KEY." ;;
-            codex)  sub="$CODEX_SUB"; key="$CODEX_KEY"
-                    how="With a ChatGPT subscription: sign in once with 'codex login' into a separate folder and add that auth.json as repository secret CODEX_AUTH_JSON (README.md, Scheduled jobs in the cloud). Without one: add OPENAI_API_KEY." ;;
-            cursor) sub="$CURSOR_KEY"; key=""
-                    how="Add repository secret CURSOR_API_KEY, a User API key from your Cursor account (cursor.com/dashboard/integrations)." ;;
-            *) echo "::error::Repository variable HAROLD_AGENT is '$HAROLD_AGENT'. Use claude, codex or cursor (or delete it for claude)."; exit 1 ;;
-          esac
-          if [ -n "$sub" ]; then auth=subscription; elif [ -n "$key" ]; then auth=api-key
-          else echo "::error::No model credential for $HAROLD_AGENT. $how"; exit 1; fi
-          echo "auth=$auth" >> "$GITHUB_OUTPUT"
-          echo "Agent: $HAROLD_AGENT, signed in with $([ "$auth" = subscription ] && echo 'your subscription' || echo 'an API key')"
-
-      - uses: actions/setup-node@v4
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
-        with: { node-version: 22 }
-
-      # One prompt for every agent, with one note in front. A sandbox may keep the agent away from git and the
-      # network, so the agent's own `brief finish` can fail; the Finish step below runs it again outside the
-      # agent either way (it is a no-op once the brief is pushed).
       - name: Prepare the prompt
         if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
         run: |
@@ -138,83 +109,38 @@ jobs:
             cat harold/brief-prompt.md
           } > "$RUNNER_TEMP/brief-prompt.md"
 
-      - name: Write the brief with Claude Code (morning-brief.md Steps 1-2, analyst.md standard)
-        if: ${{ env.HAROLD_AGENT == 'claude' && steps.creds.outputs.auth != '' }}
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          # Claude Code uses ANTHROPIC_API_KEY ahead of the subscription token when both are set, so drop the key
-          # whenever the subscription token is there.
-          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then unset ANTHROPIC_API_KEY; fi
-          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
-          claude -p "$(cat "$RUNNER_TEMP/brief-prompt.md")" \
-            --output-format text \
-            --max-turns 80 \
-            --permission-mode acceptEdits \
-            --allowedTools "Read,Glob,Grep,Write,Edit,WebSearch,WebFetch,Bash(bin/harold *),Bash(cat *),Bash(date *)" \
-            --strict-mcp-config --mcp-config '{"mcpServers":{}}' > /tmp/brief-run.log 2>&1 || { tail -40 /tmp/brief-run.log; echo "::error::brief run failed"; exit 1; }
-          tail -20 /tmp/brief-run.log
-
-      # Codex on a ChatGPT subscription: restore the newest copy of the sign-in, run, save a renewed copy.
-      - name: Restore the Codex sign-in (cached renewal)
-        if: ${{ env.HAROLD_AGENT == 'codex' && steps.creds.outputs.auth == 'subscription' }}
-        uses: actions/cache/restore@v4
+      - name: Write the brief with the agent HAROLD_AGENT names (morning-brief.md Steps 1-2, analyst.md standard)
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
+        uses: ./.github/actions/harold-agent
         with:
-          path: ${{ runner.temp }}/codex-auth.enc
-          key: harold-codex-auth-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: harold-codex-auth-
-
-      - name: Write the brief with Codex (subscription)
-        id: codex_sub
-        if: ${{ env.HAROLD_AGENT == 'codex' && steps.creds.outputs.auth == 'subscription' }}
-        env:
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-          MODEL: ${{ vars.HAROLD_AGENT_MODEL }}
-        run: |
-          bin/harold-codex-auth restore
-          npm install -g @openai/codex >/dev/null 2>&1
-          # Codex's Linux sandbox (bubblewrap) needs unprivileged user namespaces, which newer Ubuntu runner
-          # images restrict; the official openai/codex-action makes the same two settings.
-          [ "$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 1)" = 1 ] || sudo sysctl -w kernel.unprivileged_userns_clone=1
-          [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 0 ] || sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          codex exec --skip-git-repo-check --sandbox workspace-write -c 'web_search="live"' ${MODEL:+--model "$MODEL"} - < "$RUNNER_TEMP/brief-prompt.md" > /tmp/brief-run.log 2>&1 || { tail -40 /tmp/brief-run.log; echo "::error::brief run failed"; exit 1; }
-          tail -20 /tmp/brief-run.log
-
-      - name: Keep a renewed Codex sign-in for the next run (encrypted)
-        id: codex_save
-        if: ${{ always() && env.HAROLD_AGENT == 'codex' && steps.creds.outputs.auth == 'subscription' }}
-        env:
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-        run: bin/harold-codex-auth save
-
-      - name: Save the renewed Codex sign-in to the cache
-        if: ${{ always() && steps.codex_save.outputs.changed == 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/codex-auth.enc
-          key: harold-codex-auth-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Write the brief with Codex (API key)
-        if: ${{ env.HAROLD_AGENT == 'codex' && steps.creds.outputs.auth == 'api-key' }}
-        uses: openai/codex-action@v1
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: ${{ runner.temp }}/brief-prompt.md
-          sandbox: workspace-write
+          agent: ${{ env.HAROLD_AGENT }}
           model: ${{ vars.HAROLD_AGENT_MODEL }}
-          codex-args: '["-c", "web_search=\"live\""]'
-
-      - name: Write the brief with Cursor
-        if: ${{ env.HAROLD_AGENT == 'cursor' && steps.creds.outputs.auth != '' }}
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          MODEL: ${{ vars.HAROLD_AGENT_MODEL }}
-        run: |
-          curl https://cursor.com/install -fsS | bash >/dev/null 2>&1
-          export PATH="$HOME/.cursor/bin:$HOME/.local/bin:$PATH"
-          agent -p --force --trust --output-format text ${MODEL:+--model "$MODEL"} "$(cat "$RUNNER_TEMP/brief-prompt.md")" > /tmp/brief-run.log 2>&1 || { tail -40 /tmp/brief-run.log; echo "::error::brief run failed"; exit 1; }
-          tail -20 /tmp/brief-run.log
+          base-url: ${{ vars.HAROLD_AGENT_BASE_URL }}
+          prompt-file: ${{ runner.temp }}/brief-prompt.md
+          log-file: /tmp/brief-run.log
+          max-turns: 80
+          commands: "bin/harold,cat,date"
+          # Subscription first; the API key is for when you have none (README.md, Scheduled jobs in the cloud).
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic-base-url: ${{ secrets.ANTHROPIC_BASE_URL }}
+          anthropic-auth-token: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          anthropic-model: ${{ secrets.ANTHROPIC_MODEL || vars.ANTHROPIC_MODEL }}
+          codex-auth-json: ${{ secrets.CODEX_AUTH_JSON }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          cursor-api-key: ${{ secrets.CURSOR_API_KEY }}
+          gemini-oauth-creds: ${{ secrets.GEMINI_OAUTH_CREDS }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          copilot-github-token: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          grok-auth-json: ${{ secrets.GROK_AUTH_JSON }}
+          xai-api-key: ${{ secrets.XAI_API_KEY }}
+          kimi-api-key: ${{ secrets.KIMI_API_KEY }}
+          qwen-coding-plan-key: ${{ secrets.QWEN_CODING_PLAN_KEY }}
+          custom-command: ${{ vars.HAROLD_AGENT_CMD }}
+          custom-install: ${{ vars.HAROLD_AGENT_INSTALL }}
+          custom-secrets: ${{ vars.HAROLD_AGENT_SECRETS }}
+          # Only a custom agent that names secrets gets them, and only the ones it names (bin/harold-agent-auth).
+          all-secrets: ${{ vars.HAROLD_AGENT == 'custom' && vars.HAROLD_AGENT_SECRETS != '' && toJSON(secrets) || '' }}
 
       - name: Finish (commit only the brief paths, push) and notify
         if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}

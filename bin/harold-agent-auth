@@ -1,0 +1,155 @@
+#!/usr/bin/env node
+/*
+ * harold-agent-auth — credentials for the agent a scheduled cloud job runs (.github/actions/harold-agent).
+ *
+ *   harold-agent-auth restore   write a subscription sign-in file for this run
+ *   harold-agent-auth save      after the run: if the agent renewed the sign-in, encrypt the new copy for the cache
+ *   harold-agent-auth env       custom agents: export the secrets HAROLD_AGENT_SECRETS names (prints shell lines)
+ *
+ * SIGN-IN FILES (restore, save). Some agents sign in with your subscription through an OAuth session kept in
+ * a file: Codex (~/.codex/auth.json), Gemini CLI (~/.gemini/oauth_creds.json), Grok Build (~/.grok/auth.json).
+ * You store that file as a repository secret. The agent renews the session by itself, and with Codex each
+ * renewal hands back a new refresh token and retires the old one (its auth server rejects a reused one with
+ * `refresh_token_reused`), so after the first renewal the secret is a stale snapshot. The workflow therefore
+ * keeps the renewed file in the GitHub Actions cache, encrypted, and this program decides which copy a run
+ * uses:
+ *
+ *   restore  1. the cached copy, if it decrypts with the key derived from the CURRENT secret: it is the newest
+ *               renewal of that same sign-in;
+ *            2. otherwise the secret itself (first run, cache evicted, or you replaced the secret with a new
+ *               sign-in: the old cache no longer decrypts, so a new secret always wins).
+ *   save     encrypts the sign-in file only if it changed during the run, and prints changed=true|false (also
+ *            to $GITHUB_OUTPUT) so the workflow saves a new cache entry only when there is one.
+ *
+ * The key is derived (HKDF-SHA256) from the secret's own contents, so there is no second secret to manage,
+ * and whoever can decrypt the cache could already read the secret. AES-256-GCM authenticates the file: a
+ * wrong key or an altered file is rejected, never half-used. Nothing here prints a credential.
+ *
+ *   HAROLD_SIGNIN_NAME    codex | gemini | grok | ... (names the cache file and binds the key)
+ *   HAROLD_SIGNIN_FILE    where the agent reads the file (a leading ~/ is your home)
+ *   HAROLD_SIGNIN_SECRET  the secret's contents
+ *   RUNNER_TEMP           where the encrypted copy and the fingerprint live (default: the system temp dir)
+ *
+ * CUSTOM AGENTS (env). HAROLD_AGENT_SECRETS is a comma-separated list of repository secret names. `NAME`
+ * exports that secret as the environment variable NAME; `NAME:~/path/file` writes it to that file (mode 600)
+ * instead, for agents that read a sign-in file. HAROLD_ALL_SECRETS is the workflow's toJSON(secrets); only the
+ * named ones are used. The output is `export NAME='value'` lines for `eval`, never printed to a log.
+ */
+'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+
+const home = env => env.HOME || os.homedir();
+const expand = (p, env) => (p === '~' ? home(env) : p.startsWith('~/') ? path.join(home(env), p.slice(2)) : p);
+const cleanName = n => String(n || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+function deriveKey(secret, salt, info) {
+  return Buffer.from(crypto.hkdfSync('sha256', Buffer.from(secret, 'utf8'), salt, Buffer.from(info), 32));
+}
+function encrypt(plaintext, secret, name = '') {
+  const info = `harold-signin-v1:${name}`;
+  const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', deriveKey(secret, salt, info), iv);
+  c.setAAD(Buffer.from(info));
+  const ct = Buffer.concat([c.update(Buffer.from(plaintext, 'utf8')), c.final()]);
+  return JSON.stringify({ v: 1, salt: salt.toString('base64'), iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), ct: ct.toString('base64') });
+}
+// The plaintext, or null when the file is not ours, was made from another secret or name, or was altered.
+function decrypt(blob, secret, name = '') {
+  try {
+    const info = `harold-signin-v1:${name}`;
+    const o = JSON.parse(blob);
+    if (o.v !== 1) return null;
+    const d = crypto.createDecipheriv('aes-256-gcm', deriveKey(secret, Buffer.from(o.salt, 'base64'), info), Buffer.from(o.iv, 'base64'));
+    d.setAAD(Buffer.from(info));
+    d.setAuthTag(Buffer.from(o.tag, 'base64'));
+    return Buffer.concat([d.update(Buffer.from(o.ct, 'base64')), d.final()]).toString('utf8');
+  } catch (_) { return null; }
+}
+// A sign-in file the agents above can use: a non-empty JSON object.
+function usable(text) {
+  try { const j = JSON.parse(text); return !!(j && typeof j === 'object' && !Array.isArray(j) && Object.keys(j).length); } catch (_) { return false; }
+}
+const sha = s => crypto.createHash('sha256').update(s).digest('hex');
+
+function paths(env) {
+  const name = cleanName(env.HAROLD_SIGNIN_NAME) || 'agent';
+  const tmp = env.RUNNER_TEMP || os.tmpdir();
+  return { name, file: expand(env.HAROLD_SIGNIN_FILE || '', env), enc: path.join(tmp, `harold-signin-${name}.enc`), fp: path.join(tmp, `harold-signin-${name}.sha256`) };
+}
+
+function restore(env = process.env) {
+  const secret = (env.HAROLD_SIGNIN_SECRET || '').trim();
+  const p = paths(env);
+  if (!p.file) return { ok: false, msg: 'HAROLD_SIGNIN_FILE is not set.' };
+  if (!secret) return { ok: false, msg: `The ${p.name} sign-in secret is empty.` };
+  if (!usable(secret)) return { ok: false, msg: `The ${p.name} sign-in secret is not a sign-in file (expected JSON). Copy the whole file, braces included.` };
+  let text = secret, source = 'the repository secret';
+  if (fs.existsSync(p.enc)) {
+    const cached = decrypt(fs.readFileSync(p.enc, 'utf8'), secret, p.name);
+    if (cached && usable(cached)) { text = cached; source = 'the renewed sign-in an earlier run saved (Actions cache)'; }
+    else source = 'the repository secret (the cached copy belongs to an earlier secret, so the secret wins)';
+  }
+  fs.mkdirSync(path.dirname(p.file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(p.file, text, { mode: 0o600 });
+  fs.chmodSync(p.file, 0o600);
+  fs.writeFileSync(p.fp, sha(text));
+  return { ok: true, msg: `${p.name} sign-in restored from ${source}.` };
+}
+
+function save(env = process.env) {
+  const secret = (env.HAROLD_SIGNIN_SECRET || '').trim();
+  const p = paths(env);
+  if (!secret || !p.file) return { ok: false, changed: false, msg: 'No sign-in secret or file; nothing to save.' };
+  if (!fs.existsSync(p.file)) return { ok: true, changed: false, msg: `No ${p.name} sign-in file after the run; nothing to save.` };
+  const text = fs.readFileSync(p.file, 'utf8');
+  const before = fs.existsSync(p.fp) ? fs.readFileSync(p.fp, 'utf8').trim() : '';
+  if (sha(text) === before) return { ok: true, changed: false, msg: `${p.name} did not renew the sign-in during this run; the cache stays as it is.` };
+  if (!usable(text)) return { ok: true, changed: false, msg: `The ${p.name} sign-in file changed but is not usable; not saving it.` };
+  fs.writeFileSync(p.enc, encrypt(text, secret, p.name), { mode: 0o600 });
+  return { ok: true, changed: true, msg: `${p.name} renewed the sign-in during this run; saving the encrypted copy for the next run.` };
+}
+
+const shq = s => `'${String(s).replace(/'/g, `'\\''`)}'`;
+// Custom agents: the named secrets as `export` lines, or files. Throws with names only, never values.
+function customEnv(env = process.env) {
+  const spec = String(env.HAROLD_AGENT_SECRETS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!spec.length) return '';
+  let all = {};
+  try { all = JSON.parse(env.HAROLD_ALL_SECRETS || '{}') || {}; } catch (_) { throw new Error('the workflow did not pass the secrets (HAROLD_ALL_SECRETS is not JSON)'); }
+  const lines = [], missing = [];
+  for (const entry of spec) {
+    const i = entry.indexOf(':');
+    const name = (i < 0 ? entry : entry.slice(0, i)).trim(), dest = i < 0 ? '' : entry.slice(i + 1).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`"${name}" in HAROLD_AGENT_SECRETS is not a secret name`);
+    const v = all[name];
+    if (v === undefined || v === '') { missing.push(name); continue; }
+    if (dest) {
+      const f = expand(dest, env);
+      fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(f, v, { mode: 0o600 }); fs.chmodSync(f, 0o600);
+    } else lines.push(`export ${name}=${shq(v)}`);
+  }
+  if (missing.length) throw new Error(`HAROLD_AGENT_SECRETS names repository secrets that are not set: ${missing.join(', ')}`);
+  return lines.join('\n');
+}
+
+module.exports = { encrypt, decrypt, usable, restore, save, customEnv, paths };
+
+if (require.main === module) {
+  const cmd = process.argv[2];
+  if (cmd === 'restore') {
+    const r = restore(); console.log(r.ok ? r.msg : `::error::${r.msg}`); process.exit(r.ok ? 0 : 1);
+  } else if (cmd === 'save') {
+    const r = save(); console.log(r.ok ? r.msg : `::warning::${r.msg}`);
+    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${r.changed}\n`);
+    process.exit(0);
+  } else if (cmd === 'env') {
+    try { const out = customEnv(); if (out) process.stdout.write(out + '\n'); process.exit(0); }
+    catch (e) { console.error(`::error::${e.message}`); process.exit(1); }
+  } else {
+    console.error('usage: harold-agent-auth restore | save | env   (see the comment at the top of this file)'); process.exit(2);
+  }
+}
