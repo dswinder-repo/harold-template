@@ -8,11 +8,20 @@
 //   client ──/token──▶ access_token = sealed(GitHub token, 24 h), refresh_token = sealed(GitHub token, 90 d)
 //
 // Also accepts Client ID Metadata Documents (the 2026-07-28 MCP spec's successor to DCR): a client_id
-// that is an https URL on an allowed host is fetched and its redirect_uris used.
+// that is an https URL on a public host (and on ALLOWED_REDIRECT_HOSTS, when that is set) is fetched
+// and its redirect_uris used.
+//
+// Any MCP client may sign in: loopback, private-use scheme and https redirect URIs are accepted (see
+// redirects.ts). The security boundary is the single GitHub account gate, PKCE S256, and the consent
+// page, which shows the client's name and the exact destination of the code before anything happens.
 
 import { config, type Config } from "./config.js";
 import { open, randomId, seal, sha256, verifyPkce } from "./crypto.js";
 import { fetchGithubUser, isAllowedUser, UA, type FetchLike } from "./identity.js";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { cimdUrlAllowed, describeRedirect, hostOf, isPublicIp, redirectAllowed, redirectMatches, type RedirectHosts } from "./redirects.js";
+
+export { redirectAllowed } from "./redirects.js";
 
 export const ACCESS_TTL = 24 * 3600;
 export const REFRESH_TTL = 90 * 24 * 3600;
@@ -20,7 +29,10 @@ export const CODE_TTL = 5 * 60;
 export const STATE_TTL = 10 * 60;
 export const SCOPE = "harold";
 
-export interface Deps { fetch: FetchLike; now?: () => number }
+/** Resolves a host name to its IP addresses (for the metadata-document SSRF guard). */
+export type LookupLike = (host: string) => Promise<string[]>;
+export interface Deps { fetch: FetchLike; now?: () => number; lookup?: LookupLike }
+const defaultLookup: LookupLike = async host => (await dnsLookup(host, { all: true, verbatim: true })).map(a => a.address);
 const nowSec = (d: Deps) => Math.floor((d.now ? d.now() : Date.now()) / 1000);
 
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
@@ -66,15 +78,9 @@ export function protectedResourceMetadata(): Response {
 
 // ───────────── clients ─────────────
 
-export function redirectAllowed(uri: unknown, hosts: string[]): boolean {
-  if (typeof uri !== "string" || uri.length > 2000) return false;
-  let u: URL;
-  try { u = new URL(uri); } catch { return false; }
-  if (u.protocol !== "https:" || u.username || u.password || u.hash) return false;
-  return hosts.includes(u.hostname.toLowerCase());
-}
+interface ClientInfo { redirect_uris: string[]; name?: string; metadataHost?: string }
 
-interface ClientInfo { redirect_uris: string[]; name?: string }
+const narrowedTo = (hosts: RedirectHosts) => hosts === null ? "" : ` (this server is limited to ${hosts.join(", ")} by ALLOWED_REDIRECT_HOSTS)`;
 
 export async function register(req: Request): Promise<Response> {
   const c = config();
@@ -83,7 +89,7 @@ export async function register(req: Request): Promise<Response> {
   const uris = body.redirect_uris;
   if (!Array.isArray(uris) || uris.length === 0 || uris.length > 10) return oauthError("invalid_redirect_uri", "redirect_uris must be a non-empty array");
   const bad = uris.filter(u => !redirectAllowed(u, c.allowedRedirectHosts));
-  if (bad.length) return oauthError("invalid_redirect_uri", `Only https redirect URIs on ${c.allowedRedirectHosts.join(", ")} are accepted`);
+  if (bad.length) return oauthError("invalid_redirect_uri", `Accepted redirect URIs: http://127.0.0.1, http://[::1] or http://localhost on any port; https; or an app's own scheme such as cursor:// (no userinfo, no fragment)${narrowedTo(c.allowedRedirectHosts)}`);
   const name = typeof body.client_name === "string" ? body.client_name.slice(0, 100) : undefined;
   const issuedAt = Math.floor(Date.now() / 1000);
   const client_id = seal(c.tokenKey, "client", { redirect_uris: uris, name, iat: issuedAt });
@@ -100,24 +106,66 @@ export async function register(req: Request): Promise<Response> {
 }
 
 const cimdCache = new Map<string, { info: ClientInfo | null; until: number }>();
+const CIMD_MAX_BYTES = 64 * 1024;
+const CIMD_CACHE_MAX = 200;
+
+function cacheCimd(clientId: string, info: ClientInfo | null) {
+  cimdCache.delete(clientId);
+  cimdCache.set(clientId, { info, until: Date.now() + (info ? 600_000 : 30_000) });
+  if (cimdCache.size > CIMD_CACHE_MAX) {
+    for (const [k, v] of cimdCache) if (v.until <= Date.now()) cimdCache.delete(k);
+    while (cimdCache.size > CIMD_CACHE_MAX) cimdCache.delete(cimdCache.keys().next().value!);
+  }
+}
+
+async function readCapped(r: Response, max: number): Promise<string | null> {
+  if (Number(r.headers.get("content-length") || 0) > max) return null;
+  if (!r.body) return null;
+  const reader = r.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => undefined); return null; }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** SSRF guard: the metadata URL's host must resolve only to public addresses. */
+async function resolvesPublic(host: string, deps: Deps): Promise<boolean> {
+  const literal = host.startsWith("[") ? host.slice(1, -1) : host;
+  if (isPublicIp(literal)) return true;
+  if (/^[\d.]+$/.test(literal) || literal.includes(":")) return false; // a non-public IP literal
+  try {
+    const addrs = await (deps.lookup || defaultLookup)(literal);
+    return addrs.length > 0 && addrs.every(isPublicIp);
+  } catch { return false; }
+}
 
 async function resolveClient(clientId: string, c: Config, deps: Deps): Promise<ClientInfo | null> {
   if (!clientId) return null;
   if (clientId.startsWith("https://")) {
-    if (!redirectAllowed(clientId, c.allowedRedirectHosts)) return null; // metadata documents only from allowed hosts
+    // Metadata documents: https, default port, public host (and on ALLOWED_REDIRECT_HOSTS when set).
+    if (!cimdUrlAllowed(clientId, c.allowedRedirectHosts)) return null;
     const hit = cimdCache.get(clientId);
     if (hit && hit.until > Date.now()) return hit.info;
     let info: ClientInfo | null = null;
     try {
-      const r = await deps.fetch(clientId, { headers: { Accept: "application/json", "User-Agent": UA }, signal: AbortSignal.timeout(5000) });
-      if (r.ok) {
-        const doc = (await r.json()) as { client_id?: unknown; redirect_uris?: unknown; client_name?: unknown };
-        if (doc.client_id === clientId && Array.isArray(doc.redirect_uris) && doc.redirect_uris.every(u => redirectAllowed(u, c.allowedRedirectHosts))) {
-          info = { redirect_uris: doc.redirect_uris as string[], name: typeof doc.client_name === "string" ? doc.client_name : undefined };
+      if (await resolvesPublic(hostOf(clientId), deps)) {
+        // No redirects: a public URL must not bounce the fetch to an internal one.
+        const r = await deps.fetch(clientId, { headers: { Accept: "application/json", "User-Agent": UA }, redirect: "error", signal: AbortSignal.timeout(5000) });
+        const body = r.ok ? await readCapped(r, CIMD_MAX_BYTES) : null;
+        const doc = body ? (JSON.parse(body) as { client_id?: unknown; redirect_uris?: unknown; client_name?: unknown }) : null;
+        if (doc && doc.client_id === clientId && Array.isArray(doc.redirect_uris) && doc.redirect_uris.length > 0 && doc.redirect_uris.length <= 10
+          && doc.redirect_uris.every(u => redirectAllowed(u, c.allowedRedirectHosts))) {
+          info = { redirect_uris: doc.redirect_uris as string[], name: typeof doc.client_name === "string" ? doc.client_name.slice(0, 100) : undefined, metadataHost: hostOf(clientId) };
         }
       }
     } catch { info = null; }
-    cimdCache.set(clientId, { info, until: Date.now() + (info ? 600_000 : 30_000) });
+    cacheCimd(clientId, info);
     return info;
   }
   const p = open<{ redirect_uris: string[]; name?: string }>(c.tokenKey, "client", clientId);
@@ -143,7 +191,7 @@ export async function authorize(req: Request, deps: Deps): Promise<Response> {
   const client = await resolveClient(clientId, c, deps);
   if (!client) return text("Unknown or invalid client_id. Register the client first.", 400);
   // Never redirect to a URI that is not registered: that is how open redirectors are made.
-  if (!redirectUri || !client.redirect_uris.includes(redirectUri) || !redirectAllowed(redirectUri, c.allowedRedirectHosts)) {
+  if (!redirectUri || !redirectMatches(client.redirect_uris, redirectUri) || !redirectAllowed(redirectUri, c.allowedRedirectHosts)) {
     return text("redirect_uri is missing or does not match the registered redirect URIs.", 400);
   }
   const state = q.get("state") || "";
@@ -165,8 +213,9 @@ export async function authorize(req: Request, deps: Deps): Promise<Response> {
   // Consent step. This server signs in to GitHub with ONE static OAuth app for every MCP client,
   // and GitHub skips its own consent screen once the app is approved. Without a page here, a link to
   // /authorize crafted from someone else's connector flow would complete silently with the owner's GitHub
-  // session (the MCP spec's "confused deputy" case). The nonce cookie stops a cross-site form post
-  // from skipping the page.
+  // session (the MCP spec's "confused deputy" case). Since any redirect host or app scheme may be
+  // registered, this page is also where the owner sees exactly where the code will go. The nonce
+  // cookie stops a cross-site form post from skipping the page.
   const nonce = randomId(16);
   const sealedState = seal(c.tokenKey, "state", {
     client_id: clientId, redirect_uri: redirectUri, code_challenge: challenge, state, resource: resource || resourceUrl(c),
@@ -179,17 +228,28 @@ const esc = (s: string) => s.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&l
 export const CONSENT_COOKIE = "harold_consent";
 
 function consentPage(c: Config, client: ClientInfo, redirectUri: string, sealedState: string, nonce: string): Response {
-  const host = new URL(redirectUri).hostname;
-  const name = (client.name || "An application").slice(0, 80);
+  const dest = describeRedirect(redirectUri);
+  // The name is whatever the client says; strip control and bidi-override characters so it cannot disguise itself.
+  const name = (client.name || "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, "").trim().slice(0, 80) || "An unnamed application";
+  const kindNote = dest.kind === "https" ? "" : dest.kind === "loopback"
+    ? "<p class=\"muted\">A loopback address is only reachable from this computer.</p>"
+    : `<p class="muted">Any app installed on this device can claim the ${esc(dest.target.split("//")[0])} scheme. Continue only if you are connecting that app right now.</p>`;
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect Harold</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:10vh auto;padding:0 1rem;color:#1a1a1a;background:#fafaf7}
-@media (prefers-color-scheme:dark){body{color:#eee;background:#161616}}button{font:inherit;padding:.6rem 1.2rem;border-radius:.5rem;border:0;background:#2b5cd9;color:#fff;cursor:pointer}
-.muted{opacity:.7;font-size:.9rem}</style></head><body>
+<title>Connect Harold</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:8vh auto;padding:0 1rem;color:#1a1a1a;background:#fafaf7}
+@media (prefers-color-scheme:dark){body{color:#eee;background:#161616}.who{border-color:#444!important}}button{font:inherit;padding:.6rem 1.2rem;border-radius:.5rem;border:0;background:#2b5cd9;color:#fff;cursor:pointer}
+.muted{opacity:.7;font-size:.9rem}.who{border:1px solid #ccc;border-radius:.5rem;padding:.75rem 1rem;margin:1rem 0}.who dt{font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;opacity:.7;margin-top:.5rem}
+.who dt:first-child{margin-top:0}.who dd{margin:0;overflow-wrap:anywhere}.dest{font:600 1.15rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}code{overflow-wrap:anywhere}</style></head><body>
 <h1>Connect Harold?</h1>
-<p><strong>${esc(name)}</strong> at <strong>${esc(host)}</strong> is asking to read and write Harold (the knowledge base and the CRM).</p>
-<p>Continue only if you just clicked <em>Connect</em> in your chat app yourself. You will sign in with GitHub next; only the account <strong>${esc(c.allowedGithubLogin)}</strong> is accepted.</p>
+<p>An application is asking to read and write Harold (the knowledge base and the CRM).</p>
+<dl class="who">
+<dt>Application (the name it gives itself)</dt><dd><strong>${esc(name)}</strong>${client.metadataHost ? ` <span class="muted">· metadata published at ${esc(client.metadataHost)}</span>` : ""}</dd>
+<dt>Your sign-in will be sent to</dt><dd><span class="dest">${esc(dest.target)}</span><br><span class="muted">${esc(dest.explain)}</span></dd>
+<dt>Exact redirect address</dt><dd><code>${esc(redirectUri)}</code></dd>
+</dl>
+${kindNote}
+<p>Continue only if you just started connecting this tool yourself and the destination above is the tool you are using. Whoever receives the sign-in can read and write Harold. You will sign in with GitHub next; only the account <strong>${esc(c.allowedGithubLogin)}</strong> is accepted.</p>
 <form method="post" action="${esc(c.publicBaseUrl)}/authorize/approve"><input type="hidden" name="request" value="${esc(sealedState)}"><button type="submit">Continue to GitHub</button></form>
-<p class="muted">If you did not expect this, close this window. Nothing has been shared.</p>
+<p class="muted">If you did not expect this, or you do not recognise the destination, close this window. Nothing has been shared.</p>
 </body></html>`;
   const secure = c.publicBaseUrl.startsWith("https://") ? "; Secure" : "";
   return new Response(html, {
@@ -216,9 +276,9 @@ export async function approve(req: Request, deps: Deps): Promise<Response> {
   const c = config();
   const form = new URLSearchParams(await req.text());
   const st = open<StatePayload & { n: string } & Record<string, unknown>>(c.tokenKey, "state", form.get("request") || "", nowSec(deps));
-  if (!st) return text("This sign-in request has expired or is invalid. Start again from your chat app.", 400);
+  if (!st) return text("This sign-in request has expired or is invalid. Start again from your app.", 400);
   const n = cookie(req, CONSENT_COOKIE);
-  if (!n || n !== st.n) return text("Please confirm from the Harold consent page (cookies must be enabled). Start again from your chat app.", 403);
+  if (!n || n !== st.n) return text("Please confirm from the Harold consent page (cookies must be enabled). Start again from your app.", 403);
   const gh = new URL("https://github.com/login/oauth/authorize");
   gh.searchParams.set("client_id", c.githubClientId);
   gh.searchParams.set("redirect_uri", `${c.publicBaseUrl}/github/callback`);
@@ -236,7 +296,7 @@ export async function githubCallback(req: Request, deps: Deps): Promise<Response
   const c = config();
   const q = new URL(req.url).searchParams;
   const st = open<StatePayload & Record<string, unknown>>(c.tokenKey, "state", q.get("state") || "", nowSec(deps));
-  if (!st) return text("This sign-in link has expired or is invalid. Start again from your chat app.", 400);
+  if (!st) return text("This sign-in link has expired or is invalid. Start again from your app.", 400);
   const back = (params: Record<string, string>) => {
     const u = new URL(st.redirect_uri);
     for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);

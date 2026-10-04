@@ -9,13 +9,13 @@ beforeEach(() => { setTestEnv(); _resetOauthCaches(); _resetIdentityCache(); });
 
 const hosts = ["claude.ai", "claude.com"];
 
-describe("DCR redirect-host enforcement", () => {
+describe("DCR redirect-host narrowing (ALLOWED_REDIRECT_HOSTS set)", () => {
   it("accepts https redirect URIs on claude.ai and claude.com only", () => {
     expect(redirectAllowed("https://claude.ai/api/mcp/auth_callback", hosts)).toBe(true);
     expect(redirectAllowed("https://claude.com/api/mcp/auth_callback", hosts)).toBe(true);
     expect(redirectAllowed("https://CLAUDE.AI/api/mcp/auth_callback", hosts)).toBe(true);
     for (const bad of [
-      "http://claude.ai/api/mcp/auth_callback",       // not https
+      "http://claude.ai/api/mcp/auth_callback",       // not https (and not loopback)
       "https://evil.com/cb",
       "https://claude.ai.evil.com/cb",                  // suffix trick
       "https://evil.com/?x=https://claude.ai/",

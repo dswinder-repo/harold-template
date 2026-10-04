@@ -12,5 +12,5 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["server.ts", "local.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["server.ts", "local.ts", "src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
 }

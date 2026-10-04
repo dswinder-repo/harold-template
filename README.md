@@ -131,8 +131,8 @@ tools/
   harold-mcp/              MCP server (14 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
   harold-crm/              optional CRM web app (Next.js + Supabase) on the same database; deploy with root directory
                            tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-006 add the app's tables
-  harold-connector/        optional hosted MCP server (Vercel or any Node host): reach the knowledge base and
-                           the CRM from any chat app that supports remote MCP connectors, on any device
+  harold-connector/        hosted MCP server (Vercel or any Node host): reach the knowledge base and the CRM
+                           from any MCP client (chat apps, coding agents, scheduled jobs), on any device
   harold-plugin/           Cowork plugin: the same hooks + a "boot Harold" skill
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
@@ -191,7 +191,7 @@ The job ends with `bin/harold housekeeping finish`, which checks that the job wa
 
 ## From any chat app: the hosted connector
 
-Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the optional connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a custom connector in any chat app that supports remote MCP servers; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and uses Claude as the example. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed.
+Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed.
 
 ## Keeping it private
 

@@ -195,7 +195,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ## System Rules
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
-- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the optional hosted MCP server that reaches the knowledge base and CRM from any chat app; boot and close do not run there), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
+- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the hosted MCP server that reaches the knowledge base and CRM from any MCP client; boot and close do not run there), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
 - **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.

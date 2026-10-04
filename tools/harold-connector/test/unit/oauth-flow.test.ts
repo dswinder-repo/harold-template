@@ -142,7 +142,7 @@ describe("OAuth flow (mocked GitHub)", () => {
     expect(r.status).toBe(401);
   });
 
-  it("rejects a non-claude redirect URI at registration and at authorize", async () => {
+  it("with ALLOWED_REDIRECT_HOSTS set, rejects a redirect URI on another host at registration and at authorize", async () => {
     const { as, metadata, clientInformation } = await discoverAndRegister();
     await expect(registerClient(as, { metadata, fetchFn: appFetch, clientMetadata: { redirect_uris: ["https://evil.example/cb"], client_name: "x" } })).rejects.toThrow();
     // A registered client asking to send the code somewhere else gets a 400 page, never a redirect.
@@ -198,7 +198,7 @@ describe("OAuth flow (mocked GitHub)", () => {
     expect(r.status).toBe(400);
   });
 
-  it("accepts a Client ID Metadata Document client_id on an allowed host, and nothing else", async () => {
+  it("with ALLOWED_REDIRECT_HOSTS set, accepts a Client ID Metadata Document client_id on an allowed host only", async () => {
     const CIMD = "https://claude.ai/oauth/mcp-client-metadata.json";
     const docs: Record<string, unknown> = {
       [CIMD]: { client_id: CIMD, client_name: "Claude", redirect_uris: [REDIRECT] },
@@ -209,7 +209,7 @@ describe("OAuth flow (mocked GitHub)", () => {
       if (url in docs) return new Response(JSON.stringify(docs[url]), { headers: { "content-type": "application/json" } });
       return gh.fetch(u, init);
     };
-    app = createApp({ fetch: wrapped, tools: { repoFor: () => { throw new Error("unused"); }, supabase: () => null } });
+    app = createApp({ fetch: wrapped, tools: { repoFor: () => { throw new Error("unused"); }, supabase: () => null }, lookup: async () => ["160.79.104.10"] });
     const ch = pkceChallenge("c".repeat(50));
     const go = (cid: string) => appFetch(`${BASE}/authorize?response_type=code&client_id=${encodeURIComponent(cid)}&redirect_uri=${encodeURIComponent(REDIRECT)}&code_challenge=${ch}&code_challenge_method=S256&state=s`);
     expect((await go(CIMD)).status).toBe(200);
