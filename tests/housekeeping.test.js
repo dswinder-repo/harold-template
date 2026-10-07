@@ -24,7 +24,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SRC = path.resolve(__dirname, '..');
-const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', 'harold-connector']);
+const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '.last-boot', 'harold-connector']);
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
@@ -36,14 +36,15 @@ function workspace({ cloud = true } = {}) {
   fs.cpSync(SRC, ws, { recursive: true, filter: s => !SKIP.has(path.basename(s)) && !/\/harold\/active-sessions\/[^/]+\.json$/.test(s) && !/\/harold\/briefs\/\d{4}-\d{2}-\d{2}\.md$/.test(s) && !/\/harold\/briefs\/housekeeping-notes\.md$/.test(s) });
   const cfg = path.join(ws, 'harold/housekeeping.json');
   fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, 'utf8')), cloud }, null, 2));
-  fs.writeFileSync(path.join(ws, 'harold/trigger-log.jsonl'), '');
+  // An install that has been running for a while (an empty log would mean "before the first boot": nothing due).
+  fs.writeFileSync(path.join(ws, 'harold/trigger-log.jsonl'), JSON.stringify({ id: 'harold-start', status: 'ran', reason: 'test', date: '2026-01-01' }) + '\n');
   const g = (...a) => spawnSync('git', a, { cwd: ws, encoding: 'utf8' });
   g('init', '-q'); g('config', 'user.email', 'test@example.com'); g('config', 'user.name', 'Test');
   g('add', '-A'); g('commit', '-qm', 'init');
   return { dir, ws, home, git: g };
 }
 
-const STRIP = ['HAROLD_TZ', 'HAROLD_NOW', 'HAROLD_ROOT', 'HAROLD_SESSION_ID', 'HAROLD_HOUSEKEEPING_JOB', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'GITHUB_OUTPUT', 'HAROLD_DETACHED'];
+const STRIP = ['HAROLD_JOB', 'HAROLD_TZ', 'HAROLD_NOW', 'HAROLD_ROOT', 'HAROLD_SESSION_ID', 'HAROLD_HOUSEKEEPING_JOB', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'GITHUB_OUTPUT', 'HAROLD_DETACHED'];
 function harold(w, args, env = {}) {
   const out = path.join(w.dir, `gh-output-${Math.random().toString(36).slice(2)}`);
   const clean = { ...process.env };
@@ -234,6 +235,38 @@ test('close inside a cloud job checks the job, not session filing, and saves it 
   const last = hook({ session_id: 'hk', hook_event_name: 'Stop', stop_hook_active: true });
   assert.match(last.stdout, /systemMessage.*ended unfinished after 3 close checks/);
   assert.match(fs.readFileSync(path.join(y.ws, 'harold/briefs/housekeeping-notes.md'), 'utf8'), /weekly-scan: the unattended job ended unfinished/);
+});
+
+test('a scheduled job on a machine that is not a cloud runner: close runs in job mode while the job runs (review X-04)', () => {
+  const env = { HAROLD_TZ: 'America/Chicago', HAROLD_NOW: '2026-10-05T07:00:00', HAROLD_SESSION_ID: 'laptop-job' };  // a Monday, after 06:30
+  // The morning brief, run by cron on a laptop or server: its marker shows it running.
+  const x = workspace();
+  assert.match(harold(x, ['brief', 'start'], env).out, /^START 2026-10-05 — runner: local/);
+  const blocked = harold(x, ['close'], env);
+  assert.strictEqual(blocked.code, 2, blocked.out + blocked.err);
+  assert.match(blocked.err, /HAROLD CLOSE \(scheduled brief job 2026-10-05\): not finished/);
+  assert.doesNotMatch(blocked.err, /knowledge file\(s\) changed|no session file/, 'job mode, not session filing');
+  fs.writeFileSync(path.join(x.ws, 'harold/briefs/2026-10-05.md'), '---\ndate: 2026-10-05\n---\n\n# Brief\n\n' + 'A line of the brief.\n'.repeat(120));
+  assert.match(harold(x, ['brief', 'finish'], env).out, /^FINISH ok/);
+  const ok = harold(x, ['close'], env);
+  assert.strictEqual(ok.code, 0, ok.out + ok.err);
+  assert.match(ok.out, /brief job 2026-10-05 finished/, "the job agent's own last close, just after finishing");
+  // Housekeeping the same way.
+  const h = workspace();
+  assert.match(harold(h, ['housekeeping', 'start', 'weekly-scan', '--force'], env).out, /^START weekly-scan/);
+  const hb = harold(h, ['close'], env);
+  assert.strictEqual(hb.code, 2, hb.out + hb.err);
+  assert.match(hb.err, /HAROLD CLOSE \(housekeeping job weekly-scan 2026-10-05\): not finished/);
+  // A not-due gate run did no work: there, a session's close stays a session's close, unless the scheduler says
+  // it runs only jobs (HAROLD_JOB=1, as GitHub Actions and routines are taken to).
+  const y = workspace();
+  assert.match(harold(y, ['brief', 'start'], { ...env, HAROLD_NOW: '2026-10-05T06:10:00' }).out, /^NOT DUE/);
+  const session = harold(y, ['close'], { ...env, HAROLD_NOW: '2026-10-05T06:12:00' });
+  assert.strictEqual(session.code, 2);
+  assert.match(session.err, /no session file found/, 'session filing applies');
+  const job = harold(y, ['close'], { ...env, HAROLD_NOW: '2026-10-05T06:12:00', HAROLD_JOB: '1' });
+  assert.strictEqual(job.code, 0, job.out + job.err);
+  assert.match(job.out, /brief job 2026-10-05 not due/);
 });
 
 test('size budgets: a startup file over budget is a warning; housekeeping.json can override a budget', () => {
