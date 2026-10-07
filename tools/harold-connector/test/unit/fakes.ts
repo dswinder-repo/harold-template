@@ -13,6 +13,7 @@ export class FakeGithub {
   conflictsToInject = 0;                      // next N PUTs answer 409 after sneaking in a concurrent write
   concurrentWrite?: (path: string, current: string | undefined) => string;
   calls: string[] = [];
+  searchHits: string[] = [];                  // paths /search/code answers with (GitHub code search)
 
   sha(s: string) { return createHash("sha1").update(s).digest("hex"); }
 
@@ -61,7 +62,7 @@ export class FakeGithub {
       }
     }
     if (url.pathname.match(/\/git\/trees\//)) return res(200, { tree: [...this.files.keys()].map(p => ({ path: p, type: "blob", size: this.files.get(p)!.length })) });
-    if (url.pathname === "/search/code") return res(200, { items: [] });
+    if (url.pathname === "/search/code") return res(200, { items: this.searchHits.map(path => ({ path, text_matches: [] })) });
     return res(404, { message: `fake: no route ${method} ${url.pathname}` });
   };
 }
@@ -81,7 +82,7 @@ function like(pattern: string): RegExp {
 }
 
 export class FakeSupabase {
-  tables: Record<string, Row[]> = { contacts: [], contact_categories: [], contact_pipelines: [], stage_changes: [], interactions: [], tasks: [] };
+  tables: Record<string, Row[]> = { contacts: [], contact_categories: [], contact_pipelines: [], pipeline_stages: [], stage_changes: [], interactions: [], tasks: [] };
   inserts: { table: string; rows: Row[] }[] = [];
   updates: { table: string; values: Row }[] = [];
   private n = 0;
@@ -96,9 +97,16 @@ class Q implements PromiseLike<{ data: unknown; error: null | { message: string 
   private values: Row = {};
   private one: "single" | "maybe" | null = null;
   private lim = Infinity;
+  private off = 0;
+  private embeds: { table: string; cols: string[] }[] = [];
   private selected = false;
   constructor(private db: FakeSupabase, private table: string) {}
-  select(_cols?: string) { this.selected = true; return this; }
+  select(cols?: string) {
+    this.selected = true;
+    // One-to-many embeds from contacts, as PostgREST does: "interactions ( occurred_at, type )".
+    for (const m of (cols || "").matchAll(/(\w+)\s*\(([^)]*)\)/g)) this.embeds.push({ table: m[1], cols: m[2].split(",").map(c => c.trim()).filter(Boolean) });
+    return this;
+  }
   insert(r: Row | Row[]) { this.op = "insert"; this.payload = Array.isArray(r) ? r : [r]; return this; }
   upsert(r: Row | Row[]) { this.op = "upsert"; this.payload = Array.isArray(r) ? r : [r]; return this; }
   update(v: Row) { this.op = "update"; this.values = v; return this; }
@@ -111,6 +119,7 @@ class Q implements PromiseLike<{ data: unknown; error: null | { message: string 
   or(_s: string) { return this; }
   order() { return this; }
   limit(n: number) { this.lim = n; return this; }
+  range(from: number, to: number) { this.off = from; this.lim = to - from + 1; return this; }
   single() { this.one = "single"; return this; }
   maybeSingle() { this.one = "maybe"; return this; }
   then<A, B>(ok?: ((v: { data: unknown; error: null | { message: string } }) => A | PromiseLike<A>) | null, bad?: ((e: unknown) => B | PromiseLike<B>) | null) {
@@ -127,7 +136,16 @@ class Q implements PromiseLike<{ data: unknown; error: null | { message: string 
       rows = t.filter(r => this.filters.every(f => f(r)));
       rows.forEach(r => Object.assign(r, this.values));
       this.db.updates.push({ table: this.table, values: this.values });
-    } else rows = t.filter(r => this.filters.every(f => f(r))).slice(0, this.lim);
+    } else {
+      rows = t.filter(r => this.filters.every(f => f(r))).slice(this.off, this.off + this.lim);
+      if (this.table === "contacts" && this.embeds.length) {
+        rows = rows.map(r => {
+          const e: Row = { ...r };
+          for (const em of this.embeds) e[em.table] = (this.db.tables[em.table] || []).filter(x => x.contact_id === r.id).map(x => Object.fromEntries(em.cols.map(c => [c, x[c] ?? null])));
+          return e;
+        });
+      }
+    }
     if (this.one === "single") return rows.length === 1 ? { data: rows[0], error: null } : { data: null, error: { message: `expected one row, got ${rows.length}` } };
     if (this.one === "maybe") return { data: rows[0] ?? null, error: null };
     void this.selected;

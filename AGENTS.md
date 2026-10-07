@@ -2,7 +2,7 @@
 
 > **This file is the canonical entry point for every harness (any AI tool that can read this file and run a command, with any model), a terminal or a scheduled job.** `CLAUDE.md` at the repo root is a one-line include of this file (`@AGENTS.md`). All working memory, context and system files live in this workspace, versioned in a private git repository ([YOUR GITHUB USER]/[YOUR REPO]).
 >
-> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ` in `~/.harold/env`, e.g. America/Chicago). Everywhere this file says "the operator", it means you.
+> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ`, e.g. America/Chicago: in `~/.harold/env` for sessions, and as a repository variable for the scheduled jobs, which never read that file). Everywhere this file says "the operator", it means you.
 
 ## FIRST INSTRUCTION — run `bin/harold boot`
 
@@ -14,16 +14,31 @@ bin/harold boot
 
 It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit, or output starting `⛔ HAROLD BOOT REFUSED`), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. The operator never types it.
 
-Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Where a harness has lifecycle hooks, boot and close run automatically. The workspace ships ready-made wiring for these, as examples:
+Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Every harness with lifecycle hooks is wired, so boot and close run on their own; these are the files (sources and setup: README, "Every harness with lifecycle hooks is wired"):
 
-| Tool | Hook file | Session start | End of every turn | Session end |
+| Harness | Wiring | Session start → boot | End of every turn → close | Session end → close --final |
 |------|-----------|---------------|-------------------|-------------|
-| Claude Code | `.claude/settings.json` | `SessionStart` → boot | `Stop` → close | `SessionEnd` → close --final |
-| Codex | `.codex/hooks.json` (trust it once with `/hooks`) | `SessionStart` → boot | `Stop` → close | `SessionEnd` → close --final |
-| Cursor | `.cursor/hooks.json` | `sessionStart` → boot | `stop` → close | `sessionEnd` → close --final |
-| Claude desktop app (Cowork) | the Harold plugin (`tools/harold-plugin/`) | `boot-harold` skill + hook | `Stop` → close | `SessionEnd` → close --final |
+| Claude Code | `.claude/settings.json` | `SessionStart` | `Stop` | `SessionEnd` |
+| Claude desktop app (Cowork) | plugin `tools/harold-plugin/` | `boot-harold` skill + `SessionStart` | `Stop` | `SessionEnd` |
+| Codex | `.codex/hooks.json` (trust once with `/hooks`) | `SessionStart` | `Stop` | `SessionEnd` |
+| Cursor | `.cursor/hooks.json` | `sessionStart` | `stop` | `sessionEnd` |
+| Gemini CLI | `.gemini/settings.json` | `SessionStart` | `AfterAgent` | `SessionEnd` |
+| Qwen Code | `.qwen/settings.json` | `SessionStart` | `Stop` | `SessionEnd` |
+| GitHub Copilot CLI | `.github/copilot/settings.json` | `sessionStart` | `agentStop` | `sessionEnd` |
+| Grok Build | `.grok/hooks/harold.json` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| Kimi Code CLI | `tools/harness-hooks/kimi-config.toml`, copied into `~/.kimi/config.toml` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| goose | `.agents/plugins/harold/` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| Hermes Agent | `tools/harness-hooks/hermes-config.yaml`, merged into `~/.hermes/config.yaml` | first `pre_llm_call` | `pre_verify` + `on_session_end` | `on_session_finalize` |
+| Cline | `.clinerules/hooks/` | `TaskStart` | `TaskComplete` (cannot block: the next `TaskStart` lists what is unfiled) | `SessionShutdown` |
+| opencode | plugin `.opencode/plugins/harold.js` | first request of a session | `session.idle` | session deleted or opencode quits |
+| Amp | plugin `.amp/plugins/harold.ts` | first `agent.start` of a thread | `agent.end` | plugin stops |
+| OpenClaw | plugin `tools/openclaw-plugin/` | first `before_prompt_build` | `before_agent_finalize` + `agent_end` | `session_end` |
 
-If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again. To wire another harness's hooks, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
+\* Grok Build, Kimi Code and goose never show session-start hook output to the model. There the hook only registers the session: **run `bin/harold boot` yourself as your first action**. That run prints the context for the same session, and until it has run, close blocks the turn and tells you to.
+
+Checked at the source and found without session or turn hooks: Zed's agent, and Continue CLI (its hook code does not fire session or stop events yet). Not verifiable from a public source, so not wired: Windsurf, Kiro, Antigravity CLI. In those, the fallback below applies.
+
+If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Each command can run in its own shell: boot records the session in `harold/.last-boot` (gitignored), and a close with no session id uses that latest boot as its baseline, so only what changed since the boot counts. Read what close prints: if it lists problems, fix them and run it again. To wire a harness not listed here, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
@@ -116,12 +131,18 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 4. **Check `harold/alerts.md`** — urgent items and time-sensitive flags. **If its `Last updated:` date is more than a day old, say so and rebuild the Current Alerts section from the task manager + `harold/blockers.md` + `harold/events.md` before proceeding.** Alerts is a derived view that must be regenerated from source, never hand-maintained.
 5. **Check `harold/blockers.md`** — active blockers and dependencies
 6. **Load learnings** — boot prints every `critical` entry of `harold/learnings.jsonl`; also read the `warning`/`info` entries matching the current session's project. These are lessons from past corrections. They are binding.
-7. **Search the knowledge base** (`bin/harold search "<query>"`) — pull today's and yesterday's daily notes from `vault/daily/` and search for the people and companies relevant to today's agenda.
+7. **Search the knowledge base** (`bin/harold search "<query>"`) — pull today's and yesterday's daily notes from `vault/daily/` and search for the people and companies relevant to today's agenda, then `bin/harold related` to follow their links.
 8. **Run `playbook/core/pre-flight-verification.md`** before presenting ANY output
 9. **If the morning brief is triggered** → follow `playbook/core/morning-brief.md` EXACTLY (3-step sequence, do not improvise)
 10. **When new intel surfaces** → follow `playbook/core/analyst.md`: apply insights across the knowledge base, don't just mention them
 
-> **On-demand context:** search with `bin/harold search` for people, companies, intel, decisions and meetings. Don't load everything upfront; pull what you need, when you need it. Resolve any project to its folder with `bin/harold where <topic>`.
+> **On-demand context: follow the links.** To answer about a person, company, project or decision:
+> 1. `bin/harold search "<query>"` finds the note (each hit lists its top linked notes);
+> 2. `bin/harold related "<note or topic>"` follows the links 1 hop (`--depth 2` for 2): people ↔ companies ↔ projects ↔ decisions ↔ meetings, with how each is linked and the line where;
+> 3. read only the notes that matter. Never load whole folders;
+> 4. always state staleness and gaps: `related` ends with a `gaps:` line (stale after `HAROLD_STALE_DAYS`, default 30 days; broken links; orphans; no meeting notes). Say them in the answer.
+>
+> `bin/harold backlinks "<note>"` lists everything pointing at a note. Links are `[[wikilinks]]` (by filename, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related` and similar). The graph lives in `harold/search.db` (gitignored, rebuilt by boot, search and close whenever a file changed); `harold/graph.json` is its committed copy (paths, titles, types, dates and links, no note text), rewritten by close, so a surface without the workspace follows the same links through the connector's `harold_related`, which reads that file. Archived notes (`archive/` folders, `*-archive.md`) are indexed and searchable, and never flagged stale. Resolve any project to its folder with `bin/harold where <topic>`.
 
 ---
 
@@ -159,7 +180,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 **Activity selection:** when work spans categories, pick the one that best describes the *primary* output. Frontend/UI code is `design`, not `coding`. Analyzing data or auditing systems is `data`, not `research` (research *finds* information, data *analyzes* it). Messages to external people are `comms`, not `writing`.
 
-**Optional field:** `"artifact": "/absolute/path/to/output/file"` — if the session is producing a viewable output (document, page, image), set this so the Expedition HQ preview panel can show it.
+**Optional field:** `"artifact": "/absolute/path/to/output/file"` — the main output this session is producing, recorded for whoever reads the file. The starter's Expedition HQ page does not display it.
 
 **Cleanup:** `bin/harold boot` and `close` move session files older than 48 hours to `harold/active-sessions/archive/`, so a stuck `"session": true` never shows as live forever. Ended sessions older than 2 hours are hidden by the visualizer.
 
@@ -178,6 +199,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 | **Events** | `harold/events.md` |
 | **Facts & Metrics** | `harold/facts.md` |
 | **Project Map** | `harold/projects.md` (`bin/harold where <topic>`) |
+| **Search index + link graph** | `harold/search.db` (gitignored; `bin/harold search`, `related`, `backlinks`) and its committed copy `harold/graph.json` |
 | **Cross-file cascade rules** | `harold/sync-map.md` |
 | **Lessons** | `harold/learnings.jsonl` (`bin/harold file learning`) |
 | **Scheduled-work log** | `harold/trigger-log.jsonl` (`bin/harold file trigger`) |
@@ -195,13 +217,13 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ## System Rules
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
-- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the optional hosted MCP server that reaches the knowledge base and CRM from any chat app; boot and close do not run there), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
+- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the hosted MCP server you deploy once, which reaches the knowledge base and CRM from any MCP client: a chat app on your phone, a coding agent, a scheduled job; boot and close do not run there), `harold-plugin` (Cowork plugin), `openclaw-plugin` (OpenClaw plugin), `harness-hooks` (user-level hook snippets for Kimi Code and Hermes Agent), `visualizer` (Expedition HQ, local-only).
 - **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
 - **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ`, `HAROLD_BRIEF_TIME` and `HAROLD_NO_LOG_TYPES`. `bin/harold close` refuses to commit anything that looks like a key.
-- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with a ready-made switch for Claude Code, Codex and Cursor, or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
+- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with ready-made presets for Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI, Grok Build, Kimi Code and Qwen Code, a custom command for any other CLI, and the agent's subscription used first wherever there is one; or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
 ## CRM Filing Protocol (MANDATORY — all three, every time)
@@ -210,19 +232,27 @@ For every contact touched, all three happen together. No exceptions. No "I'll do
 
 *The CRM is the operator's own, spanning their whole working life, not an employer's. Each contact has exactly one type, from the operator's own short list (for example: investor, partner, founder, team, other), any number of labels, and a warmth (Hot, Warm, Lukewarm, Cold, or unset). There is one pipeline; every entry in it states its purpose and sits at one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. Nothing is placed in the pipeline automatically.*
 
-1. `harold_log_interaction` — log the touchpoint
-2. `harold_upsert_contact` — update warmth, status, notes on the contact record
-3. Vault people profile — update warmth, `last_updated`, context
+1. **Log the interaction** with the CRM tool: `crm_log_interaction` on the connector, `harold_log_interaction` on harold-mcp
+2. **Update the contact record** (warmth, status, notes): `crm_upsert_contact` on the connector, `harold_upsert_contact` on harold-mcp
+3. **Vault people profile**: update warmth, `last_updated`, context
 
-**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `~/.harold/env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions; for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: `harold_log_interaction`, `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
+Use whichever of the two your harness has; they write the same database. **A write made through the connector:** `bin/harold close` can see CRM writes only when this computer holds the CRM credentials (`~/.harold/env`). Without them, record each connector write so close counts the contact as filed (it is never replayed):
 
-If the CRM is unreachable, queue the work instead of dropping it, and say that you did:
+```bash
+bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","applied":"connector"}'
+```
+
+That is the normal way to work with the connector and no local credentials. The queue below is only for when the CRM cannot be reached at all.
+
+**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `~/.harold/env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions; for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: the CRM tools (`crm_log_interaction`, `harold_log_interaction`), `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
+
+If the CRM is unreachable (no CRM tool works, and no connector), queue the work instead of dropping it, and say that you did:
 
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro call"}}'
 ```
 
-The queue is a fallback, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run with the CRM reachable (wherever that is: any computer, or a cloud job with the credentials), skipping anything already applied and never logging an interaction for a type listed in `HAROLD_NO_LOG_TYPES`. `bin/harold replay --dry-run` shows what would happen.
+The queue is a fallback for outages, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run on a computer that holds the CRM credentials and can reach it (the starter's scheduled jobs, which hold no CRM credentials, and the connector never replay it), skipping anything already applied and never logging an interaction for a type listed in `HAROLD_NO_LOG_TYPES`. `bin/harold replay --dry-run` shows what would happen.
 
 When corrections are made (warmth change, name fix, any contact detail), the CRM contact record is the most important update. Never correct the vault or the task manager and skip the CRM.
 
@@ -290,7 +320,7 @@ These trigger on natural language; no slash prefix needed. They work the same in
 1. **Session Summary** — 3-5 bullets of what was accomplished.
 2. **CRM Sweep** — for EVERY contact mentioned or touched this session:
    - If `HAROLD_NO_LOG_TYPES` is set and the contact's `type` is in it, keep the record current and log no interaction.
-   - For every other contact: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. CRM down → `bin/harold file crm`.
+   - For every other contact: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. Written through the connector with no local credentials → `bin/harold file crm '{…,"applied":"connector"}'`; CRM down → `bin/harold file crm` (queued).
 3. **Vault Daily Note** — create or append to `vault/daily/YYYY-MM-DD-<session-slug>.md` (template: `vault/templates/daily.md`): what was done, contacts touched, files created or modified, CRM actions, pending items for next session.
 4. **Task Check** — update the task manager for anything discussed; create tasks for new action items (every task gets a due date and a project).
 5. **Record scheduled work** — every DUE item from boot: `bin/harold file trigger <id> ran|skipped "<reason>"`.
@@ -308,7 +338,7 @@ These trigger on natural language; no slash prefix needed. They work the same in
 **Triggers:** "status", "what's happening", "where are we", "dashboard", "/status"
 
 1. Read `dashboard/status.md`, `harold/alerts.md` and `harold/blockers.md`
-2. Run `harold_cadence_check` for stale relationships
+2. Check for stale relationships with the CRM tool: `crm_stale` on the connector, `harold_cadence_check` on harold-mcp (the same rule)
 3. Present a concise summary: project status, flags, stale relationships, upcoming deadlines
 
 ### /intake — Contact Intake
@@ -325,4 +355,4 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 ---
 
-*Harold 2.0 starter. Fill in the bracketed placeholders, then delete this line.*
+*Harold 2.1 starter. Fill in the bracketed placeholders, then delete this line.*

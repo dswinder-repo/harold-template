@@ -1,5 +1,7 @@
 # Playbook: Pre-Flight Verification
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Catch wrong names, dates, facts and filing before any output reaches the operator.
 **Trigger:** Before presenting any brief, research, email draft, meeting prep or filing decision; any output with names, dates, facts or recommendations.
 
@@ -22,7 +24,7 @@ Every one of those is cheap to prevent and expensive to repair, because each one
 Before using any person, company, title or event name:
 
 - [ ] **Is it spelled correctly?** Check the vault profile first: `bin/harold search "<name>"`, then `vault/people/` and `vault/companies/`.
-- [ ] **Does the CRM agree?** Look the person up with `harold_search_contacts` / `harold_get_contact`. The CRM record and the vault profile must match on name, title (`role`) and organization (`company`). If they disagree, say so and ask which is right; do not pick one silently.
+- [ ] **Does the CRM agree?** Look the person up with `crm_search_contacts` / `harold_search_contacts` / `crm_get_contact` / `harold_get_contact`. The CRM record and the vault profile must match on name, title (`role`) and organization (`company`). If they disagree, say so and ask which is right; do not pick one silently.
 - [ ] **Do I actually know what this is?** If not, research it before continuing.
 - [ ] **Is it a known contact?** Check `harold/facts.md` and the vault before treating anyone as new.
 - [ ] **Did the input come from transcription or voice?** Names from transcripts are frequently wrong. Verify every one.

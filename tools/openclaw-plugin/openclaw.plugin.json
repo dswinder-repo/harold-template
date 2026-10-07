@@ -1,0 +1,13 @@
+{
+  "id": "harold",
+  "name": "Harold",
+  "description": "Runs bin/harold boot on the first turn of a session, close at the end of every turn, close --final at session end.",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "root": { "type": "string", "description": "Absolute path to the Harold workspace. Default: HAROLD_ROOT, then the agent's workspace folder." }
+    }
+  }
+}

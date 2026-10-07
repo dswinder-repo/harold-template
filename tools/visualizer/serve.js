@@ -4,7 +4,7 @@
  *
  * Serves the visualizer with two session sources:
  *   1. Registered session files in harold/active-sessions/ (detailed activity info)
- *   2. Auto-detected Claude Code JSONL logs (safety net fallback)
+ *   2. Claude Code's local JSONL session logs, when present (a fallback for that one harness)
  *
  * The JSONL auto-detection ensures active sessions ALWAYS appear on the
  * dashboard, even if the session forgets to write a registered file.
@@ -16,8 +16,9 @@
  *
  * Then open http://localhost:3210 in your browser.
  *
- * Local-only by design: it listens on 127.0.0.1 only and sends no CORS headers, because
- * /api/preview-file can read files in your workspace. Do not expose the port.
+ * Local-only by design: it listens on 127.0.0.1 only and sends no CORS headers. Do not expose the port.
+ * The page shows sessions only: there is no artifact preview and no clean-up button. Session files older
+ * than 48 hours are archived by bin/harold boot and close; the page hides ended sessions after 2 hours.
  * Zero dependencies (Node 18+).
  */
 
@@ -31,7 +32,7 @@ const { exec } = require('child_process');
 // --- Config ---
 const args = process.argv.slice(2);
 const PORT = getArg('--port', 3210);
-const HOST = '127.0.0.1'; // never 0.0.0.0: the preview endpoint serves workspace files
+const HOST = '127.0.0.1'; // never 0.0.0.0: local-only
 const SESSIONS_DIR = getArg('--sessions',
   path.resolve(__dirname, '..', '..', 'harold', 'active-sessions')
 );
@@ -92,18 +93,8 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/api/git/status') {
     return handleGit(res, 'git status --short');
   }
-  // Preview file serving — serves local HTML/images for the live preview panel
-  if (req.method === 'GET' && req.url && req.url.startsWith('/api/preview-candidates')) {
-    return handlePreviewCandidates(req, res);
-  }
-  if (req.method === 'GET' && req.url && req.url.startsWith('/api/preview-file')) {
-    return handlePreviewFile(req, res);
-  }
   if (req.url === '/' || req.url === '/index.html') {
     return serveFile(res, path.join(__dirname, 'index.html'), 'text/html');
-  }
-  if (req.method === 'POST' && req.url === '/api/cleanup') {
-    return cleanupStaleSessions(req, res);
   }
   if (req.method === 'DELETE' && req.url && req.url.startsWith('/api/sessions/')) {
     return deleteSession(req, res);
@@ -452,54 +443,6 @@ function toolCallDescription(name, input) {
 }
 
 /**
- * POST /api/cleanup — Remove stale/ended session files.
- * Deletes any JSON file in active-sessions/ where session===false or mtime > 2h.
- */
-function cleanupStaleSessions(req, res) {
-  fs.readdir(SESSIONS_DIR, (err, files) => {
-    if (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Cannot read sessions dir' }));
-      return;
-    }
-    const jsonFiles = files.filter(f => f.endsWith('.json'));
-    const removed = [];
-    let pending = jsonFiles.length;
-    if (pending === 0) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ removed: [] }));
-      return;
-    }
-    jsonFiles.forEach(file => {
-      const filePath = path.join(SESSIONS_DIR, file);
-      fs.stat(filePath, (statErr, stats) => {
-        fs.readFile(filePath, 'utf8', (readErr, data) => {
-          let shouldRemove = false;
-          if (!readErr) {
-            try {
-              const parsed = JSON.parse(data);
-              const age = stats ? Date.now() - stats.mtime.getTime() : Infinity;
-              // Remove if session ended or file is older than retire threshold
-              if (parsed.session === false || age > RETIRE_AFTER_MS) {
-                shouldRemove = true;
-              }
-            } catch (e) { shouldRemove = true; /* malformed */ }
-          }
-          if (shouldRemove) {
-            fs.unlink(filePath, () => {});
-            removed.push(file);
-          }
-          if (--pending === 0) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ removed }));
-          }
-        });
-      });
-    });
-  });
-}
-
-/**
  * DELETE /api/sessions/:name — Remove a specific session file.
  */
 function deleteSession(req, res) {
@@ -596,131 +539,6 @@ function pruneHistory() {
   });
 }
 
-// --- Preview candidates ---
-// Returns session-declared artifacts only.
-// Only artifacts explicitly set by active sessions appear here.
-// No auto-detection of dev servers — running servers don't mean active work.
-let _previewCandidatesCache = null;
-let _previewCandidatesCacheTime = 0;
-const PREVIEW_CACHE_TTL = 10000; // 10 seconds
-
-function detectFileType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  const typeMap = {
-    '.html': 'html', '.htm': 'html',
-    '.md': 'markdown', '.markdown': 'markdown',
-    '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.gif': 'image', '.svg': 'image', '.webp': 'image',
-    '.pdf': 'pdf',
-    '.docx': 'docx', '.doc': 'docx',
-    '.xlsx': 'xlsx', '.xls': 'xlsx',
-    '.pptx': 'pptx',
-    '.js': 'code', '.ts': 'code', '.tsx': 'code', '.jsx': 'code',
-    '.py': 'code', '.rs': 'code', '.go': 'code', '.rb': 'code',
-    '.json': 'code', '.css': 'code', '.sh': 'code',
-  };
-  return typeMap[ext] || 'code';
-}
-
-function handlePreviewCandidates(req, res) {
-  const now = Date.now();
-  if (_previewCandidatesCache && now - _previewCandidatesCacheTime < PREVIEW_CACHE_TTL) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(_previewCandidatesCache));
-    return;
-  }
-
-  const artifacts = [];
-
-  fs.readdir(SESSIONS_DIR, (err, files) => {
-    if (err) { respond(); return; }
-    const jsonFiles = files.filter(f => f.endsWith('.json'));
-    let pending = jsonFiles.length;
-    if (pending === 0) { respond(); return; }
-
-    jsonFiles.forEach(file => {
-      const filePath = path.join(SESSIONS_DIR, file);
-      fs.readFile(filePath, 'utf8', (readErr, data) => {
-        if (!readErr) {
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.session !== false && parsed.artifact) {
-              const sessionName = file.replace(/\.json$/, '').replace(/-/g, ' ');
-              artifacts.push({
-                session: sessionName,
-                path: parsed.artifact,
-                type: detectFileType(parsed.artifact),
-                filename: path.basename(parsed.artifact)
-              });
-            }
-          } catch (e) { /* skip */ }
-        }
-        if (--pending === 0) respond();
-      });
-    });
-  });
-
-  function respond() {
-    const result = { artifacts };
-    _previewCandidatesCache = result;
-    _previewCandidatesCacheTime = Date.now();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(result));
-  }
-}
-
-// --- Preview file serving ---
-// Safely serves local files for the live preview iframe.
-// Only allows files under the workspace root (REPO_DIR) to prevent path traversal.
-function handlePreviewFile(req, res) {
-  const url = new URL(req.url, 'http://localhost');
-  const filePath = url.searchParams.get('path');
-  if (!filePath) {
-    res.writeHead(400, { 'Content-Type': 'text/plain' });
-    res.end('Missing path parameter');
-    return;
-  }
-  const resolved = path.resolve(filePath);
-  const workspaceRoot = path.resolve(__dirname, '..', '..');
-  // Security: only serve files under the workspace (a sibling folder sharing the prefix does not count)
-  if (resolved !== workspaceRoot && !resolved.startsWith(workspaceRoot + path.sep)) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
-    res.end('Access denied: file outside workspace');
-    return;
-  }
-  const ext = path.extname(resolved).toLowerCase();
-  const mimeTypes = {
-    '.html': 'text/html', '.htm': 'text/html',
-    '.css': 'text/css', '.js': 'application/javascript',
-    '.json': 'application/json', '.svg': 'image/svg+xml',
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
-    '.woff': 'font/woff', '.woff2': 'font/woff2',
-    '.txt': 'text/plain', '.md': 'text/plain',
-    '.pdf': 'application/pdf',
-    '.py': 'text/plain', '.ts': 'text/plain', '.tsx': 'text/plain',
-    '.jsx': 'text/plain', '.rs': 'text/plain', '.go': 'text/plain',
-    '.docx': 'application/octet-stream',
-    '.xlsx': 'application/octet-stream', '.xls': 'application/octet-stream',
-    '.pptx': 'application/octet-stream',
-  };
-  const contentType = mimeTypes[ext] || 'application/octet-stream';
-  fs.readFile(resolved, (err, data) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('File not found');
-      return;
-    }
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.end(data);
-  });
-}
-
-// --- Git endpoints ---
-// NOTE: All git commands are hardcoded strings — no user input is passed to exec.
-// This is safe from command injection.
 const REPO_DIR = path.resolve(__dirname, '..', '..');
 const GIT_MAX_OUTPUT = 4096;
 

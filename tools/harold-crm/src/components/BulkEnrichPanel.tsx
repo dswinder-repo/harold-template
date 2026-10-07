@@ -15,7 +15,6 @@ const ENRICHABLE = [
   { key: 'phone', label: 'Phone' },
   { key: 'website', label: 'Website' },
   { key: 'location', label: 'Location' },
-  { key: 'focus_area', label: 'Focus Area', hint: 'Best effort — may be less accurate' },
 ] as const
 
 type FieldKey = (typeof ENRICHABLE)[number]['key']
@@ -182,11 +181,6 @@ export default function BulkEnrichPanel({ contacts, userId, onClose }: BulkEnric
                           ({missingCounts[f.key]} missing)
                         </span>
                       </span>
-                      {'hint' in f && (
-                        <span style={{ fontSize: 11, color: 'var(--text-faint)', fontStyle: 'italic' }}>
-                          {f.hint}
-                        </span>
-                      )}
                     </label>
                   ))}
                 </div>

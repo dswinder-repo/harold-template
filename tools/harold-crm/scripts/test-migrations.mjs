@@ -112,6 +112,34 @@ check('seven pipeline stages seeded', stages.length === 7, stages.map((s) => s.s
 const { rows: types } = await db.query(`select name from categories order by sort_order`)
 check('five default types seeded', types.length === 5, types.map((t) => t.name).join(', '))
 
+const { rows: focusCols } = await db.query(
+  `select column_name from information_schema.columns where table_schema = 'public' and table_name = 'contacts' and column_name = 'focus_area'`
+)
+check('contacts has no focus_area column (retired)', focusCols.length === 0)
+
+// A database set up before 007, when 001 still created focus_area: the migrations upgrade it.
+{
+  const old = new PGlite()
+  await old.exec(SUPABASE_STUB)
+  try {
+    for (const f of files) {
+      await old.exec(readFileSync(join(dir, f), 'utf8'))
+      if (f.startsWith('001')) await old.exec(`alter table public.contacts add column focus_area text default ''; insert into public.contacts (name, focus_area) values ('Old Example', 'logistics');`)
+      if (f.startsWith('006')) {
+        const { rows } = await old.query(`select count(*)::int as n from information_schema.columns where table_name = 'contacts' and column_name = 'focus_area'`)
+        check('an older database still has focus_area before 007', rows[0].n === 1)
+      }
+    }
+    const { rows } = await old.query(`select count(*)::int as n from information_schema.columns where table_name = 'contacts' and column_name = 'focus_area'`)
+    const body = (await old.query(`select prosrc from pg_proc where proname = 'merge_contacts'`)).rows[0]?.prosrc || ''
+    check('007 drops focus_area from an older database and its merge function', rows[0].n === 0 && !body.includes('focus_area'))
+    check('007 keeps the older database\'s contacts', (await old.query(`select count(*)::int as n from public.contacts where name = 'Old Example'`)).rows[0].n === 1)
+  } catch (e) {
+    check('upgrade an older database through 007', false, e.message)
+  }
+  await old.close()
+}
+
 // ── behaviour ───────────────────────────────────────────────────────────────
 const owner = (await db.query(
   `insert into auth.users (email, raw_user_meta_data) values ('owner@example.com', '{"full_name":"Owner Example"}') returning id`

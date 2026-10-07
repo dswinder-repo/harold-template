@@ -13,6 +13,7 @@ import { frontmatter } from "../../src/text.js";
 import { defaultDeps, TOOL_NAMES } from "../../src/tools.js";
 import type * as crm from "../../src/crm.js";
 import { FakeGithub, FakeSupabase } from "./fakes.js";
+import { graphJson } from "./graph-fixture.js";
 import { OWNER, REPO, setTestEnv } from "./env.js";
 
 const BASE = "https://harold-connector.example.com";
@@ -69,6 +70,46 @@ describe("tool surface (SDK v2 client)", () => {
     expect(ins).toMatch(/the owner's Harold/);
     expect(ins).not.toMatch(/HAROLD_NO_LOG_TYPES/); // empty by default: no refusal line
     expect(client.getServerVersion()?.name).toBe("harold");
+  });
+
+  it("instructions: file without being asked, harold_related first, always state staleness and gaps", async () => {
+    const i = client.getInstructions() || "";
+    expect(i).toMatch(/File what the owner shares without being asked/);
+    expect(i).toMatch(/Before answering about a person, a company, a project or a past decision[^\n]*call harold_related/);
+    expect(i).toMatch(/Always state staleness and gaps/);
+    expect(i).toMatch(/crm_stale/);
+  });
+
+  it("harold_related follows the links from graph.json and ends with the gaps line", async () => {
+    gh.files.set("harold/graph.json", graphJson());
+    const r = await client.callTool({ name: "harold_related", arguments: { query: "Jane Doe" } });
+    expect(r.isError, text(r)).toBeFalsy();
+    expect(text(r)).toMatch(/^Jane Doe · vault\/people\/Jane Doe.md · person · updated 2026-08-01/);
+    expect(text(r)).toMatch(/↔ Acme · vault\/companies\/Acme.md · company · 2026-10-01/);
+    expect(text(r)).toMatch(/\ngaps: Jane Doe: last updated \d+ days ago \(2026-08-01\)/);
+    gh.files.delete("harold/graph.json");
+    const none = await client.callTool({ name: "harold_related", arguments: { query: "Jane Doe" } });
+    expect(none.isError).toBe(true);
+    expect(text(none)).toMatch(/harold\/graph.json is not in/);
+  });
+
+  it("crm_stale lists who has gone quiet, skips HAROLD_NO_LOG_TYPES by type, and writes nothing", async () => {
+    db.tables.pipeline_stages.push({ stage_name: "Reached Out", default_cadence: "weekly" });
+    db.tables.contacts.push(
+      { id: "c-quiet", name: "Quiet Investor", org: "Fund", category: "investor", warmth: "Hot", status: "active" },
+      { id: "c-team2", name: "Team Mate", org: "Us", category: "team", warmth: "Hot", status: "active" },
+    );
+    db.tables.interactions.push({ contact_id: "c-quiet", occurred_at: "2026-01-01T12:00:00Z", type: "call", subject: "intro" });
+    const r = await client.callTool({ name: "crm_stale", arguments: {} });
+    expect(r.isError, text(r)).toBeFalsy();
+    expect(text(r)).toMatch(/\*\*Quiet Investor\*\* \(Fund\) \[Hot\]: last \d+d ago \(2026-01-01, call: intro\); cadence 7d \(Hot\)/);
+    expect(text(r)).toMatch(/\*\*Team Mate\*\*/);                 // no-log is off by default
+    expect(text(r)).toMatch(/Types never checked: other\./);
+    await connect({ HAROLD_NO_LOG_TYPES: "team" });
+    const r2 = await client.callTool({ name: "crm_stale", arguments: {} });
+    expect(text(r2)).not.toMatch(/Team Mate/);
+    expect(text(r2)).toMatch(/Types never checked: other, team\./);
+    expect(db.inserts.length + db.updates.length).toBe(0);
   });
 
   it("instructions mention the no-log types only when the setting is used", async () => {

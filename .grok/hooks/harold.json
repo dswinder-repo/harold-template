@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${GROK_WORKSPACE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" boot --via=grok", "timeout": 60 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${GROK_WORKSPACE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" close --via=grok", "timeout": 240 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${GROK_WORKSPACE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" close --final --via=grok --detach", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

@@ -9,7 +9,7 @@ last_updated: {{date}}
 
 **Type:**
 **Size:**
-**Focus:**
+**What they do:**
 
 ## Context
 <!-- What they do, why they matter to you -->

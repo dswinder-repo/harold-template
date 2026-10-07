@@ -116,6 +116,8 @@ export const SECRET_PATTERNS: RegExp[] = [
   /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/,
   // Added for the connector: GitHub OAuth/app tokens and plain passwords written into a note.
   /gh[ousr]_[A-Za-z0-9]{30,}/,
+  // This connector's own personal access tokens (src/pat.ts).
+  /harold_pat_[A-Za-z0-9_-]{40,}/,
   /\b(?:password|passwd|passcode|pwd)\b\s*(?:is|was|=|:)\s*["'`]?[^\s"'`]{4,}/i,
 ];
 

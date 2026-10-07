@@ -1,5 +1,7 @@
 # Dashboard: Processes & Operating Rules
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 *How Harold operates. Loaded every session. The Context Engine below is always on: playbooks fire on what you say, by meaning, never on exact commands.*
 
 ---
@@ -74,8 +76,8 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 
 1. **Goals:** read `dashboard/status.md` Goals / KPIs; mark each on track, at risk, or missed, with one line of evidence.
 2. **Projects:** for each active entry in `harold/projects.md`, one line: what moved this month, what didn't. Set `status: paused` or `archived` where that is now true.
-3. **Relationships:** run `harold_cadence_check`; list who went stale and decide re-engage or re-rate warmth.
-4. **Pipeline:** `harold_pipeline` with action `list`; close entries that are really dead (`Dormant` with an outcome).
+3. **Relationships:** run `harold_cadence_check` on harold-mcp (on the connector, `crm_stale`); list who went stale and decide re-engage or re-rate warmth.
+4. **Pipeline:** `crm_pipeline` / `harold_pipeline` with action `list`; close entries that are really dead (`Dormant` with an outcome).
 5. **Blockers:** anything open more than 30 days gets a decision: resolve, re-scope, or accept.
 6. **Write it down:** `vault/daily/YYYY-MM-DD-month-end.md` with the above, and update `memory/CLAUDE.md` Current Priority if it changed.
 7. **Record it:** `bin/harold file trigger month-end ran "<one-line summary>"`.
@@ -86,7 +88,7 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 
 - The task manager (Linear by default) owns tasks and due dates. `bin/harold-linear tasks` pulls them (and writes `harold/linear-snapshot.md` for harnesses without the key).
 - Every task has a due date and a project.
-- CRM tasks (`harold_crm_task`) are only for follow-ups tied to one contact.
+- CRM tasks (`crm_task` / `harold_crm_task`) are only for follow-ups tied to one contact.
 
 ---
 

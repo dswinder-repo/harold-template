@@ -25,7 +25,6 @@ export interface Contact {
   warmth: WarmthType
   investor_type: InvestorType
   region: RegionType
-  focus_area: string
   /** Latest call, email, meeting or message. Kept current by a database trigger. */
   last_contacted_at: string | null
   created_by: string | null

@@ -4,6 +4,7 @@
 import { isNoLogType, tzInfo } from "./config.js";
 import { HaroldRepo, GithubError, cleanPath } from "./github.js";
 import { appendLearning, CATEGORIES, SEVERITIES } from "./learnings.js";
+import { criticalLessons, housekeepingNew, morningStep0 } from "./morning.js";
 import { formatWhere, parseProjects } from "./projects.js";
 import { appendUnderHeading, frontmatter, localParts, slugify, truncate, updateFrontmatter } from "./text.js";
 
@@ -27,11 +28,14 @@ function firstLine(text: string): string {
 export async function today(repo: HaroldRepo, now = new Date()): Promise<ToolText> {
   const zone = tzInfo();
   const t = localParts(now, zone.tz);
-  const [brief, alerts, tree] = await Promise.all([
+  const [brief, alerts, tree, lessons, hk] = await Promise.all([
     repo.getText(`harold/briefs/${t.iso}.md`).catch(() => null),
     repo.getText("harold/alerts.md").catch(() => null),
     repo.tree(),
+    repo.getText("harold/learnings.jsonl").catch(() => null),
+    repo.getText("harold/briefs/housekeeping-notes.md").catch(() => null),
   ]);
+  const hkNew = hk ? housekeepingNew(hk.text) : "";
   const dailies = tree.map(f => f.path).filter(p => /^vault\/daily\/\d{4}-\d{2}-\d{2}[^/]*\.md$/.test(p)).sort().reverse().slice(0, 5);
   const firsts = await Promise.all(dailies.map(p => repo.getText(p).then(f => (f ? firstLine(f.text) : "")).catch(() => "")));
   const L: string[] = [
@@ -40,13 +44,22 @@ export async function today(repo: HaroldRepo, now = new Date()): Promise<ToolTex
     ...(zone.warning ? [`Note: ${zone.warning}`] : []),
     "",
     "## Today's morning brief draft",
-    brief ? `harold/briefs/${t.iso}.md\n\n${truncate(brief.text, 40_000, "brief truncated; read the rest with harold_read")}` : `No brief draft for ${t.iso} (harold/briefs/${t.iso}.md does not exist).${["Saturday", "Sunday"].includes(t.weekday) ? " Weekend: none is scheduled." : " The scheduled morning brief is optional; if it is turned on, it may not have run yet."}`,
+    brief ? `harold/briefs/${t.iso}.md\n\n${truncate(brief.text, 35_000, "brief truncated; read the rest with harold_read")}` : `No brief draft for ${t.iso} (harold/briefs/${t.iso}.md does not exist).${["Saturday", "Sunday"].includes(t.weekday) ? " Weekend: none is scheduled." : " The scheduled morning brief is optional; if it is turned on, it may not have run yet."}`,
     "",
     "## Alerts",
-    alerts ? (currentAlerts(alerts.text) ? truncate(currentAlerts(alerts.text), 25_000) : "harold/alerts.md has no Current Alerts section.") : "harold/alerts.md could not be read.",
+    alerts ? (currentAlerts(alerts.text) ? truncate(currentAlerts(alerts.text), 20_000) : "harold/alerts.md has no Current Alerts section.") : "harold/alerts.md could not be read.",
+    "",
+    "## Critical lessons",
+    lessons ? criticalLessons(lessons.text) : "harold/learnings.jsonl could not be read.",
+    "",
+    "## Housekeeping notes",
+    hkNew ? `From harold/briefs/housekeeping-notes.md (under "## New"):\n${hkNew}` : "None waiting.",
     "",
     "## Most recent daily notes",
     ...(dailies.length ? dailies.map((p, i) => `- ${p}${firsts[i] ? ` — ${firsts[i]}` : ""}`) : ["(none)"]),
+    "",
+    "## Starting the day",
+    morningStep0(!!brief),
   ];
   return { text: L.join("\n") };
 }

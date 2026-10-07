@@ -101,8 +101,8 @@ describe("upsert contact", () => {
     expect(r.text).toMatch(/\[type: mentor\]/);
   });
   it("writes only columns that exist in the starter schema", async () => {
-    await crm.upsertContact(sb(), { name: "Col Check", org: "X", email: "c@example.com", region: "Europe", focus_area: "logistics", investor_type: "Angel" });
-    const allowed = new Set(["id", "created_at", "name", "org", "category", "warmth", "status", "priority", "email", "phone", "location", "website", "notes", "region", "focus_area", "investor_type", "updated_at"]);
+    await crm.upsertContact(sb(), { name: "Col Check", org: "X", email: "c@example.com", region: "Europe", investor_type: "Angel" });
+    const allowed = new Set(["id", "created_at", "name", "org", "category", "warmth", "status", "priority", "email", "phone", "location", "website", "notes", "region", "investor_type", "updated_at"]);
     for (const row of db.inserts.filter(i => i.table === "contacts").flatMap(i => i.rows)) for (const k of Object.keys(row)) expect(allowed.has(k), k).toBe(true);
   });
   it("updates the single name match, or the org match among several", async () => {

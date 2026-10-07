@@ -85,7 +85,7 @@ async function comment(key, ident, text) { const issue = await issueId(key, iden
   const key = loadKey();
   if (key && !TEAM) { console.error('LINEAR_TEAM_KEY is not set (your team\'s issue prefix, e.g. ENG). Add it to ~/.harold/env.'); process.exit(2); }
   if (!key) {
-    if (cmd === 'tasks' && fs.existsSync(SNAP)) { const age = Math.round((Date.now() - fs.statSync(SNAP).mtimeMs) / 3600000); console.log(`(no LINEAR_API_KEY in this harness — showing committed snapshot, ${age}h old)\n`); console.log(fs.readFileSync(SNAP, 'utf8')); process.exit(3); }
+    if (cmd === 'tasks' && fs.existsSync(SNAP)) { const snapText = fs.readFileSync(SNAP, 'utf8'); const pulled = snapText.match(/Pulled (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/); const age = Math.round((Date.now() - (pulled ? Date.parse(pulled[1]) : fs.statSync(SNAP).mtimeMs)) / 3600000); console.log(`(no LINEAR_API_KEY in this harness — showing committed snapshot, ${age}h old)\n`); console.log(fs.readFileSync(SNAP, 'utf8')); process.exit(3); }
     console.error('LINEAR_API_KEY not found (~/.harold/env, <root>/.env, or environment)'); process.exit(2);
   }
   try {

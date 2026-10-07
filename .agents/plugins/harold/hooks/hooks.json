@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"${PLUGIN_ROOT}/../../../bin/harold\" boot --via=goose", "timeout": 60 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "\"${PLUGIN_ROOT}/../../../bin/harold\" close --via=goose", "timeout": 240 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "\"${PLUGIN_ROOT}/../../../bin/harold\" close --final --via=goose", "timeout": 240 } ] }
+    ]
+  }
+}

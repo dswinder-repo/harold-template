@@ -1,0 +1,8 @@
+{
+  "name": "harold-openclaw",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Harold for OpenClaw: bin/harold boot on the first turn of a session, close at the end of every turn, close --final at session end",
+  "type": "module",
+  "openclaw": { "extensions": ["./index.js"] }
+}

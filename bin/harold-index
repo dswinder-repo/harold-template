@@ -1,25 +1,60 @@
 #!/usr/bin/env python3
 """
-harold-index — SQLite FTS5 search over Harold's markdown. Replaces the Obsidian Local REST API
-(localhost-only, tied to one desktop app on one computer). No app, no server, no machine dependency: one file, harold/search.db,
-gitignored and rebuilt from the markdown in seconds (bin/harold boot rebuilds it whenever it is stale).
+harold-index — SQLite FTS5 search and a link graph over Harold's markdown. Replaces the Obsidian
+Local REST API (localhost-only, tied to one desktop app on one computer). No app, no server, no machine
+dependency: one file, harold/search.db, gitignored and rebuilt from the markdown in seconds.
 
-  harold-index build            rebuild harold/search.db from scratch
-  harold-index search <query>   FTS5 query (words, "phrases", prefix*, AND/OR/NOT, col:field)
-  harold-index stat             what is indexed
+  harold-index build [--full]          rebuild harold/search.db (reuses rows for unchanged files).
+                                       --full reads every file.
+  harold-index build --if-stale        rebuild only when a file was added, changed or deleted
+  harold-index stale                   print why the index is out of date (nothing when current)
+  harold-index search <query> [--json] FTS5 query (words, "phrases", prefix*, AND/OR/NOT, col:field);
+                                       each hit also lists its top linked notes
+  harold-index related <note|title|topic> [--depth 1|2] [--limit N] [--all] [--json]
+                                       follow the links: neighbours, how they link, gaps
+  harold-index backlinks <note> [--json]   every note that links to <note>
+  harold-index graph-json              write harold/graph.json (compact graph, no bodies) if it changed
+  harold-index stat                    what is indexed
 
 Indexed unit: one row per markdown section (split at headings), with path, title (file H1 or
-filename), heading, tags/category from frontmatter, and body text. Every markdown file under the
-knowledge dirs (vault, harold, memory, dashboard, playbook, raw, plus every `folder:` in
-harold/projects.md) is indexed; node_modules, .git, .claude, .obsidian and archive/ are skipped.
-Called by `bin/harold search`. Python 3.8+, stdlib only.
-"""
-import os, re, sys, sqlite3, json, time
+filename), heading, tags/category from frontmatter, and body text. Every markdown file at the root
+(AGENTS.md, README.md, AGENTS-archive.md, ...) and under the knowledge dirs (vault, harold, memory,
+dashboard, playbook, raw, plus every `folder:` in harold/projects.md) is indexed, archive/ folders
+included; node_modules, .git, .claude, .obsidian and build output are skipped.
 
-ROOT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..'))
-DB = os.path.join(ROOT, 'harold', 'search.db')
+Link graph (same database, same incremental pass):
+  nodes(path, title, type, aliases, last_updated, date_src)   type from folder, else frontmatter tags;
+        last_updated from frontmatter (last_updated|updated|date), else a YYYY-MM-DD filename prefix,
+        else the file's last git commit, else its mtime
+  links(src, target, kind, line)    raw links per file, reused for unchanged files
+  edges(src, dst, kind, line)       links resolved to notes: kind is wikilink | mdlink | frontmatter:<field>
+  broken(src, target, kind, line)   links that resolve to nothing
+[[targets]] resolve by filename, then title, then frontmatter aliases (exact case first, then any case);
+a target with a slash ([[projects/example-project]]) resolves by path suffix. Resolution runs over every link on
+every build, so a new note fixes old broken links in files that did not change.
+
+Settings (environment; bin/harold passes them through from ~/.harold/env): HAROLD_STALE_DAYS (default 30)
+is when a maintained note counts as stale; HAROLD_HUB_DEGREE (default 40) is the link count above which a
+note is a hub and no longer makes its neighbours related; HAROLD_TODAY or HAROLD_TZ set "today".
+
+Called by `bin/harold search|related|backlinks|index` and by boot and close. Python 3.8+, stdlib only.
+"""
+import os, re, sys, sqlite3, json, time, subprocess
+from urllib.parse import unquote
+
+ROOT = DB = GRAPH_JSON = None
+def set_root(root):
+    global ROOT, DB, GRAPH_JSON
+    ROOT = os.path.realpath(root)
+    DB = os.path.join(ROOT, 'harold', 'search.db')
+    GRAPH_JSON = os.path.join(ROOT, 'harold', 'graph.json')
+set_root(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..'))
+
 STANDARD_DIRS = ['vault', 'harold', 'memory', 'dashboard', 'playbook', 'raw']
-SKIP_DIRS = {'node_modules', '.git', '.claude', '.obsidian', 'archive', 'worktrees'}
+# archive/ is indexed on purpose: archived notes stay searchable. Code and build output are not notes.
+SKIP_DIRS = {'node_modules', '.git', '.claude', '.obsidian', 'worktrees', '.next', '.vercel', 'dist', 'coverage'}
+SKIP_FILES = {'search.db'}
+GRAPH_VERSION = '1'
 
 def project_dirs():
     """Every `- folder:` in harold/projects.md, so a newly mapped project is searchable without editing this file."""
@@ -40,14 +75,20 @@ def dirs():
     for d in STANDARD_DIRS + project_dirs():
         if d not in seen: seen.add(d); out.append(d)
     return out
-SKIP_FILES = {'search.db'}
-TOP_FILES = ['AGENTS.md', 'README.md']
+
+def top_files():
+    """Markdown files at the workspace root: AGENTS.md, README.md and any archive beside them."""
+    try: return sorted(f for f in os.listdir(ROOT) if f.endswith('.md') and os.path.isfile(os.path.join(ROOT, f)))
+    except OSError: return []
+
+def stale_days():
+    try: return int(os.environ.get('HAROLD_STALE_DAYS', '30'))
+    except ValueError: return 30
 
 def iter_md():
-    for rel in TOP_FILES:
-        p = os.path.join(ROOT, rel)
-        if os.path.isfile(p): yield rel
-    seen_files = set()
+    seen = set()
+    for rel in top_files():
+        seen.add(rel); yield rel
     for d in dirs():
         base = os.path.join(ROOT, d)
         if not os.path.isdir(base): continue
@@ -56,18 +97,23 @@ def iter_md():
             for f in filenames:
                 if f.endswith('.md') and f not in SKIP_FILES:
                     rel = os.path.relpath(os.path.join(dirpath, f), ROOT)
-                    if rel in seen_files: continue  # a project folder nested inside a standard dir
-                    seen_files.add(rel)
-                    yield rel
+                    if rel in seen: continue  # a project folder nested inside a standard dir
+                    seen.add(rel); yield rel
 
 FM_RE = re.compile(r'^---\r?\n(.*?)\r?\n---\r?\n', re.S)
 def frontmatter(text):
+    """Flat key: value pairs. A block list (key: then '  - item' lines) becomes '[a, b]'."""
     m = FM_RE.match(text)
     if not m: return {}, text
-    fm = {}
+    fm, last, blocks = {}, None, {}
     for line in m.group(1).split('\n'):
         k = re.match(r'^([A-Za-z_][\w-]*):\s*(.*)$', line)
-        if k: fm[k.group(1)] = k.group(2).strip().strip('"\'')
+        if k:
+            last = k.group(1); fm[last] = k.group(2).strip().strip('"\''); continue
+        item = re.match(r'^\s+-\s+(.*)$', line)
+        if item and last is not None and fm[last] in ('', '[]') or item and last in blocks:
+            blocks.setdefault(last, []).append(item.group(1).strip().strip('"\''))
+    for k, items in blocks.items(): fm[k] = '[' + ', '.join(items) + ']'
     return fm, text[m.end():]
 
 def sections(body):
@@ -82,19 +128,269 @@ def sections(body):
             buf.append(line)
     if ''.join(buf).strip(): yield cur_h, '\n'.join(buf)
 
-def build():
+# ───────────────────────── link extraction ─────────────────────────
+WIKI_RE = re.compile(r'(!?)\[\[([^\[\]\n]+?)\]\]')
+MDLINK_RE = re.compile(r'\[[^\]\n]*\]\(<?([^)\s>]+?)>?(?:\s+"[^"]*")?\)')
+DATE_RE = re.compile(r'(\d{4}-\d{2}-\d{2})')
+# frontmatter fields whose values name other notes, with the type a value most likely points at
+LINK_FIELDS = {'company': 'company', 'companies': 'company', 'organization': 'company', 'org': 'company',
+               'project': 'project', 'projects': 'project', 'people': 'person', 'person': 'person',
+               'attendees': 'person', 'participants': 'person', 'contacts': 'person', 'related': None,
+               'superseded_by': 'decision', 'supersedes': 'decision', 'source_log': None, 'parent': None}
+NOT_A_NAME = {'', 'none', 'null', 'n/a', 'na', 'tbd', '-', '—', '~', 'unknown', '...', '…', 'independent', 'self-employed', 'freelance'}
+TYPE_BY_DIR = {'people': 'person', 'companies': 'company', 'projects': 'project', 'decisions': 'decision',
+               'meetings': 'meeting', 'intel': 'intel', 'daily': 'daily', 'priorities': 'priority',
+               'templates': 'template', 'archive': 'archive'}
+TYPE_BY_TAG = {'person': 'person', 'people': 'person', 'company': 'company', 'project': 'project',
+               'decision': 'decision', 'meeting': 'meeting', 'intel': 'intel', 'daily': 'daily'}
+EVENT_TYPES = {'daily', 'meeting', 'archive'}  # dated records and archives, not maintained notes: never flagged stale
+ENTITY_TYPES = {'person', 'company', 'project', 'decision', 'intel'}
+
+def context(line, n=160):
+    s = ' '.join(line.split())
+    return s if len(s) <= n else s[:n - 1] + '…'
+
+def wiki_target(inner):
+    """'Target#Heading|Alias' → 'Target' ('' for a same-note heading link or a non-note embed)."""
+    inner = inner.replace('\\|', '|')
+    t = inner.split('|', 1)[0].split('#', 1)[0].strip().rstrip('\\').strip()
+    if not t or '{{' in t or t.strip('.…') == '': return ''
+    ext = os.path.splitext(t)[1].lower()
+    if ext == '.md': t = t[:-3]
+    elif ext and re.fullmatch(r'\.[a-z0-9]{2,5}', ext) and ext not in ('.co', '.io', '.ai'): return ''  # image/pdf embed
+    return t
+
+def strip_yaml_comment(v):
+    if v.startswith('#'): return ''
+    return re.sub(r'\s+#(?!\S*\]\]).*$', '', v).strip()
+
+def fm_items(v):
+    v = strip_yaml_comment(v)
+    if '[[' in v:
+        return [t for t in (wiki_target(m.group(2)) for m in WIKI_RE.finditer(v)) if t]
+    v = v.strip()
+    if v.startswith('[') and v.endswith(']'): v = v[1:-1]
+    out = []
+    for it in v.split(','):
+        it = it.strip().strip('"\'').strip()
+        if it.lower() not in NOT_A_NAME: out.append(it)
+    return out
+
+def extract_links(rel, text, fm):
+    """[(target, kind, line)] for one file. Targets are raw (resolved later, across the whole index)."""
+    if rel.startswith('vault/templates/'): return []
+    out = []
+    m = FM_RE.match(text)
+    if m:
+        for line in m.group(1).split('\n'):
+            k = re.match(r'^([A-Za-z_][\w-]*):', line)
+            if k and k.group(1).lower() in LINK_FIELDS:
+                for t in fm_items(fm.get(k.group(1), '')):
+                    out.append((t, 'frontmatter:' + k.group(1).lower(), context(f'{k.group(1)}: {fm.get(k.group(1), "")}')))
+        body = text[m.end():]
+    else:
+        body = text
+    body = re.sub(r'<!--.*?-->', lambda mm: '\n' * mm.group(0).count('\n'), body, flags=re.S)
+    fence = False
+    for line in body.split('\n'):
+        if re.match(r'^\s*(```|~~~)', line): fence = not fence; continue
+        if fence or '[' not in line: continue
+        line = re.sub(r'`[^`\n]*`', '', line)  # `[[example]]` in inline code is documentation, not a link
+        for w in WIKI_RE.finditer(line):
+            t = wiki_target(w.group(2))
+            if t: out.append((t, 'wikilink', context(line)))
+        for md in MDLINK_RE.finditer(line):
+            href = md.group(1)
+            if re.match(r'^[a-z][a-z0-9+.-]*:', href, re.I): continue  # http:, mailto:, obsidian:
+            href = unquote(href.split('#', 1)[0])
+            if href.lower().endswith('.md'): out.append((href, 'mdlink', context(line)))
+    return out
+
+def node_meta(rel, fm, title):
+    parts = rel.split('/')
+    if 'archive' in parts[:-1] or rel.endswith('-archive.md'): typ = 'archive'  # archived: searchable, never stale
+    else: typ = TYPE_BY_DIR.get(parts[1]) if parts[0] == 'vault' and len(parts) > 2 else None
+    if not typ:
+        tags = [t.strip().strip('"\'').lower() for t in fm.get('tags', '').strip('[]').split(',')]
+        typ = next((TYPE_BY_TAG[t] for t in tags if t in TYPE_BY_TAG), None)
+    if not typ: typ = parts[0] if len(parts) > 1 else 'root'
+    aliases = fm_items(fm.get('aliases', '')) if fm.get('aliases') else []
+    if fm.get('name') and fm['name'].lower() != title.lower(): aliases.append(fm['name'])
+    date, src = '', ''
+    for k in ('last_updated', 'updated', 'date'):
+        d = DATE_RE.search(fm.get(k, '') or '')
+        if d: date, src = d.group(1), 'frontmatter'; break
+    if not date:
+        d = re.match(r'^(\d{4}-\d{2}-\d{2})', os.path.basename(rel))
+        if d: date, src = d.group(1), 'filename'
+    return typ, aliases, date, src
+
+def git_dates(paths):
+    """{path: YYYY-MM-DD of its last commit} for tracked, unmodified files. {} when ROOT is not a git repo."""
+    if not paths: return {}
+    try:
+        st = subprocess.run(['git', '-C', ROOT, 'status', '--porcelain', '-z', '--untracked-files=all', '--', *dirs(), *top_files()],
+                            capture_output=True, text=True, timeout=30)
+        if st.returncode != 0: return {}
+        dirty = {e[3:] for e in st.stdout.split('\0') if len(e) > 3}
+        want = [p for p in paths if p not in dirty]
+        if not want: return {}
+        lg = subprocess.run(['git', '-C', ROOT, '-c', 'core.quotepath=off', 'log', '--format=%x01%cs', '--name-only', '--no-renames', '--', *want],
+                            capture_output=True, text=True, timeout=60)
+        if lg.returncode != 0: return {}
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out, cur, wanted = {}, '', set(want)
+    for line in lg.stdout.split('\n'):
+        if line.startswith('\x01'): cur = line[1:].strip(); continue
+        if line and line in wanted and line not in out: out[line] = cur
+    return out
+
+# ───────────────────────── resolution ─────────────────────────
+class Resolver:
+    def __init__(self, nodes):
+        """nodes: {path: (title, type, aliases_list)}"""
+        self.nodes = nodes
+        self.exact, self.lower = {}, {}
+        self.pathkeys = {}
+        for p, (title, typ, aliases) in nodes.items():
+            stem = os.path.splitext(os.path.basename(p))[0]
+            for rank, names in ((0, [stem]), (1, [title]), (2, aliases)):
+                for nm in names:
+                    if not nm: continue
+                    nm = ' '.join(nm.split())
+                    self.exact.setdefault((rank, nm), []).append(p)
+                    self.lower.setdefault((rank, nm.lower()), []).append(p)
+            self.pathkeys[os.path.splitext(p)[0].lower()] = p
+
+    def pick(self, cands, src, hint):
+        def key(p):
+            return (0 if hint and self.nodes[p][1] == hint else 1,
+                    1 if self.nodes[p][1] == 'archive' else 0,  # a live note beats its archived namesake
+                    0 if p.startswith('vault/') else 1,
+                    0 if src and p.split('/')[0] == src.split('/')[0] else 1,
+                    len(p), p)
+        return sorted(set(cands), key=key)[0]
+
+    def resolve_name(self, t, src=None, hint=None):
+        t = ' '.join(t.strip().split())
+        if not t: return None
+        if '/' in t:
+            k = t.lower().lstrip('./')
+            if k.endswith('.md'): k = k[:-3]
+            for cand in (k, 'vault/' + k):
+                if cand in self.pathkeys: return self.pathkeys[cand]
+            suf = [p for pk, p in self.pathkeys.items() if pk.endswith('/' + k)]
+            if suf: return self.pick(suf, src, hint)
+            t = t.rsplit('/', 1)[1]
+        for table, key in ((self.exact, t), (self.lower, t.lower())):
+            for rank in (0, 1, 2):
+                c = table.get((rank, key))
+                if c: return self.pick(c, src, hint)
+        return None
+
+    def resolve(self, src, target, kind):
+        """→ (dst path or None). mdlink: relative to src, then to root; existing non-indexed files count."""
+        if kind == 'mdlink':
+            for base in (os.path.dirname(src), ''):
+                p = os.path.normpath(os.path.join(base, target)) if not target.startswith('/') else target.lstrip('/')
+                if p.startswith('..'): continue
+                if p in self.nodes: return p
+                if os.path.isfile(os.path.join(ROOT, p)): return p
+            return None
+        hint = LINK_FIELDS.get(kind.split(':', 1)[1]) if kind.startswith('frontmatter:') else None
+        d = self.resolve_name(target, src, hint)
+        if d or not kind.startswith('frontmatter:'): return d
+        # frontmatter values are free text: "ACME (Acme Corporation)", "A / B"
+        for alt in [re.sub(r'\s*\(.*?\)\s*', ' ', target).strip(), *re.findall(r'\((.*?)\)', target), *[x.strip() for x in target.split(' / ')]]:
+            if alt and alt != target:
+                d = self.resolve_name(alt, src, hint)
+                if d: return d
+        return None
+
+def resolve_all(con):
+    nodes = {p: (t, ty, json.loads(a or '[]')) for p, t, ty, a in con.execute('SELECT path, title, type, aliases FROM nodes')}
+    r = Resolver(nodes)
+    seen = set()
+    con.execute('DELETE FROM edges'); con.execute('DELETE FROM broken')
+    for src, target, kind, line in con.execute('SELECT src, target, kind, line FROM links ORDER BY rowid').fetchall():
+        dst = r.resolve(src, target, kind)
+        if dst is None:
+            con.execute('INSERT INTO broken VALUES (?,?,?,?)', (src, target, kind, line)); continue
+        if dst == src or (src, dst, kind) in seen: continue
+        seen.add((src, dst, kind))
+        con.execute('INSERT INTO edges VALUES (?,?,?,?)', (src, dst, kind, line))
+
+# ───────────────────────── build ─────────────────────────
+# Incremental: a file whose mtime and size match the previous index reuses its rows (text, node, raw
+# links); only new and changed files are read. Link resolution always runs over everything.
+def previous_index():
+    """{path: (mtime, bytes)} from the current search.db, or {} if there is none, it is unreadable,
+    or it predates the link graph (then every file is read once so nodes and links exist)."""
+    if not os.path.exists(DB): return {}
+    try:
+        con = sqlite3.connect(f'file:{DB}?mode=ro', uri=True)
+        try:
+            meta = dict(con.execute('SELECT k, v FROM meta').fetchall())
+            if meta.get('graph') != GRAPH_VERSION: return {}
+            return {p: (m, b) for p, m, b in con.execute('SELECT path, mtime, bytes FROM files')}
+        finally: con.close()
+    except sqlite3.Error:
+        return {}
+
+def stale_reason():
+    """'' when harold/search.db matches the files on disk; otherwise why not. Costs one stat per file."""
+    if not os.path.exists(DB): return 'missing'
+    old = previous_index()
+    if not old: return 'stale (built before the link graph)'
+    seen, changed = set(), 0
+    for rel in iter_md():
+        seen.add(rel)
+        try: st = os.stat(os.path.join(ROOT, rel))
+        except OSError: continue
+        if old.get(rel) != (st.st_mtime, st.st_size): changed += 1
+    gone = len(set(old) - seen)
+    if changed or gone:
+        return 'stale (' + ', '.join(x for x in [f'{changed} new or changed' if changed else '', f'{gone} deleted' if gone else ''] if x) + ')'
+    return ''
+
+def clean_tmp():
+    """A build killed mid-way leaves search.db.tmp* behind; clear any older than ten minutes."""
+    d, base = os.path.dirname(DB), os.path.basename(DB) + '.tmp'
+    if not os.path.isdir(d): return
+    for f in os.listdir(d):
+        p = os.path.join(d, f)
+        try:
+            if f.startswith(base) and time.time() - os.path.getmtime(p) > 600: os.remove(p)
+        except OSError: pass
+
+def build(full=False, quiet=False):
     t0 = time.time()
-    tmp = DB + '.tmp'
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    clean_tmp()
+    old = {} if full else previous_index()
+    tmp = f'{DB}.tmp-{os.getpid()}'  # per-process, so two sessions building at once cannot collide
     if os.path.exists(tmp): os.remove(tmp)
     con = sqlite3.connect(tmp)
     con.executescript('''
       CREATE TABLE files(path TEXT PRIMARY KEY, title TEXT, tags TEXT, category TEXT, mtime REAL, bytes INT);
       CREATE VIRTUAL TABLE sections USING fts5(path UNINDEXED, title, heading, tags, body, tokenize='porter unicode61');
       CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT);
+      CREATE TABLE nodes(path TEXT PRIMARY KEY, title TEXT, type TEXT, aliases TEXT, last_updated TEXT, date_src TEXT);
+      CREATE TABLE links(src TEXT, target TEXT, kind TEXT, line TEXT);
+      CREATE TABLE edges(src TEXT, dst TEXT, kind TEXT, line TEXT);
+      CREATE TABLE broken(src TEXT, target TEXT, kind TEXT, line TEXT);
+      CREATE TEMP TABLE reuse(path TEXT PRIMARY KEY);
     ''')
-    nfiles = nsec = 0
+    nread = 0
+    undated = {}
     for rel in iter_md():
         p = os.path.join(ROOT, rel)
+        try: st = os.stat(p)
+        except OSError as e:
+            print(f'skip {rel}: {e}', file=sys.stderr); continue
+        if old.get(rel) == (st.st_mtime, st.st_size):
+            con.execute('INSERT INTO reuse VALUES (?)', (rel,)); continue
         try:
             with open(p, 'r', encoding='utf-8', errors='replace') as fh: text = fh.read()
         except OSError as e:
@@ -104,55 +400,426 @@ def build():
         title = (m.group(1).strip() if m else os.path.splitext(os.path.basename(rel))[0])
         tags = fm.get('tags', '')
         cat = fm.get('category', '') or fm.get('type', '')
-        st = os.stat(p)
         con.execute('INSERT INTO files VALUES (?,?,?,?,?,?)', (rel, title, tags, cat, st.st_mtime, st.st_size))
-        nfiles += 1
+        nread += 1
         for heading, chunk in sections(body):
             con.execute('INSERT INTO sections(path,title,heading,tags,body) VALUES (?,?,?,?,?)', (rel, title, heading, f'{tags} {cat}', chunk))
-            nsec += 1
-    con.execute('INSERT INTO meta VALUES (?,?)', ('built', time.strftime('%Y-%m-%dT%H:%M:%S')))
-    con.execute('INSERT INTO meta VALUES (?,?)', ('files', str(nfiles)))
-    con.execute('INSERT INTO meta VALUES (?,?)', ('sections', str(nsec)))
+        typ, aliases, date, dsrc = node_meta(rel, fm, title)
+        if not date: undated[rel] = time.strftime('%Y-%m-%d', time.localtime(st.st_mtime))
+        con.execute('INSERT INTO nodes VALUES (?,?,?,?,?,?)', (rel, title, typ, json.dumps(aliases), date, dsrc))
+        con.executemany('INSERT INTO links VALUES (?,?,?,?)', [(rel, t, k, l) for t, k, l in extract_links(rel, text, fm)])
+    if undated:
+        gd = git_dates(list(undated))
+        for rel, mt in undated.items():
+            con.execute('UPDATE nodes SET last_updated=?, date_src=? WHERE path=?', (gd.get(rel) or mt, 'git' if rel in gd else 'mtime', rel))
+    if old:
+        con.execute('ATTACH DATABASE ? AS old', (DB,))
+        con.execute('INSERT INTO files SELECT * FROM old.files WHERE path IN (SELECT path FROM temp.reuse)')
+        con.execute('INSERT INTO sections(path,title,heading,tags,body) SELECT path,title,heading,tags,body FROM old.sections WHERE path IN (SELECT path FROM temp.reuse)')
+        con.execute('INSERT INTO nodes SELECT * FROM old.nodes WHERE path IN (SELECT path FROM temp.reuse)')
+        con.execute('INSERT INTO links SELECT * FROM old.links WHERE src IN (SELECT path FROM temp.reuse) ORDER BY rowid')
+        con.commit(); con.execute('DETACH DATABASE old')
+    resolve_all(con)
+    con.executescript('''
+      CREATE INDEX edges_src ON edges(src); CREATE INDEX edges_dst ON edges(dst);
+      CREATE INDEX broken_src ON broken(src); CREATE INDEX links_src ON links(src);
+    ''')
+    nfiles = con.execute('SELECT count(*) FROM files').fetchone()[0]
+    nsec = con.execute('SELECT count(*) FROM sections').fetchone()[0]
+    nedges = con.execute('SELECT count(*) FROM edges').fetchone()[0]
+    nbroken = con.execute('SELECT count(*) FROM broken').fetchone()[0]
+    for k, v in (('built', time.strftime('%Y-%m-%dT%H:%M:%S')), ('files', nfiles), ('sections', nsec),
+                 ('graph', GRAPH_VERSION), ('edges', nedges), ('broken', nbroken)):
+        con.execute('INSERT INTO meta VALUES (?,?)', (k, str(v)))
     con.execute("INSERT INTO sections(sections) VALUES('optimize')")
     con.commit(); con.execute('VACUUM'); con.close()
     os.replace(tmp, DB)
-    print(f'indexed {nfiles} files, {nsec} sections → {os.path.relpath(DB, ROOT)} ({os.path.getsize(DB)//1024} KB) in {time.time()-t0:.1f}s')
+    msg = (f'indexed {nfiles} files ({nread} read, {nfiles-nread} reused), {nsec} sections, {nedges} links, {nbroken} broken '
+           f'→ {os.path.relpath(DB, ROOT)} ({os.path.getsize(DB)//1024} KB) in {time.time()-t0:.2f}s')
+    if not quiet: print(msg)
+    return msg
 
-def search(q, limit=15, as_json=False):
-    if not os.path.exists(DB):
-        print('no index — run: bin/harold-index build', file=sys.stderr); return 1
+def refresh(quiet=True):
+    """Rebuild incrementally when anything changed since the last build. Cheap when nothing did."""
+    if not stale_reason(): return ''
+    try: return build(quiet=quiet)
+    except Exception as e:  # never let a failed refresh block a search of the previous index
+        print(f'warning: index refresh failed ({e}) — using the previous index', file=sys.stderr); return ''
+
+# ───────────────────────── graph queries ─────────────────────────
+def today():
+    """Today in Harold's time zone: HAROLD_TODAY (bin/harold passes it), else HAROLD_TZ, else this machine's zone."""
+    if os.environ.get('HAROLD_TODAY'): return os.environ['HAROLD_TODAY']
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = os.environ.get('HAROLD_TZ')
+        return (datetime.now(ZoneInfo(tz)) if tz else datetime.now()).strftime('%Y-%m-%d')
+    except Exception:
+        return time.strftime('%Y-%m-%d', time.localtime())
+
+def age_days(d):
+    if not d: return None
+    try:
+        t = time.mktime(time.strptime(d, '%Y-%m-%d')); n = time.mktime(time.strptime(today(), '%Y-%m-%d'))
+        return int(round((n - t) / 86400))
+    except ValueError: return None
+
+def is_stale(node):
+    a = age_days(node['last_updated'])
+    return node['type'] not in EVENT_TYPES and a is not None and a > stale_days()
+
+class Graph:
+    def __init__(self, con):
+        self.nodes = {p: {'path': p, 'title': t, 'type': ty, 'aliases': json.loads(a or '[]'), 'last_updated': lu or '', 'date_src': ds or ''}
+                      for p, t, ty, a, lu, ds in con.execute('SELECT path, title, type, aliases, last_updated, date_src FROM nodes')}
+        self.out, self.inn = {}, {}
+        for s, d, k, l in con.execute('SELECT src, dst, kind, line FROM edges ORDER BY rowid'):
+            self.out.setdefault(s, {}).setdefault(d, (k, l))
+            self.inn.setdefault(d, {}).setdefault(s, (k, l))
+        self.broken = {}
+        for s, t, k, l in con.execute('SELECT src, target, kind, line FROM broken ORDER BY rowid'):
+            self.broken.setdefault(s, []).append((t, k, l))
+        self.res = Resolver({p: (n['title'], n['type'], n['aliases']) for p, n in self.nodes.items()})
+
+    def node(self, p):
+        return self.nodes.get(p) or {'path': p, 'title': os.path.splitext(os.path.basename(p))[0], 'type': 'file', 'aliases': [], 'last_updated': '', 'date_src': ''}
+
+    def nbrs(self, p):
+        return set(self.out.get(p, {})) | set(self.inn.get(p, {}))
+
+    def degree(self, p):
+        return len(self.nbrs(p))
+
+def hub_limit():
+    try: return int(os.environ.get('HAROLD_HUB_DEGREE', '40'))
+    except ValueError: return 40
+
+def open_graph():
+    if not os.path.exists(DB): build(quiet=True)
     con = sqlite3.connect(DB)
     try:
-        rows = con.execute('''
+        meta = dict(con.execute('SELECT k, v FROM meta').fetchall())
+        if meta.get('graph') != GRAPH_VERSION:
+            con.close(); build(quiet=True); con = sqlite3.connect(DB)
+        return Graph(con), con
+    except sqlite3.Error:
+        con.close(); build(quiet=True); con = sqlite3.connect(DB); return Graph(con), con
+
+def fts(con, q, limit):
+    try:
+        return con.execute('''
           SELECT path, title, heading, snippet(sections, 4, '[', ']', '…', 18) AS snip, bm25(sections, 0, 5.0, 3.0, 2.0, 1.0) AS rank
           FROM sections WHERE sections MATCH ? ORDER BY rank LIMIT ?''', (q, limit)).fetchall()
-    except sqlite3.OperationalError as e:
-        # fall back: quote the whole thing as a phrase-ish AND of words
+    except sqlite3.OperationalError:
+        # fall back: quote each word, so punctuation and FTS keywords cannot break the query
         words = [w for w in re.findall(r'[\w\-\']+', q) if w]
-        try:
-            rows = con.execute('''SELECT path, title, heading, snippet(sections, 4, '[', ']', '…', 18), bm25(sections,0,5.0,3.0,2.0,1.0)
-                                  FROM sections WHERE sections MATCH ? ORDER BY 5 LIMIT ?''', (' '.join(f'"{w}"' for w in words), limit)).fetchall()
-        except sqlite3.OperationalError as e2:
-            print(f'bad query: {e2}', file=sys.stderr); return 2
+        if not words: return []
+        return con.execute('''SELECT path, title, heading, snippet(sections, 4, '[', ']', '…', 18), bm25(sections,0,5.0,3.0,2.0,1.0)
+                              FROM sections WHERE sections MATCH ? ORDER BY 5 LIMIT ?''', (' '.join('"' + w.replace('"', '') + '"' for w in words), limit)).fetchall()
+
+def find_start(g, con, q, nstarts=3):
+    """→ (start paths, how). Path → exact name/title/alias → full-text search (top distinct notes)."""
+    qq = q.strip()
+    for cand in (qq, os.path.relpath(os.path.abspath(qq), ROOT) if os.path.exists(qq) else None):
+        if cand and cand in g.nodes: return [cand], 'path'
+    if os.path.isabs(qq):
+        rp = os.path.relpath(os.path.realpath(qq), ROOT)
+        if rp in g.nodes: return [rp], 'path'
+    p = g.res.resolve_name(qq[:-3] if qq.lower().endswith('.md') else qq)
+    if p: return [p], 'name'
+    seen = []
+    for row in fts(con, qq, 30):
+        if row[0] not in seen and row[0] in g.nodes: seen.append(row[0])
+    # an entity note (person, company, project, decision) about the topic beats a daily note mentioning it
+    ranked = sorted(seen[:10], key=lambda x: (0 if g.node(x)['type'] in ENTITY_TYPES else 1, seen.index(x)))
+    return ranked[:nstarts], 'search'
+
+def edge_label(kind):
+    return {'wikilink': '[[wikilink]]', 'mdlink': 'md link'}.get(kind, kind)
+
+def related(g, starts, depth=1, limit=15, show_all=False):
+    """Neighbours of the start notes, ranked: direct links first (both ways before one way), then the
+    number of shared links, then recency. Shared links go through non-hub notes only (degree ≤ HUB),
+    so 'both mention the employer' does not make every note related to every other."""
+    S = set(starts)
+    hub = hub_limit()
+    direct = {}
+    for s in starts:
+        for d, (k, l) in g.out.get(s, {}).items():
+            if d in S: continue
+            e = direct.setdefault(d, {'out': None, 'in': None, 'via_start': s})
+            e['out'] = e['out'] or (k, l)
+        for d, (k, l) in g.inn.get(s, {}).items():
+            if d in S: continue
+            e = direct.setdefault(d, {'out': None, 'in': None, 'via_start': s})
+            e['in'] = e['in'] or (k, l)
+    start_nbrs = set().union(*[g.nbrs(s) for s in starts]) - S if starts else set()
+    connectors = [c for c in start_nbrs if g.degree(c) <= hub]
+    shared = {}
+    for c in connectors:
+        for x in g.nbrs(c):
+            if x in S: continue
+            shared.setdefault(x, set()).add(c)
+    for x in list(shared):
+        shared[x].discard(x)
+        if not shared[x]: del shared[x]
+    cands = set(direct)
+    cands |= {x for x, v in shared.items() if len(v) >= (1 if depth >= 2 else 2)}
+    rows = []
+    for x in cands:
+        n = g.node(x)
+        d = direct.get(x)
+        if d:
+            rel = 'both' if d['out'] and d['in'] else ('outgoing' if d['out'] else 'backlink')
+            kind, line = (d['out'] or d['in'])
+        else:
+            rel, kind, line = ('shared' if len(shared.get(x, ())) >= 2 else 'via'), '', ''
+        sh = sorted(shared.get(x, ()), key=lambda c: (-g.degree(c), c))
+        rows.append({'path': x, 'title': n['title'], 'type': n['type'], 'last_updated': n['last_updated'],
+                     'age_days': age_days(n['last_updated']), 'stale': is_stale(n), 'relation': rel, 'kind': kind,
+                     'line': line, 'shared': len(sh), 'shared_via': [g.node(c)['title'] for c in sh[:3]],
+                     'broken': len(g.broken.get(x, [])), 'orphan': g.degree(x) == 0})
+    order = {'both': 0, 'outgoing': 1, 'backlink': 1, 'shared': 2, 'via': 3}
+    rows.sort(key=lambda r: (order[r['relation']], -r['shared'], -(int(r['last_updated'].replace('-', '')) if r['last_updated'] else 0), r['path']))
+    total = len(rows)
+    hidden_daily = []
+    if not show_all:
+        kept, nd = [], 0
+        for r in rows:
+            if r['type'] == 'daily':
+                nd += 1
+                if nd > 3: hidden_daily.append(r); continue
+            kept.append(r)
+        rows = kept
+    return rows[:limit], total, hidden_daily
+
+def gaps(g, p, rows_all_types):
+    n = g.node(p)
+    out = []
+    a = age_days(n['last_updated'])
+    if a is not None and is_stale(n): out.append(f'last updated {a} days ago ({n["last_updated"]}, from {n["date_src"]})')
+    b = g.broken.get(p, [])
+    links = [(t, k) for t, k, _ in b if not k.startswith('frontmatter:')]
+    named = [(t, k) for t, k, _ in b if k.startswith('frontmatter:')]
+    if links:
+        names = sorted({f'[[{t}]]' if k == 'wikilink' else t for t, k in links})
+        out.append(f'{len(links)} broken link{"s" if len(links) != 1 else ""} ({", ".join(names[:4])}{", …" if len(names) > 4 else ""})')
+    if named:
+        out.append('no note for ' + ', '.join(sorted({f'{k.split(":", 1)[1]}: {t}' for t, k in named})[:3]))
+    if not g.out.get(p) and not g.inn.get(p): out.append('no links in or out (orphan)')
+    elif not g.inn.get(p): out.append('nothing links to it')
+    elif not g.out.get(p): out.append('links to nothing')
+    if n['type'] in ('person', 'company', 'project') and not any(g.node(x)['type'] == 'meeting' for x in g.nbrs(p)):
+        out.append('no meeting notes linked')
+    if n['type'] in ('person', 'company') and not any(g.node(x)['type'] == 'daily' for x in g.nbrs(p)):
+        out.append('not in any daily note')
+    stale_n = [r for r in rows_all_types if r['stale'] and r['relation'] in ('both', 'outgoing', 'backlink')]
+    if stale_n: out.append(f'{len(stale_n)} directly linked note{"s" if len(stale_n) != 1 else ""} stale (>{stale_days()}d)')
+    return out
+
+def fmt_date(n):
+    if not n.get('last_updated'): return 'no date'
+    a = n.get('age_days')
+    if a is None: a = age_days(n['last_updated'])
+    s = f'{n["last_updated"]}' + (f' ({a}d)' if a is not None else '')
+    return s + (' STALE' if n.get('stale') else '')
+
+def cmd_related(q, depth=1, limit=15, show_all=False, as_json=False, nstarts=3):
+    refresh()
+    g, con = open_graph()
+    starts, how = find_start(g, con, q, nstarts)
+    if not starts:
+        print(f'no note found for: {q}'); return 1
+    rows, total, hidden_daily = related(g, starts, depth, limit, show_all)
+    every, _, _ = related(g, starts, 1, 10 ** 6, True)
+    gp = {s: gaps(g, s, [r for r in every if g.out.get(s, {}).get(r['path']) or g.inn.get(s, {}).get(r['path'])]) for s in starts}
     if as_json:
-        print(json.dumps([{'path': r[0], 'title': r[1], 'heading': r[2], 'snippet': r[3]} for r in rows], indent=1)); return 0
+        print(json.dumps({'query': q, 'resolved_by': how, 'stale_days': stale_days(),
+                          'starts': [dict(g.node(s), stale=is_stale(g.node(s)), age_days=age_days(g.node(s)['last_updated']),
+                                          links_out=len(g.out.get(s, {})), backlinks=len(g.inn.get(s, {})), gaps=gp[s]) for s in starts],
+                          'related': rows, 'total': total, 'daily_notes_collapsed': len(hidden_daily)}, indent=1)); return 0
+    for s in starts:
+        n = g.node(s)
+        print(f'{n["title"]}  ·  {s}  ·  {n["type"]}  ·  updated {fmt_date(dict(n, stale=is_stale(n)))}  ·  '
+              f'{len(g.out.get(s, {}))} out, {len(g.inn.get(s, {}))} in, {len(g.broken.get(s, []))} broken')
+    if how == 'search': print(f'(matched by search for "{q}"; pass a path or exact title to pin one note)')
+    print()
+    arrow = {'both': '↔', 'outgoing': '→', 'backlink': '←', 'shared': '⇄', 'via': '⋯'}
+    for i, r in enumerate(rows, 1):
+        print(f'{i:2d}. {arrow[r["relation"]]} {r["title"]}  ·  {r["path"]}  ·  {r["type"]}  ·  {fmt_date(r)}')
+        bits = []
+        if r['relation'] in ('both', 'outgoing', 'backlink'):
+            bits.append({'both': 'linked both ways', 'outgoing': 'linked from it', 'backlink': 'links to it'}[r['relation']] + f' by {edge_label(r["kind"])}')
+        if r['shared']: bits.append(f'{r["shared"]} shared link{"s" if r["shared"] != 1 else ""} ({", ".join(r["shared_via"])}{", …" if r["shared"] > 3 else ""})')
+        if r['broken']: bits.append(f'{r["broken"]} broken')
+        print(f'      {"; ".join(bits)}')
+        if r['line']: print(f'      “{r["line"]}”')
+    more = total - len(rows) - len(hidden_daily)
+    tail = []
+    if hidden_daily: tail.append(f'{len(hidden_daily)} more daily note{"s" if len(hidden_daily) != 1 else ""} (latest {max(r["last_updated"] for r in hidden_daily)}; --all shows them)')
+    if more > 0: tail.append(f'{more} more (raise --limit)')
+    if depth < 2: tail.append('--depth 2 follows one more hop')
+    if tail: print('\n' + '; '.join(tail))
+    for s in starts:
+        print(f'gaps: {g.node(s)["title"]}: ' + ('; '.join(gp[s]) if gp[s] else f'none found (updated {fmt_date(g.node(s))})'))
+    return 0
+
+def cmd_backlinks(q, as_json=False):
+    refresh()
+    g, con = open_graph()
+    starts, how = find_start(g, con, q, 1)
+    if not starts: print(f'no note found for: {q}'); return 1
+    p = starts[0]
+    rows = []
+    for s, (k, l) in g.inn.get(p, {}).items():
+        n = g.node(s)
+        rows.append({'path': s, 'title': n['title'], 'type': n['type'], 'last_updated': n['last_updated'],
+                     'stale': is_stale(n), 'kind': k, 'line': l})
+    rows.sort(key=lambda r: (r['last_updated'] or '', r['path']), reverse=True)
+    if as_json: print(json.dumps({'note': p, 'backlinks': rows}, indent=1)); return 0
+    print(f'{g.node(p)["title"]}  ·  {p}  ·  {len(rows)} backlink{"s" if len(rows) != 1 else ""}' + (f'  (matched by search for "{q}")' if how == 'search' else ''))
+    for r in rows:
+        print(f'  ← {r["title"]}  ·  {r["path"]}  ·  {fmt_date(r)}  ·  {edge_label(r["kind"])}')
+        if r['line']: print(f'      “{r["line"]}”')
+    if not rows: print('  nothing links to it')
+    return 0
+
+def top_links(g, p, k=4):
+    """The linked notes most worth opening next: both-way links, then maintained notes, then recency."""
+    nb = g.nbrs(p)
+    def key(x):
+        n = g.node(x)
+        both = x in g.out.get(p, {}) and x in g.inn.get(p, {})
+        return (0 if both else 1, 0 if n['type'] in ENTITY_TYPES else 1, -(int(n['last_updated'].replace('-', '')) if n['last_updated'] else 0), x)
+    ranked = sorted(nb, key=key)
+    return [g.node(x)['title'] for x in ranked[:k]], len(ranked)
+
+def link_line(g, p):
+    n = g.node(p)
+    titles, total = top_links(g, p)
+    bits = [('links: ' + ', '.join(titles) + (f' (+{total - len(titles)})' if total > len(titles) else '')) if titles else 'no links (orphan)']
+    if is_stale(n): bits.append(f'updated {n["last_updated"]} ({age_days(n["last_updated"])}d, stale)')
+    nb = len(g.broken.get(p, []))
+    if nb: bits.append(f'{nb} broken link{"s" if nb != 1 else ""}')
+    return ' · '.join(bits)
+
+def search(q, limit=15, as_json=False):
+    refresh()
+    if not os.path.exists(DB):
+        print('no index — run: bin/harold-index build', file=sys.stderr); return 1
+    g, con = open_graph()
+    try: rows = fts(con, q, limit)
+    except sqlite3.OperationalError as e2:
+        print(f'bad query: {e2}', file=sys.stderr); return 2
+    if as_json:
+        print(json.dumps([{'path': r[0], 'title': r[1], 'heading': r[2], 'snippet': r[3],
+                           'links': top_links(g, r[0], 6)[0], 'last_updated': g.node(r[0])['last_updated'],
+                           'stale': is_stale(g.node(r[0])), 'broken': len(g.broken.get(r[0], []))} for r in rows], indent=1)); return 0
     if not rows: print(f'no matches for: {q}'); return 1
+    shown = set()
     for path, title, heading, snip, _ in rows:
         loc = f'{path}' + (f' › {heading}' if heading else '')
         print(f'{loc}\n    {" ".join(snip.split())}')
+        if path not in shown:
+            shown.add(path); print(f'    ↳ {link_line(g, path)}')
+    print(f'\nNext: bin/harold related "<path or title>" follows the links from any hit.')
     return 0
+
+# ───────────────────────── graph.json for chat surfaces ─────────────────────────
+def repo_paths():
+    """Paths git would keep (tracked, or untracked but not ignored). None when ROOT is not a git repo."""
+    try:
+        r = subprocess.run(['git', '-C', ROOT, '-c', 'core.quotepath=off', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', *dirs(), *top_files()],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0: return None
+        return set(x for x in r.stdout.split('\0') if x)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+def graph_json(quiet=False):
+    """harold/graph.json: nodes [path, title, type, last_updated], edges [src, dst, kind] and broken
+    [src, target, kind], one per line and sorted, so a new note or link is a one-line diff. No text, no
+    context lines. Files git ignores (nested repos) are left out. last_updated is '' when the note carries
+    no date of its own. Written only when it changed, so the same repo gives the same file on any machine."""
+    refresh()
+    con = sqlite3.connect(DB)
+    keep = repo_paths()
+    # Only dates written in the notes themselves (frontmatter, or a dated filename): git and mtime dates differ
+    # between a full clone, a shallow cloud checkout and a synced copy, and would rewrite the file on every machine.
+    nodes = [r for r in con.execute("SELECT path, title, type, CASE WHEN date_src IN ('frontmatter','filename') THEN last_updated ELSE '' END "
+                                    'FROM nodes ORDER BY path') if keep is None or r[0] in keep]
+    ok = {r[0] for r in nodes}
+    edges = sorted({(s, d, k) for s, d, k in con.execute('SELECT src, dst, kind FROM edges') if s in ok and d in ok})
+    broken = sorted({(s, t, k) for s, t, k in con.execute('SELECT src, target, kind FROM broken') if s in ok})
+    con.close()
+    j = lambda x: json.dumps(list(x), ensure_ascii=False, separators=(',', ':'))
+    text = ('{"version":1,"generated_by":"bin/harold-index graph-json","stale_days":%d,\n' % stale_days()
+            + '"node_fields":["path","title","type","last_updated"],\n"nodes":[\n' + ',\n'.join(map(j, nodes))
+            + '\n],\n"edge_fields":["src","dst","kind"],\n"edges":[\n' + ',\n'.join(map(j, edges))
+            + '\n],\n"broken_fields":["src","target","kind"],\n"broken":[\n' + ',\n'.join(map(j, broken)) + '\n]}\n')
+    try:
+        with open(GRAPH_JSON, encoding='utf-8') as fh: cur = fh.read()
+    except OSError: cur = None
+    if cur == text:
+        if not quiet: print(f'graph.json unchanged ({len(text.encode()) // 1024} KB, {len(nodes)} nodes, {len(edges)} edges)')
+        return False
+    tmp = GRAPH_JSON + f'.tmp-{os.getpid()}'
+    with open(tmp, 'w', encoding='utf-8') as fh: fh.write(text)
+    os.replace(tmp, GRAPH_JSON)
+    if not quiet: print(f'graph.json written ({len(text.encode()) // 1024} KB, {len(nodes)} nodes, {len(edges)} edges, {len(broken)} broken)')
+    return True
 
 def stat():
     if not os.path.exists(DB): print('no index'); return 1
     con = sqlite3.connect(DB)
     meta = dict(con.execute('SELECT k, v FROM meta').fetchall())
-    print(f"built {meta.get('built')}: {meta.get('files')} files, {meta.get('sections')} sections, {os.path.getsize(DB)//1024} KB")
+    print(f"built {meta.get('built')}: {meta.get('files')} files, {meta.get('sections')} sections, {meta.get('edges', '?')} links, "
+          f"{meta.get('broken', '?')} broken, {os.path.getsize(DB)//1024} KB")
     for d, n in con.execute("SELECT substr(path,1,instr(path||'/','/')-1) AS d, count(*) FROM files GROUP BY d ORDER BY 2 DESC").fetchall(): print(f'  {n:5d} {d}')
     return 0
 
+def opt(argv, name, default):
+    for i, a in enumerate(argv):
+        if a == f'--{name}' and i + 1 < len(argv): return argv[i + 1]
+        if a.startswith(f'--{name}='): return a.split('=', 1)[1]
+    return default
+
+def positional(argv, valued=('depth', 'limit', 'starts')):
+    out, skip = [], False
+    for a in argv:
+        if skip: skip = False; continue
+        if a.startswith('--'):
+            if a[2:] in valued: skip = True
+            continue
+        out.append(a)
+    return ' '.join(out)
+
+def main(argv):
+    cmd = argv[0] if argv else 'build'
+    rest = argv[1:]
+    try:
+        if cmd == 'build':
+            if '--if-stale' in rest:
+                why = stale_reason()
+                if not why: print('search index current'); return 0
+            build(full='--full' in rest); return 0
+        if cmd == 'stale': why = stale_reason(); print(why) if why else None; return 0
+        if cmd == 'search': return search(positional(rest), as_json='--json' in rest)
+        if cmd == 'related':
+            q = positional(rest)
+            if not q: print('usage: harold related "<note path, title or topic>" [--depth 1|2] [--limit N] [--all] [--json]', file=sys.stderr); return 2
+            return cmd_related(q, depth=int(opt(rest, 'depth', '1')), limit=int(opt(rest, 'limit', '15')),
+                               show_all='--all' in rest, as_json='--json' in rest, nstarts=int(opt(rest, 'starts', '3')))
+        if cmd == 'backlinks':
+            q = positional(rest)
+            if not q: print('usage: harold backlinks <note path or title> [--json]', file=sys.stderr); return 2
+            return cmd_backlinks(q, as_json='--json' in rest)
+        if cmd == 'graph-json': graph_json(); return 0
+        if cmd == 'stat': return stat()
+    except BrokenPipeError:
+        return 0
+    print(__doc__); return 2
+
 if __name__ == '__main__':
-    cmd = sys.argv[1] if len(sys.argv) > 1 else 'build'
-    if cmd == 'build': build()
-    elif cmd == 'search': sys.exit(search(' '.join(a for a in sys.argv[2:] if a != '--json'), as_json='--json' in sys.argv))
-    elif cmd == 'stat': sys.exit(stat())
-    else: print(__doc__); sys.exit(2)
+    sys.exit(main(sys.argv[1:]))

@@ -63,7 +63,6 @@ create table if not exists public.contacts (
   website       text default '',
   notes         text default '',
   region        text default '',
-  focus_area    text default '',
   investor_type text default '',
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()

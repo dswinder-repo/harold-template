@@ -86,7 +86,7 @@ should be about mutual mandate:
 - What this agency is measured on, and which part of it the sender can move
 - The specific program, event or funding cycle that creates a reason to talk now
 - What the sender can offer that the agency cannot easily get elsewhere
-- Who else in their ecosystem is already involved
+- Who else in their network is already involved
 Do NOT generate a generic "explore collaboration" point. Name their region and the
 concrete thing being proposed.`,
 
@@ -175,7 +175,6 @@ function buildPrepUserContext(
   const existingData = [
     contact.location && `- Location: ${contact.location}`,
     contact.investor_type && `- Investor Type: ${contact.investor_type}`,
-    contact.focus_area && `- Focus Area: ${contact.focus_area}`,
     contact.website && `- Website: ${contact.website}`,
     contact.region && `- Region: ${contact.region}`,
     contact.warmth && `- Warmth: ${contact.warmth}`,

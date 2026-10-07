@@ -11,7 +11,7 @@ The MCP server that connects Harold to your CRM and keeps the `harold/` markdown
 | `harold_search_contacts` | Find contacts by name, org, type, warmth, stage, purpose, project, keyword |
 | `harold_get_contact` | Full profile: labels, pipeline entries, interactions, open tasks, stage history |
 | `harold_pipeline` | The one pipeline: add (with a purpose), move, close, list |
-| `harold_cadence_check` | Relationships overdue for contact, plus overdue CRM tasks |
+| `harold_cadence_check` | Relationships overdue for contact, plus overdue CRM tasks. The same rule as the connector's `crm_stale` (`cadence.js`): the tightest stage cadence among open pipeline entries, else warmth (Hot 7 days, Warm 14, Lukewarm 28); Cold or unset warmth is never flagged |
 | `harold_crm_task` | Contact-specific follow-ups: create, update, complete, cancel, list |
 | `harold_alerts_sync` | The alerts engine: events, blockers, CRM freshness, CRM tasks, task-manager input |
 | `harold_log` | Append to `harold/context-log.md` |
@@ -33,4 +33,4 @@ Without the two Supabase variables the server still starts: it prints a loud war
 Optional settings, in `~/.harold/env`:
 
 - `HAROLD_NO_LOG_TYPES` (empty by default): contact types whose conversations are never logged. `harold_log_interaction` refuses them; their records can still be updated. See "CRM Filing Protocol" in `AGENTS.md`.
-- `HAROLD_NO_CADENCE_TYPES` (default `other`): contact types that never get staleness alerts. Types in `HAROLD_NO_LOG_TYPES` are skipped too.
+- `HAROLD_NO_CADENCE_TYPES` (default `other`): contact types that never get staleness alerts. Types in `HAROLD_NO_LOG_TYPES` are skipped too. Both match the contact's one type, never its labels.

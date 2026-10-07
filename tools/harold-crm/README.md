@@ -71,6 +71,7 @@ In the Supabase dashboard open **SQL Editor** and run each file in
 | `004_security.sql` | Members-only row-level security on every table, and the private attachments bucket |
 | `005_realtime.sql` | Adds the tables to Supabase Realtime |
 | `006_bug_reports.sql` | Bug reports and feature requests, members-only like everything else |
+| `007_drop_focus_area.sql` | Retires a contact field that older databases still have; does nothing on a new one |
 
 Every file is safe to run again. With the Supabase CLI you can instead link the
 project from this folder and run `supabase db push`.
@@ -82,7 +83,8 @@ change it, copy it over `001_harold_core.sql`; the workspace test
 To check the migrations without touching any database, run
 `pnpm test:migrations` in this folder: it applies them to a throwaway in-memory
 Postgres (PGlite, with Supabase's `auth` schema, roles and realtime publication
-stubbed) and checks the security rules.
+stubbed), checks the security rules and upgrades a database set up before 007.
+The workspace test `tests/crm.test.js` runs it too, once `pnpm install` has run here.
 
 ### 3. Create your account
 
@@ -175,8 +177,11 @@ chat shows up in the app, live, and the other way round.
 - The service role key bypasses row-level security. Keep it server-side only:
   in that env file or a server's secret store, never in this app, a
   `NEXT_PUBLIC_` variable, or a repository.
-- Writes Harold makes appear in the audit trail with no user attached, and
-  logging an interaction from Harold updates `last_contacted_at` like the app does.
+- The audit trail records each change with the contact's `updated_by`, which is
+  whoever last edited that contact in the app. Harold's tool writes are not
+  attributed: a change Harold makes appears under the last app editor (or under
+  no one, for a contact never edited in the app). Logging an interaction from
+  Harold updates `last_contacted_at` like the app does.
 - Optional: if you never log conversations with some contact types (some people
   choose this for their own team), list them in `HAROLD_NO_LOG_TYPES` for Harold
   (see "CRM Filing Protocol" in the workspace's `AGENTS.md`) and in

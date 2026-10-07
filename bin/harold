@@ -18,12 +18,16 @@
  *   harold brief   the scheduled morning brief: start | finish | status | notify
  *   harold housekeeping  the scheduled weekly scan / full audit / month-end review: start | finish | status
  *   harold where   resolve a topic or alias to a folder via harold/projects.md
+ *   harold search | related | backlinks   full-text search and the link graph (bin/harold-index)
  *
  * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path):
  *   HAROLD_TZ          IANA time zone, e.g. America/Chicago. Default: the zone of the machine running this.
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
  *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
  *                      as CRM interactions (records are still kept current). Empty by default.
+ *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
+ *   HAROLD_JOB=1       set by a scheduler that runs only Harold's jobs (as GitHub Actions and Claude Code routines
+ *                      are taken to): today's job marker alone puts close in job mode. Elsewhere a running job does.
  *   HAROLD_NOW         TESTING ONLY: pretend it is this time ("2026-10-05T06:10:00" is wall-clock time
  *                      in HAROLD_TZ; add Z or an offset for an absolute instant).
  *
@@ -76,7 +80,7 @@ function resolveTz() {
   if (raw) return { tz: sys, source: 'system', warning: `HAROLD_TZ "${raw}" is not an IANA time zone name (e.g. America/Chicago, Europe/London); using this machine's zone, ${sys}` };
   if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set the repository variable HAROLD_TZ to your zone, e.g. America/Chicago (Settings → Secrets and variables → Actions → Variables)` };
   if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ in the environment of the routine or cloud environment, e.g. America/Chicago` };
-  return { tz: sys, source: 'system' };
+  return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this machine's zone (${sys}). Set your own zone in ${envFilePath()}, e.g. export HAROLD_TZ="America/Chicago" (scheduled jobs take it as a repository variable)` };
 }
 const TZ_INFO = resolveTz();
 const TZ = TZ_INFO.tz;
@@ -203,51 +207,110 @@ function readStdinJson() {
 }
 
 // ───────────────────────── hook harnesses ─────────────────────────
-// boot and close run as lifecycle hooks in three harnesses. Each hook file passes --via=<harness>, so
-// the answer format never depends on guessing; the input is the fallback when the flag is absent.
-//   claude  Claude Code (.claude/settings.json). Input: session_id, hook_event_name SessionStart|Stop|
-//           SessionEnd, stop_hook_active. SessionStart: plain stdout becomes context. Stop: {} or
-//           {"decision":"block","reason"}; {"systemMessage"} for a notice.
-//   codex   Codex (.codex/hooks.json). Same event names, fields and answers as Claude Code; Stop also
-//           carries turn_id. SessionEnd may run for 3 seconds at most, so it is handed to a detached
-//           process (--detach).
-//   cursor  Cursor (.cursor/hooks.json). Input: conversation_id, cursor_version, workspace_roots,
-//           hook_event_name sessionStart|stop|sessionEnd; session_id on sessionStart/sessionEnd; stop has
-//           status and loop_count. sessionStart answers {"additional_context"}; stop answers {} or
-//           {"followup_message"}; sessionEnd's answer is ignored.
-// Cursor also runs Claude Code hooks from .claude/settings.json by default ("third-party configs"), as
-// well as its own. When the Claude Code file's hook (--via=claude) fires inside Cursor and the
-// workspace has .cursor/hooks.json, it steps aside: Cursor's own hook does the work, once.
+// boot and close run as lifecycle hooks (or from a small plugin) in every harness that has them. Each wiring
+// passes --via=<harness>, so the answer format never depends on guessing. The input is only used to notice
+// that one harness is running another harness's hook file, and as the fallback when the flag is absent.
+// Sources for every row: README.md, "Every harness with lifecycle hooks". In each harness:
+//   start   how boot's context reaches the model        stop   how close says "filing incomplete, keep going"
+//   claude   Claude Code   .claude/settings.json   SessionStart plain stdout | Stop {"decision":"block","reason"}
+//   codex    Codex         .codex/hooks.json       as Claude Code; Stop carries turn_id; SessionEnd ≤3 s → --detach
+//   cursor   Cursor        .cursor/hooks.json      {"additional_context"} | {"followup_message"}, only after a normal finish
+//   gemini   Gemini CLI    .gemini/settings.json   {"hookSpecificOutput":{"additionalContext"}} | AfterAgent {"decision":"block"}
+//   qwen     Qwen Code     .qwen/settings.json     plain stdout | as Claude Code
+//   copilot  Copilot CLI   .github/copilot/settings.json  {"additionalContext"} | agentStop {"decision":"block"}
+//   grok     Grok Build    .grok/hooks/harold.json SessionStart output is ignored (see below) | Stop as Claude Code
+//   kimi     Kimi Code     ~/.kimi/config.toml     SessionStart output is ignored | Stop: exit 2, reason on stderr
+//   goose    goose         .agents/plugins/harold  SessionStart output is a banner for the person | Stop {"decision":"block"}
+//   hermes   Hermes Agent  ~/.hermes/config.yaml   pre_llm_call {"context"} | pre_verify {"decision":"block"}
+//   cline    Cline         .clinerules/hooks/      TaskStart {"contextModification"} | TaskComplete cannot block
+//   opencode, amp, openclaw: plugins (.opencode/plugins, .amp/plugins, tools/openclaw-plugin) that run bin/harold
+//            and translate: plain stdout at start, Claude Code's answers at the end of a turn.
+// noStartContext: the harness never shows session-start output to the model. The hook still registers the session;
+//   when the agent then runs `bin/harold boot` itself (AGENTS.md tells it to), that run adopts the hook's session
+//   and prints the context, and until it has, close blocks the turn with "run bin/harold boot".
+// repeatStart: the start event fires on every turn. After the first, boot answers with nothing, or with what the
+//   last close found unfiled, because these harnesses cannot block at the end of a turn (or only sometimes can).
+const HARNESSES = {
+  claude: { label: 'claude-code' }, codex: {}, cursor: {}, gemini: {}, qwen: {}, copilot: {},
+  grok: { noStartContext: true }, kimi: { noStartContext: true }, goose: { noStartContext: true },
+  hermes: { repeatStart: true }, cline: { repeatStart: true },
+  opencode: {}, amp: {}, openclaw: {},
+};
+// A harness that also loads another harness's hook file steps aside there when its own Harold wiring exists:
+// Cursor and Grok Build load .claude/settings.json, Grok Build also .cursor/hooks.json, Copilot CLI .claude/settings.json.
+const OWN_WIRING = { cursor: '.cursor/hooks.json', grok: '.grok/hooks/harold.json', copilot: '.github/copilot/settings.json' };
 const CURSOR_EVENTS = new Set(['sessionStart', 'stop', 'sessionEnd']);
 function isCursorInput(h) { return !!(h && (typeof h.cursor_version === 'string' || Array.isArray(h.workspace_roots) || CURSOR_EVENTS.has(h.hook_event_name))); }
+// Grok Build's envelope is camelCase (hookEventName, sessionId, workspaceRoot, stopHookActive) with snake_case aliases.
+function isGrokInput(h) { return !!(h && ('workspaceRoot' in h || 'hookEventName' in h)); }
+// Copilot CLI runs .claude/settings.json hooks with its "VS Code compatible" payload, which carries an ISO timestamp
+// that neither Claude Code nor Codex sends.
+function isCopilotInput(h, via) { return !!(h && via === 'claude' && typeof h.timestamp === 'string' && !('turn_id' in h) && process.env.CLAUDECODE !== '1'); }
 function hookContext(raw, via) {
   const h = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
-  let harness = null;
-  if (isCursorInput(h)) harness = 'cursor';
-  else if (via === 'claude' || via === 'codex' || via === 'cursor') harness = via;
-  else if (h && h.hook_event_name) harness = 'turn_id' in h ? 'codex' : 'claude';
+  const seen = isCursorInput(h) ? 'cursor' : isGrokInput(h) ? 'grok' : isCopilotInput(h, via) ? 'copilot' : null;
+  let harness = seen || (via && HARNESSES[via] ? via : null);
+  if (!harness && !via && h && h.hook_event_name) harness = 'turn_id' in h ? 'codex' : 'claude';
   if (!harness) return null;  // a terminal, a script, an agent running it by hand
-  const event = (h && h.hook_event_name) || `(${via || harness})`;
+  const extra = h && h.extra && typeof h.extra === 'object' ? h.extra : {};
+  const event = (h && (h.hook_event_name || h.event || h.hookName)) || `(${via || harness})`;
   return {
     ...(h || {}),
     hook_event_name: event,
-    session_id: (h && (h.session_id || h.conversation_id)) || undefined,
-    stop_hook_active: !!(h && (h.stop_hook_active || (typeof h.loop_count === 'number' && h.loop_count > 0))),
+    session_id: (h && (h.session_id || h.sessionId || h.conversation_id || h.taskId)) || undefined,
+    stop_hook_active: !!(h && (h.stop_hook_active || h.stopHookActive || (typeof h.loop_count === 'number' && h.loop_count > 0) || extra.attempt > 0)),
+    first_turn: extra.is_first_turn,
     _harness: harness,
     _via: via || null,
   };
 }
-// What close says back to the harness. kind: ok | block | notice.
-function closeReply(hook, kind, text) {
-  if (hook._harness === 'cursor') {
-    // A follow-up restarts the agent: only after a normal finish, never after the operator aborted it.
-    if (kind === 'block' && (!hook.status || hook.status === 'completed')) return console.log(JSON.stringify({ followup_message: text }));
-    if (text) console.error(text);  // Cursor's stop has no notice field; this lands in its Hooks output channel
-    return console.log('{}');
+// How boot's context goes back to the harness.
+function startReply(hook, text) {
+  const out = o => console.log(JSON.stringify(o));
+  switch (hook && hook._harness) {
+    case 'cursor': return out({ additional_context: text });
+    case 'gemini': return out({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } });
+    case 'copilot': return out({ additionalContext: text });
+    case 'hermes': return out(text ? { context: text } : {});
+    case 'cline': return out({ cancel: false, contextModification: text, errorMessage: '' });
+    case 'goose': return out({ banner: text.split('\n')[0] });  // shown to the person, never to the model
+    case 'kimi': return;                                        // Kimi never reads it
+    default: return text ? console.log(text) : undefined;
   }
-  if (kind === 'block') return console.log(JSON.stringify({ decision: 'block', reason: text }));
-  if (kind === 'notice' && text) return console.log(JSON.stringify({ systemMessage: text }));
-  return console.log('{}');
+}
+// What close says back to the harness. kind: ok | block | notice. Returns the exit code.
+function closeReply(hook, kind, text) {
+  const out = o => console.log(JSON.stringify(o));
+  switch (hook._harness) {
+    case 'cursor':
+      // A follow-up restarts the agent: only after a normal finish, never after the operator aborted it.
+      if (kind === 'block' && (!hook.status || hook.status === 'completed')) { out({ followup_message: text }); return 0; }
+      if (text) console.error(text);  // Cursor's stop has no notice field; this lands in its Hooks output channel
+      out({}); return 0;
+    case 'kimi':
+      // Kimi never reads a hook's stdout; exit 2 with the reason on stderr is how a Stop hook keeps it going.
+      if (text) console.error(text);
+      return kind === 'block' ? 2 : 0;
+    case 'goose':
+      // stdout is goose's decision channel, and {} would read as "the hook gave no decision".
+      if (kind === 'block') { out({ decision: 'block', reason: text }); return 0; }
+      if (text) console.error(text);
+      out({ decision: 'allow' }); return 0;
+    case 'hermes':
+      // Only pre_verify can keep Hermes going; on_session_end ignores its answer.
+      if (kind === 'block' && hook.hook_event_name === 'pre_verify') { out({ decision: 'block', reason: text }); return 0; }
+      if (text) console.error(text);
+      out({}); return 0;
+    case 'cline':
+      // TaskComplete cannot keep Cline going: the problems are kept and the next TaskStart hands them to the model.
+      if (text) console.error(text);
+      out({ cancel: false, contextModification: '', errorMessage: '' }); return 0;
+    default:  // Claude Code, Codex, Gemini CLI, Qwen Code, Copilot CLI, Grok Build and the plugins
+      if (kind === 'block') out({ decision: 'block', reason: text });
+      else if (kind === 'notice' && text) out({ systemMessage: text });
+      else out({});
+      return 0;
+  }
 }
 
 // ───────────────────────── knowledge loaders ─────────────────────────
@@ -296,7 +359,7 @@ function loadAlerts(root, today) {
   const m = r.text.match(/Last updated:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
   const updated = m ? parseLooseDate(m[1], today) : null;
   const cur = r.text.match(/##\s*Current Alerts[\s\S]*?(?=\n##\s|\n---|$)/i);
-  return { ok: r.ok, updated, age: updated ? daysBetween(updated, today.iso) : null, current: cur ? cur[0].trim() : '' };
+  return { ok: r.ok, updated, never: !updated && /Last updated:\s*never/i.test(r.text), age: updated ? daysBetween(updated, today.iso) : null, current: cur ? cur[0].trim() : '' };
 }
 
 function loadBlockers(root, today) {
@@ -383,26 +446,51 @@ function rawUncompiled(root) {
 function triggerLog(root) { return readJsonl(path.join(root, 'harold/trigger-log.jsonl')).rows; }
 function lastRun(log, id, fromIso) { return log.filter(e => e.id === id && e.status === 'ran' && (!fromIso || e.date >= fromIso)).map(e => e.date).sort().pop() || null; }
 function loggedToday(log, id, today) { return log.filter(e => e.id === id && e.date === today.iso); }
+// The day Harold started in this workspace: the "harold-start" row the first boot writes into an empty
+// trigger log. Scheduled work whose day came before it was never missed (Harold was not running yet), and
+// alerts that predate it count from it. Without the row (an existing install), nothing changes.
+const START_ID = 'harold-start';
+function workspaceStart(log) { const r = log.find(e => e.id === START_ID); return r && /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') ? r.date : null; }
+function markWorkspaceStart(root, today) {
+  const f = path.join(root, 'harold/trigger-log.jsonl');
+  let text = ''; try { text = readFull(f); } catch (_) {}
+  if (text.trim()) return false;
+  appendLine(f, { id: START_ID, status: 'ran', reason: 'first boot: scheduled work counts from today', date: today.iso, ts: new Date().toISOString() });
+  return true;
+}
+
+// Whether a boot here starts the clock in an empty trigger log: a session does, a scheduled job never does.
+function marksWorkspaceStart(root, today) {
+  return !/^(brief-job|housekeeping)-/.test(process.env.HAROLD_SESSION_ID || '') && !inHousekeepingJob(root, today) && !currentJob(root, today) && !(isJobEnv() && loadJob(root));
+}
 
 function computeTriggers(root, today, ctx) {
   const log = triggerLog(root);
   const due = [], overdue = [], info = [];
   const t = today.iso;
+  // Before the first boot (an empty trigger log), judge as that boot will: scheduled work counts from today.
+  const recordedStart = workspaceStart(log);
+  const start = recordedStart || (!log.length && marksWorkspaceStart(root, today) ? t : null);
+  const after = d => !start || d > start;  // a day before (or the day of) the first boot was never missed
   const dow = dateOf(t).getUTCDay();
   const lastFriday = addDays(t, -((dow + 2) % 7));
   const weeklyRan = lastRun(log, 'weekly-scan');
-  if (dow === 5) due.push({ id: 'weekly-scan', what: 'Weekly summary + quick KB scan', where: 'playbook/core/knowledge-base-health.md (Quick Scan) → harold/weekly-summary.md' });
-  else if (!weeklyRan || weeklyRan < lastFriday) {
+  if (!recordedStart && start) info.push('No boot has run in this workspace yet (empty trigger log): the first boot starts the clock, so nothing is overdue. The weekly scan, full audit and month-end review count from the day after it.');
+  else if (!after(t)) info.push(`Harold started in this workspace today (${start}): the weekly scan, full audit and month-end review count from tomorrow.`);
+  if (dow === 5) { if (after(t)) due.push({ id: 'weekly-scan', what: 'Weekly summary + quick KB scan', where: 'playbook/core/knowledge-base-health.md (Quick Scan) → harold/weekly-summary.md' }); }
+  else if ((!weeklyRan || weeklyRan < lastFriday) && after(lastFriday)) {
     const missed = weeklyRan ? Math.floor(daysBetween(weeklyRan, t) / 7) : null;
     overdue.push({ id: 'weekly-scan', what: `Friday weekly scan missed for ${lastFriday}` + (missed ? ` (${missed} cycles since last run ${weeklyRan})` : ' (no run ever recorded)'), where: 'playbook/core/knowledge-base-health.md (Quick Scan)' });
   }
   const firstOfMonth = `${t.slice(0, 7)}-01`;
-  if (today.d === 1) due.push({ id: 'full-audit', what: 'Full KB health audit', where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
-  else if (!lastRun(log, 'full-audit', firstOfMonth)) overdue.push({ id: 'full-audit', what: `Monthly full audit not run since ${firstOfMonth}`, where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
+  if (today.d === 1) { if (after(t)) due.push({ id: 'full-audit', what: 'Full KB health audit', where: 'playbook/core/knowledge-base-health.md (Full Audit)' }); }
+  else if (!lastRun(log, 'full-audit', firstOfMonth) && after(firstOfMonth)) overdue.push({ id: 'full-audit', what: `Monthly full audit not run since ${firstOfMonth}`, where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
   const lbd = lastBusinessDayOfMonth(today.y, today.m);
-  if (t === lbd) due.push({ id: 'month-end', what: 'Month-end review', where: 'dashboard/processes.md (Time Triggers)' });
-  else if (t > lbd && !lastRun(log, 'month-end', lbd)) overdue.push({ id: 'month-end', what: `Month-end review for ${lbd} not run`, where: 'dashboard/processes.md' });
-  if (ctx.alerts.age === null || ctx.alerts.age > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Linear`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
+  if (t === lbd) { if (after(t)) due.push({ id: 'month-end', what: 'Month-end review', where: 'dashboard/processes.md (Time Triggers)' }); }
+  else if (t > lbd && !lastRun(log, 'month-end', lbd) && after(lbd)) overdue.push({ id: 'month-end', what: `Month-end review for ${lbd} not run`, where: 'dashboard/processes.md' });
+  // Alerts shipped with the workspace (or rebuilt before Harold started) count as rebuilt on the first boot.
+  const alertsAge = start && (!ctx.alerts.updated || ctx.alerts.updated < start) ? daysBetween(start, t) : ctx.alerts.age;
+  if (alertsAge === null || alertsAge > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Linear`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
   for (const b of ctx.blockers.rows) {
     if (b.age !== null && b.age > 7) {
       const id = `blocker-escalation:${b.id}`;
@@ -443,7 +531,7 @@ function readHousekeeping(root) { try { const j = JSON.parse(readFull(path.join(
 // boot notes it, and the monthly full audit moves stale sections into an archive file beside it
 // (searchable with harold search, not loaded at startup). Nothing is deleted. Override per file in
 // harold/housekeeping.json → "size_budgets".
-const SIZE_BUDGETS = { 'AGENTS.md': 30000, 'memory/CLAUDE.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
+const SIZE_BUDGETS = { 'AGENTS.md': 36000, 'memory/CLAUDE.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
 function sizeBudgets(root) {
   const o = readHousekeeping(root).size_budgets; const b = { ...SIZE_BUDGETS };
   if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (Number.isFinite(+v) && +v > 0) b[k] = +v;
@@ -453,7 +541,31 @@ function sizeBudgets(root) {
 // ───────────────────────── session state ─────────────────────────
 const SESSIONS_DIR = 'harold/active-sessions';
 const STATE_DIR = 'harold/active-sessions/.state';
-function sessionId(hook) { return (hook && (hook.session_id || hook.conversation_id)) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || `terminal-${process.ppid}`; }
+function explicitSessionId(hook) { return (hook && (hook.session_id || hook.conversation_id)) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || null; }
+function sessionId(hook) { return explicitSessionId(hook) || `terminal-${process.ppid}`; }
+// harold/.last-boot (gitignored): the latest boot in this workspace (session id, HEAD, time). A tool without hooks runs
+// each command in its own shell, so boot and close never share a parent process; close finds its session here.
+const LAST_BOOT = 'harold/.last-boot';
+function readLastBoot(root) {
+  try { const j = JSON.parse(readFull(path.join(root, LAST_BOOT))); return j && j.id && j.bootedAtMs && (!j.root || j.root === root) ? j : null; } catch (_) { return null; }
+}
+function gitHead(root) { const h = git(root, ['rev-parse', '--verify', '-q', 'HEAD']); return h.code === 0 && h.out ? h.out : null; }
+// close's session: the hook's (or the environment's) id; with none, the session of the latest boot in this workspace.
+function closeSession(root, hook) {
+  const id = explicitSessionId(hook);
+  if (id) return { id };
+  const lb = readLastBoot(root);
+  return lb ? { id: lb.id, lastBoot: lb } : { id: sessionId(hook) };
+}
+// Files that differ from `base` (a commit): tracked changes, committed or not, plus untracked files that are not
+// ignored. null when git cannot say (no repository, an unknown commit), and then the mtime check stands alone.
+function gitChangedSet(root, base) {
+  if (!base) return null;
+  const d = git(root, ['diff', '--relative', '--name-only', '-z', base, '--']);
+  const u = git(root, ['ls-files', '-z', '--others', '--exclude-standard']);
+  if (d.code !== 0 || u.code !== 0) return null;
+  return new Set([...d.out.split('\0'), ...u.out.split('\0')].map(s => s.trim()).filter(Boolean));
+}
 function statePath(root, id) { return path.join(root, STATE_DIR, `${id.replace(/[^A-Za-z0-9_-]/g, '_')}.json`); }
 function loadState(root, id) { try { return JSON.parse(readFull(statePath(root, id))); } catch (_) { return null; } }
 function saveState(root, id, st) { const p = statePath(root, id); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(st, null, 2)); }
@@ -499,12 +611,16 @@ function runCheck(root, today) {
   const pj = loadProjects(root);
   if (!pj.ok) failures.push(`project map unreadable: harold/projects.md (${pj.err})`);
   else { const noFolder = pj.projects.filter(p => p.folder && !fs.existsSync(path.join(root, p.folder))); if (noFolder.length) warnings.push(`project map folders missing on disk: ${noFolder.map(p => p.name + ' → ' + p.folder).join('; ')}`); }
-  const al = loadAlerts(root, today); if (!al.updated) warnings.push('alerts.md has no parseable "Last updated" line');
+  const al = loadAlerts(root, today); if (!al.updated && !al.never) warnings.push('alerts.md has no parseable "Last updated" line');
   const bl = loadBlockers(root, today); if (!bl.rows.length) warnings.push('no active blockers parsed from blockers.md');
   const ev = loadEvents(root, today);
   const ctx = { alerts: al, blockers: bl, events: ev, daily: latestDaily(root), raw: rawUncompiled(root) };
   const triggers = computeTriggers(root, today, ctx);
   const idx = indexStale(root); if (idx) warnings.push(`search index ${idx} (boot rebuilds it)`);
+  // A clone of the public starter still pushes to it: every close would end in PUSH FAILED (or worse, if it is
+  // your own public fork). The workspace belongs in a private repository of your own.
+  const origin = git(root, ['remote', 'get-url', 'origin']);
+  if (origin.code === 0 && /[/:][^/:]+\/harold-template(?:\.git)?\/?$/i.test(origin.out)) warnings.push(`origin is ${origin.out.replace(/\/\/[^@/]*@/, '//')}, which looks like the public Harold starter (or a fork of it): close would push your knowledge base there. Create your own PRIVATE repository and point origin at it: git -C "${root}" remote set-url origin <your private repo URL>, then git push -u origin HEAD. (If this already is your own private repository, rename it to silence this.)`);
   const cm = tryRead(path.join(root, 'CLAUDE.md'));
   if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
   if (TZ_INFO.warning) warnings.push(TZ_INFO.warning);
@@ -516,22 +632,32 @@ function runCheck(root, today) {
 
 
 // ───────────────────────── search index (SQLite FTS5 via bin/harold-index) ─────────────────────────
-function indexStale(root) {
-  const db = path.join(root, 'harold/search.db');
-  if (!fs.existsSync(db)) return 'missing';
-  const dbm = fs.statSync(db).mtimeMs;
-  let newest = 0;
-  for (const d of ['vault', 'harold', 'memory', 'dashboard', 'playbook']) walk(path.join(root, d), p => { if (p.endsWith('.md')) { try { const m = fs.statSync(p).mtimeMs; if (m > newest) newest = m; } catch (_) {} } return false; });
-  return newest > dbm ? 'stale' : null;
+// The index carries the link graph too (nodes, edges, broken links). harold-index decides staleness itself
+// by comparing every indexed file's mtime and size, and every deleted file, against what it last built, and
+// rebuilds incrementally (only new and changed files are read). "Today" and the stale threshold come from here,
+// so ~/.harold/env settings reach it.
+function haroldIndex(root, args, timeout = 120000) {
+  const env = { ...process.env, HAROLD_TODAY: process.env.HAROLD_TODAY || todayParts(nowDate()).iso, HAROLD_TZ: TZ };
+  for (const k of ['HAROLD_STALE_DAYS', 'HAROLD_HUB_DEGREE']) { const v = setting(k); if (v) env[k] = v; }
+  return spawnSync('python3', [path.join(root, 'bin/harold-index'), ...args], { cwd: root, encoding: 'utf8', timeout, env });
 }
-function rebuildIndex(root) {
-  const r = spawnSync('python3', [path.join(root, 'bin/harold-index'), 'build'], { cwd: root, encoding: 'utf8', timeout: 120000 });
+function indexStale(root) {
+  const r = haroldIndex(root, ['stale'], 30000);
+  if (r.status !== 0) return fs.existsSync(path.join(root, 'harold/search.db')) ? null : 'missing';
+  return (r.stdout || '').trim() || null;
+}
+function rebuildIndex(root, full) {
+  const r = haroldIndex(root, ['build', ...(full ? ['--full'] : [])]);
   return r.status === 0 ? r.stdout.trim() : `index build failed: ${(r.stderr || r.error && r.error.message || '').trim().slice(0, 200)}`;
 }
-function cmdSearch(root, args, opts) {
-  if (!args.length) { console.error('usage: harold search <query>   (FTS5: words, "phrases", prefix*, AND/OR/NOT)'); return 2; }
-  if (indexStale(root)) rebuildIndex(root);
-  const r = spawnSync('python3', [path.join(root, 'bin/harold-index'), 'search', ...(opts.json ? ['--json'] : []), args.join(' ')], { cwd: root, encoding: 'utf8', timeout: 60000 });
+// search, related and backlinks refresh the index themselves when any file changed since the last build.
+function cmdIndexQuery(root, sub, argv) {
+  if (!argv.filter(a => !a.startsWith('--')).length) {
+    console.error({ search: 'usage: harold search <query> [--json]   (FTS5: words, "phrases", prefix*, AND/OR/NOT)',
+      related: 'usage: harold related "<note path, title or topic>" [--depth 1|2] [--limit N] [--all] [--json]',
+      backlinks: 'usage: harold backlinks <note path or title> [--json]' }[sub]); return 2;
+  }
+  const r = haroldIndex(root, [sub, ...argv], 60000);
   process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); return r.status == null ? 2 : r.status;
 }
 
@@ -541,7 +667,8 @@ function linearSummary(root) {
   const r = spawnSync('node', [path.join(root, 'bin/harold-linear'), 'tasks', '--json'], { cwd: root, encoding: 'utf8', timeout: 25000 });
   if (r.status === 0) { try { const j = JSON.parse(r.stdout); return { live: true, ...j }; } catch (_) {} }
   const snap = path.join(root, 'harold/linear-snapshot.md');
-  if (fs.existsSync(snap)) return { live: false, ageH: Math.round((Date.now() - fs.statSync(snap).mtimeMs) / 3600000), text: readFull(snap) };
+  // Age from the "Pulled <ISO time>" line the snapshot carries: a fresh checkout gives every file a new mtime.
+  if (fs.existsSync(snap)) { const text = readFull(snap); const m = text.match(/Pulled (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/); const t = m ? Date.parse(m[1]) : fs.statSync(snap).mtimeMs; return { live: false, ageH: Math.round((nowDate().getTime() - t) / 3600000), text }; }
   return { live: false, none: true, err: (r.stderr || '').trim().slice(0, 160) };
 }
 
@@ -564,13 +691,37 @@ function cmdCheck(root, today, opts) {
   return c.failures.length ? 1 : 0;
 }
 
+// The newest hook boot from the last 30 minutes whose output the harness never showed to the model and that no
+// agent-run boot has picked up yet (HARNESSES[].noStartContext).
+function pendingHookBoot(root, nowMs) {
+  const dir = path.join(root, STATE_DIR);
+  let files = []; try { files = fs.readdirSync(dir).filter(f => f.endsWith('.json')); } catch (_) { return null; }
+  return files.map(f => { try { return JSON.parse(readFull(path.join(dir, f))); } catch (_) { return null; } })
+    .filter(s => s && s.contextDelivered === false && !s.adoptedAt && s.id && s.bootedAtMs && nowMs - s.bootedAtMs < 1800000 && s.sessionFile && fs.existsSync(path.join(root, s.sessionFile)))
+    .sort((a, b) => b.bootedAtMs - a.bootedAtMs)[0] || null;
+}
+
 function cmdBoot(root, today, opts, hook) {
-  // Cursor answers sessionStart in JSON; Claude Code and Codex take plain stdout as context.
-  const emit = text => console.log(hook && hook._harness === 'cursor' ? JSON.stringify({ additional_context: text }) : text);
+  // Each harness takes the context in its own shape (startReply); a terminal gets plain text.
+  const emit = text => hook ? startReply(hook, text) : console.log(text);
+  const H = (hook && HARNESSES[hook._harness]) || {};
+  // A harness whose start event fires on every turn gets the context once. Later turns get nothing, or what the
+  // last close found unfiled: these harnesses cannot (always) block at the end of a turn, so the next turn says it.
+  if (H.repeatStart && hook.first_turn !== true && !opts.full) {
+    const prev = loadState(root, sessionId(hook));
+    if (prev && prev.bootedAtMs && Date.now() - prev.bootedAtMs < 12 * 3600000) {
+      const open = prev.lastProblems || [];
+      emit(open.length ? `⛔ Harold: the check at the end of the last turn found filing incomplete. Fix this before you finish:\n${open.map(p => `  • ${p}`).join('\n')}` : '');
+      return 0;
+    }
+  }
   // Other writers may push to origin (the scheduled brief, another machine, a phone session). Fast-forward
   // first so this session reads their latest files; never merge, never block boot on it.
   const up = git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
   const pull = up.code === 0 ? git(root, ['pull', '--ff-only', '-q'], { timeout: 20000 }) : null;
+  // A fresh install (empty trigger log): scheduled work counts from today, not from the template's dates. A
+  // scheduled job never marks it: its own gate has already decided what is due.
+  if (marksWorkspaceStart(root, today)) { try { markWorkspaceStart(root, today); } catch (_) {} }
   const c = runCheck(root, today);
   if (pull && pull.code !== 0) c.warnings.push(`git pull --ff-only did not complete (${(pull.err || 'timeout').split('\n')[0].slice(0, 140)}); files from other writers may be stale`);
   if (c.failures.length) {
@@ -582,9 +733,21 @@ function cmdBoot(root, today, opts, hook) {
   let st = loadState(root, id);
   const nowMs = Date.now();
   let resumed = false;
+  // Run by the agent itself (no hook input) shortly after a hook boot in a harness that never showed that boot's
+  // output to the model: this run belongs to that session. Adopt it and print the context here.
+  let adopted = null;
+  if (!hook && !(st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000)) {
+    adopted = pendingHookBoot(root, nowMs);
+    if (adopted) {
+      adopted.adoptedAt = new Date(nowMs).toISOString();
+      saveState(root, adopted.id, adopted);
+      st = { ...adopted, id, bootedAtMs: nowMs, adoptedFrom: adopted.id };
+      saveState(root, id, st);
+    }
+  }
   // Two harnesses can both wire boot (project hooks + a plugin). A second boot within two minutes
   // prints one line instead of the whole context again: idempotent, no guessing which harness fired.
-  if (st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000 && !opts.full) {
+  if (!adopted && st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000 && !opts.full) {
     emit(`Harold already booted ${Math.round((nowMs - st.bootedAtMs) / 1000)}s ago for this session (${st.harness}); context above still applies. Session file: ${path.join(root, st.sessionFile)}`);
     return 0;
   }
@@ -594,8 +757,22 @@ function cmdBoot(root, today, opts, hook) {
     const rel = path.join(SESSIONS_DIR, `${slug}.json`);
     fs.mkdirSync(path.join(root, SESSIONS_DIR), { recursive: true });
     fs.writeFileSync(path.join(root, rel), JSON.stringify(blankSession('Booting — set this to what the session is doing'), null, 2));
-    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: hook ? `${hook._harness === 'claude' ? 'claude-code' : hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
+    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, head: gitHead(root), date: today.iso, blocks: 0, harness: hook ? `${H.label || hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
     saveState(root, id, st);
+  }
+  // The latest boot in this workspace, for a close that arrives with no session id (a tool without hooks). Scheduled
+  // jobs keep out of it: their boot is not a session anyone will close by hand.
+  if (!process.env.HAROLD_HOUSEKEEPING_JOB && process.env.HAROLD_JOB !== '1' && !/^(brief-job|housekeeping)-/.test(id)) {
+    const lbId = adopted ? adopted.id : id;
+    const lbState = adopted ? adopted : st;
+    try { fs.writeFileSync(path.join(root, LAST_BOOT), JSON.stringify({ id: lbId, root, head: lbState.head || st.head || gitHead(root), bootedAt: new Date(lbState.bootedAtMs).toISOString(), bootedAtMs: lbState.bootedAtMs, sessionFile: st.sessionFile }, null, 2) + '\n'); } catch (_) {}
+  }
+  if (H.noStartContext) {
+    // The model will never see this output. Register the session and leave the context to the agent's own
+    // `bin/harold boot`, which adopts this session; close blocks the turn until it has run.
+    if (!st.adoptedAt) { st.contextDelivered = false; saveState(root, id, st); }
+    emit(`Harold: session registered (${st.harness}); ${hook._harness} does not pass session-start output to the model, so the agent runs ${CLI(root)} boot itself to load the context.`);
+    return 0;
   }
   // Cloud runners are throwaway checkouts: tidying session files there only creates a commit to push.
   const archived = isCloudRunner() ? [] : archiveStaleSessions(root, nowMs);
@@ -606,10 +783,11 @@ function cmdBoot(root, today, opts, hook) {
   const P = rel => path.join(root, rel);
   L.push(`# HAROLD BOOTED — ${today.weekday} ${today.iso} ${today.hm} ${TZ}`);
   L.push(`Workspace root: ${root}   (use absolute paths under this root for every read and write)`);
-  L.push(`Harness: ${st.harness}${resumed ? '   (resumed existing session state)' : ''}`);
+  L.push(`Harness: ${st.harness}${adopted ? `   (this run loads the context for the session its hook registered ${Math.round((nowMs - adopted.bootedAtMs) / 1000)}s ago; that harness cannot show hook output to the model)` : resumed ? '   (resumed existing session state)' : ''}`);
   L.push(`Session file: ${P(st.sessionFile)}   ← set "task" and the working activity on your first tool call; all activities back to "sleeping" on your last. Rename it to a descriptive slug if you like; harold close will find it.`);
   if (archived.length) L.push(`Archived stale session files (>48h): ${archived.join(', ')}`);
-  L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown; ${idxNote}; replaces Obsidian)`);
+  L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown, archives included; ${idxNote}; replaces Obsidian)`);
+  L.push(`Links: ${CLI(root)} related "<person, company, project or topic>"   (follows [[links]] 1-2 hops; read only the notes that matter; state staleness and gaps)`);
   L.push(crmQueue.line);
   L.push('');
   // A successful pull already fetched origin: no second network round trip inside the 60s hook.
@@ -664,7 +842,18 @@ function cmdBoot(root, today, opts, hook) {
   return 0;
 }
 
-const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/];
+// Commit trailers name the agent that did the work. Scheduled jobs say which one in HAROLD_AGENT; a hook says
+// it through its harness. Claude (and an unknown runner: a terminal, another harness) keeps the long-standing
+// Co-Authored-By line; Codex and Cursor get a neutral Harold-Agent line rather than an address we cannot vouch for.
+// Name the agent that did the work, and only when it is known: a terminal or an unwired harness gets no line.
+function agentTrailer(harness) {
+  const a = String(process.env.HAROLD_AGENT || harness || (process.env.CLAUDE_CODE_REMOTE ? 'claude' : '')).trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  if (!a || a === 'terminal') return 'Recorded-By: bin/harold';
+  return a === 'claude' ? 'Co-Authored-By: Claude <noreply@anthropic.com>' : `Harold-Agent: ${a}`;
+}
+const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/,
+  // OpenAI keys, Cursor keys, and a pasted Codex/OAuth sign-in file (any agent the scheduled jobs can run).
+  /sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/, /crsr_[A-Za-z0-9_-]{20,}/, /"refresh_token"\s*:\s*"[^"\s]{20,}"/];
 function secretScan(root, files) {
   const hits = [];
   for (const f of files) {
@@ -704,7 +893,7 @@ const PRIORITIES = ['high', 'medium', 'low'];
 const INTERACTION_TYPES = ['call', 'email', 'meeting', 'note', 'linkedin', 'other'];
 const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
 // harold_upsert_contact's fields (tools/harold-mcp/schema.sql → contacts).
-const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'focus_area', 'investor_type'];
+const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'investor_type'];
 // The words the vault cards and playbooks use, mapped to the CRM's column names.
 const CONTACT_ALIASES = { company: 'org', type: 'category', labels: 'categories' };
 
@@ -988,29 +1177,26 @@ function changedSince(root, sinceMs, dirs) {
 // harness that loads another tool's hook file) can start close twice at once, and two closes racing
 // through git add/commit/push corrupt each other. The second one steps aside; the first does the work.
 function cmdClose(root, today, opts, hook) {
-  const id = sessionId(hook);
-  const lock = statePath(root, id).replace(/\.json$/, '.closing');
+  const sess = closeSession(root, hook);
+  const lock = statePath(root, sess.id).replace(/\.json$/, '.closing');
   try { fs.mkdirSync(path.dirname(lock), { recursive: true }); fs.mkdirSync(lock); }
   catch (e) {
     let fresh = false; try { fresh = Date.now() - fs.statSync(lock).mtimeMs < 300000; } catch (_) {}
     if (fresh) { if (hook) closeReply(hook, 'ok'); else console.log('harold close: another close for this session is running right now; it does the work'); return 0; }
     try { fs.rmSync(lock, { recursive: true, force: true }); fs.mkdirSync(lock); } catch (_) {}
   }
-  try { return closeOnce(root, today, opts, hook); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} }
+  try { return closeOnce(root, today, opts, hook, sess); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} }
 }
 
-function closeOnce(root, today, opts, hook) {
-  if (isCloudRunner()) {
-    // A scheduled job, not a session: an unfinished housekeeping job first, then the brief job, then a
-    // finished or not-due housekeeping marker.
-    const bj = loadJob(root), hj = loadHkJob(root);
-    const hjLive = hj && hj.job && !hj.finished && (hj.date === today.iso || hj.date === addDays(today.iso, -1));
-    if (hjLive) return closeHousekeepingJob(root, today, opts, hook);
-    if (bj && bj.date === today.iso) return closeBriefJob(root, today, opts, hook);
-    if (hj && hj.date === today.iso) return closeHousekeepingJob(root, today, opts, hook);
-  }
-  const id = sessionId(hook);
+function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
+  // A scheduled job, not a session, on any machine: the job is the unit of work (see currentJob).
+  const job = currentJob(root, today);
+  if (job === 'housekeeping') return closeHousekeepingJob(root, today, opts, hook);
+  if (job === 'brief') return closeBriefJob(root, today, opts, hook);
+  const id = sess.id;
   let st = loadState(root, id);
+  // No session id from the harness: this close belongs to the latest boot in this workspace.
+  if (!st && sess.lastBoot) st = { id, bootedAtMs: sess.lastBoot.bootedAtMs, head: sess.lastBoot.head, sessionFile: sess.lastBoot.sessionFile, blocks: 0 };
   const final = !!opts.final;
   const stopHookActive = !!(hook && hook.stop_hook_active);
   const problems = [], notes = [];
@@ -1023,7 +1209,15 @@ function closeOnce(root, today, opts, hook) {
   // A session left open for days would otherwise measure change since Monday and demand a Wednesday
   // note for Monday's work. Never look back past local midnight. Same-day sessions are unaffected.
   const sinceMs = Math.max(bootMs, startOfLocalDayMs());
-  if (!st) notes.push('no boot state for this session (boot did not run in this harness) — checks use a 6h window');
+  // What changed this session is measured against the commit the session booted on (st.head), so files that only
+  // look new (a fresh clone, a checkout, a sync that touched them) never count. Without any boot: only what is
+  // uncommitted now counts.
+  const baseCommit = st ? st.head : gitHead(root);
+  if (sess.lastBoot && !explicitSessionId(hook)) notes.push(`no session id from the harness: using the latest boot in this workspace (${sess.lastBoot.bootedAt || new Date(sess.lastBoot.bootedAtMs).toISOString()})`);
+  if (!st) notes.push('no boot record in this workspace (boot did not run) — only uncommitted changes from the last 6h count');
+  // A harness that never shows session-start output to the model (HARNESSES[].noStartContext): until the agent has
+  // run boot itself, it is working without its instructions.
+  if (hook && (HARNESSES[hook._harness] || {}).noStartContext && st && st.contextDelivered === false && !st.adoptedAt) problems.push(`Harold's context is not loaded: ${hook._harness} does not pass session-start hook output to the model. Run ${CLI(root)} boot now, read what it prints, and check your work against it before you finish.`);
 
   // 1. session file → sleeping (final: session=false). Deterministic, never a block.
   const sf = findSessionFile(root, st);
@@ -1037,7 +1231,8 @@ function closeOnce(root, today, opts, hook) {
 
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
-  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && !f.endsWith('search.db'));
+  const sinceBase = gitChangedSet(root, baseCommit);
+  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/graph.json' && !f.endsWith('search.db') && (!sinceBase || sinceBase.has(f)));
   const dailyDir = path.join(root, 'vault/daily');
   const todaysNotes = fs.existsSync(dailyDir) ? fs.readdirSync(dailyDir).filter(f => f.startsWith(today.iso)) : [];
   const freshNote = todaysNotes.some(f => fs.statSync(path.join(dailyDir, f)).mtimeMs >= sinceMs);
@@ -1082,7 +1277,7 @@ function closeOnce(root, today, opts, hook) {
     if ((fm.crm || '').toLowerCase() === 'none') { notes.push(`${name}: crm: none — this card is deliberately out of the CRM`); continue; }
     const filed = crmWritten.has(name.toLowerCase()) || queue.some(q => (q.contact || '').toLowerCase() === name.toLowerCase());
     const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
-    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: use harold_upsert_contact (or harold_log_interaction for a conversation). If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
+    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: write it with the CRM tool (crm_upsert_contact on the connector or harold_upsert_contact on harold-mcp; the log_interaction tool for a conversation). Written through the connector and this computer has no CRM credentials? Record it: ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","applied":"connector"}'. If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
   }
 
   // 4. scheduled work recorded
@@ -1098,6 +1293,16 @@ function closeOnce(root, today, opts, hook) {
     const line = `\n\n**Maintenance (${today.iso}):** ` + (needs.length ? needs.map(d => { const s = loggedToday(log, d.id, today).pop(); return `${d.id} → ${s ? s.status + (s.reason ? ' (' + s.reason + ')' : '') : 'NOT RECORDED'}`; }).join('; ') : 'no scheduled triggers due') + '. Recorded by harold close.\n';
     if (!readFull(note).includes(`**Maintenance (${today.iso}):**`)) fs.appendFileSync(note, line);
     notes.push(`maintenance line appended to ${path.relative(root, note)}`);
+  }
+
+  // 5b. link graph: refresh the index, then harold/graph.json (the compact graph, no note text, that a chat
+  //     surface without the workspace can read from the repo; rewritten only when it changed, so it rides along
+  //     in this commit). Never a block.
+  {
+    const g = haroldIndex(root, ['graph-json'], 60000);
+    const out = (g.stdout || '').trim().split('\n').pop();
+    if (g.status !== 0) notes.push(`graph.json not refreshed: ${(g.stderr || (g.error && g.error.message) || '').trim().split('\n').pop().slice(0, 160)}`);
+    else if (/written/.test(out)) notes.push(out);
   }
 
   // 6. commit + push. The repo is the authoritative copy; unpushed work is invisible work.
@@ -1121,7 +1326,7 @@ function closeOnce(root, today, opts, hook) {
         if (hits.length) { git(root, ['reset', '-q']); refused = true; problems.push(`refusing to commit: possible secrets in ${hits.join('; ')} — move credentials out of the repo (~/.harold/env) or add the file to .gitignore`); }
         else {
           const label = sf ? path.basename(sf, '.json') : id;
-          const cm = git(root, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+          const cm = git(root, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\n${agentTrailer(hook && hook._harness)}`]);
           if (cm.code !== 0) gitNote = `commit failed: ${cm.err.slice(0, 200)}`;
         }
       }
@@ -1163,18 +1368,22 @@ function closeOnce(root, today, opts, hook) {
   st = st || { id, bootedAtMs: bootMs, blocks: 0 };
   const isHook = !!hook;
   if (problems.length) {
-    st.blocks = (st.blocks || 0) + 1; saveState(root, id, st);
+    st.blocks = (st.blocks || 0) + 1; st.lastProblems = problems.slice(0, 8); saveState(root, id, st);
     const reason = `⛔ HAROLD CLOSE: filing incomplete (attempt ${st.blocks}). Fix these, then finish:\n` + problems.map(p => `  • ${p}`).join('\n') + (gitNote ? `\n  git: ${gitNote}` : '');
     if (isHook) {
-      if (stopHookActive && st.blocks > 3) { closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); return 0; }
-      closeReply(hook, 'block', reason); return 0;
+      if (stopHookActive && st.blocks > 3) { return closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); }
+      return closeReply(hook, 'block', reason);
     }
     console.error(reason); return 2;
   }
-  st.blocks = 0; st.lastCloseOkMs = Date.now(); if (final) { try { fs.unlinkSync(statePath(root, id)); } catch (_) {} } else saveState(root, id, st);
+  st.blocks = 0; delete st.lastProblems; st.lastCloseOkMs = Date.now();
+  if (final) {
+    try { fs.unlinkSync(statePath(root, id)); } catch (_) {}
+    const lb = readLastBoot(root); if (lb && lb.id === id) { try { fs.unlinkSync(path.join(root, LAST_BOOT)); } catch (_) {} }
+  } else saveState(root, id, st);
   const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
   const pushFailed = gitNote.startsWith('PUSH FAILED');
-  if (isHook) { closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); return 0; }
+  if (isHook) { return closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); }
   console.log(summary); return pushFailed ? 1 : 0;
 }
 
@@ -1285,8 +1494,7 @@ function cmdWhere(root, args) {
 //   brief finish   validate, stamp, record the trigger, commit ONLY the brief paths, push
 //   brief status   where today's draft is (the same text boot prints) and whether the brief is due
 //   brief notify   optional phone push through ntfy (NTFY_TOPIC), carrying no brief content
-// While a job marker for today exists in a cloud runner, harold close checks the job instead of session
-// filing: a fresh clone looks like every file changed.
+// While the job runs, harold close checks the job instead of session filing, on any machine (currentJob).
 const BRIEF_JOB = 'harold/.brief-job.json';
 const BRIEF_CONTEXT = 'harold/.brief-context.md';
 const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/crm-queue.jsonl'];
@@ -1397,7 +1605,7 @@ function cmdBrief(root, today, argv, now) {
     // A cloud runner usually has no git identity; use a neutral one rather than fail.
     const ident = ['-c', 'core.hooksPath=/dev/null'];
     if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (scheduled brief)', '-c', 'user.email=harold-brief@users.noreply.github.com');
-    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}\n\n${agentTrailer()}`]);
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) { console.log(`FAIL: commit failed: ${cm.err.slice(0, 300)}`); return 2; }
     if (git(root, ['remote', 'get-url', 'origin']).code !== 0) {
       Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: git(root, ['rev-parse', 'HEAD']).out, pushedTo: '(no origin remote: committed locally)' }); saveJob(root, job);
@@ -1446,8 +1654,8 @@ function closeBriefJob(root, today, opts, hook) {
   job.closeBlocks = (job.closeBlocks || 0) + 1; saveJob(root, job);
   const reason = `⛔ HAROLD CLOSE (scheduled brief job ${job.date}): not finished. Write harold/briefs/${job.date}.md, then run ${CLI(root)} brief finish. If the brief cannot be written, say why in one line and stop.`;
   if (!isHook) { console.error(reason); return 2; }
-  if (opts.final || job.closeBlocks > 2) { closeReply(hook, 'notice', `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.`); return 0; }
-  closeReply(hook, 'block', reason); return 0;
+  if (opts.final || job.closeBlocks > 2) { return closeReply(hook, 'notice', `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.`); }
+  return closeReply(hook, 'block', reason);
 }
 
 // ───────────────────────── housekeeping (weekly scan, monthly full audit, month-end review) ─────────────────────────
@@ -1462,7 +1670,7 @@ function closeBriefJob(root, today, opts, hook) {
 //   housekeeping finish        verify (recorded, daily note written), commit everything the job changed,
 //                              push. --anyway saves even when unfinished, with a note for the next brief.
 //   housekeeping status        cloud on or off, and the gate for each job today
-// While a job marker exists in a cloud runner, harold close checks the job instead of session filing, and
+// While the job runs (currentJob), harold close checks the job instead of session filing, on any machine, and
 // saves the work anyway when the job cannot be finished: a cloud checkout is thrown away afterwards.
 const HK_JOB_FILE = 'harold/.housekeeping-job.json';
 const HK_CONTEXT = 'harold/.housekeeping-context.md';
@@ -1474,7 +1682,44 @@ function saveHkJob(root, j) { fs.writeFileSync(path.join(root, HK_JOB_FILE), JSO
 function inHousekeepingJob(root, today) {
   if (process.env.HAROLD_HOUSEKEEPING_JOB) return true;
   const j = loadHkJob(root);
-  return !!(j && j.job && !j.finished && isCloudRunner() && (j.date === today.iso || j.date === addDays(today.iso, -1)));
+  if (!(j && j.job && !j.finished)) return false;
+  return isJobEnv() ? (j.date === today.iso || j.date === addDays(today.iso, -1)) : jobRunning(j);
+}
+
+// ───────────────────────── scheduled jobs on any machine ─────────────────────────
+// A brief or housekeeping job is the unit of work while it runs, wherever it runs: harold close checks the job,
+// not session filing (a fresh clone looks like every file changed, and a job is not a conversation).
+// One difference, because it is necessary: where only jobs run (GitHub Actions, a Claude Code routine, or any
+// scheduler that sets HAROLD_JOB=1), today's job marker is enough. On a machine that also runs your sessions (a
+// laptop, a server), the marker counts only while the job is running (started, not finished, fired in the last
+// 6 hours) or in the 10 minutes after it finished (the job agent's own last close), so a leftover marker never
+// stands in for a session's filing.
+function isJobEnv() { return isCloudRunner() || process.env.HAROLD_JOB === '1'; }
+const JOB_RUNNING_MS = 6 * 3600000, JOB_JUST_FINISHED_MS = 10 * 60000;
+function markerMs(j, k) { const t = Date.parse((j && j[k]) || ''); return isNaN(t) ? null : t; }
+function jobRunning(j) {
+  if (!j || j.finished || j.skipped) return false;
+  const f = markerMs(j, 'firedAt');
+  return f !== null && nowDate().getTime() - f < JOB_RUNNING_MS;
+}
+function jobJustFinished(j) {
+  if (!j || !j.finished || j.skipped) return false;  // a not-due gate run did no work: a session's close stays a session's
+  const f = markerMs(j, 'finishedAt'); if (f !== null) return Date.now() - f < JOB_JUST_FINISHED_MS;
+  const g = markerMs(j, 'firedAt'); return g !== null && nowDate().getTime() - g < JOB_JUST_FINISHED_MS;
+}
+// 'housekeeping' | 'brief' | null
+function currentJob(root, today) {
+  const bj = loadJob(root), hj = loadHkJob(root);
+  if (isJobEnv()) {
+    if (hj && hj.job && !hj.finished && (hj.date === today.iso || hj.date === addDays(today.iso, -1))) return 'housekeeping';
+    if (bj && bj.date === today.iso) return 'brief';
+    if (hj && hj.date === today.iso) return 'housekeeping';
+    return null;
+  }
+  if (hj && hj.job && jobRunning(hj)) return 'housekeeping';
+  if (jobRunning(bj) || jobJustFinished(bj)) return 'brief';
+  if (jobJustFinished(hj)) return 'housekeeping';
+  return null;
 }
 function housekeepingNotesNew(root) {
   let t = ''; try { t = readFull(path.join(root, HK_NOTES)); } catch (_) { return []; }
@@ -1511,7 +1756,9 @@ function housekeepingGate({ nowMs, tz = TZ, job = null, cloud = false, log = [],
   if (force) return job ? { ...g, job, due: true, reason: 'forced with --force' } : { ...g, due: false, error: true, reason: `--force needs a job name: ${HK_JOBS.join(', ')}` };
   if (!cloud) return { ...g, due: false, reason: `cloud housekeeping is off (${HK_FILE} does not say "cloud": true), so sessions run these jobs when boot lists them` };
   const reasons = [];
+  const start = workspaceStart(log);
   for (const id of job ? [job] : HK_ORDER) {
+    if (start && t.iso <= start) { reasons.push(`${id}: Harold started in this workspace on ${start}; housekeeping counts from the day after`); continue; }
     const notDay = hkDayCheck(id, t);
     if (notDay) { reasons.push(`${id}: ${notDay}`); continue; }
     const done = log.filter(e => e.id === id && e.date === t.iso && (e.status === 'ran' || e.status === 'skipped')).pop();
@@ -1561,7 +1808,7 @@ function finishHousekeepingJob(root, job, { anyway = false } = {}) {
   const ident = ['-c', 'core.hooksPath=/dev/null'];
   if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (housekeeping)', '-c', 'user.email=harold-housekeeping@users.noreply.github.com');
   if (staged.length) {
-    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}\n\nCo-Authored-By: Claude <noreply@anthropic.com>`]);
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}\n\n${agentTrailer()}`]);
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) return { code: 2, text: `FAIL: commit failed: ${cm.err.slice(0, 300)}` };
   }
   const ps = pushHead(root, ident);
@@ -1648,8 +1895,8 @@ function closeHousekeepingJob(root, today, opts, hook) {
     job = loadHkJob(root);
     job.closeBlocks = (job.closeBlocks || 0) + 1; saveHkJob(root, job);
     if (!isHook) { console.error(r.text); return 2; }
-    if (opts.final || job.closeBlocks > 2) { closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date}: ${r.text}`); return 0; }
-    closeReply(hook, 'block', `⛔ HAROLD CLOSE (housekeeping job ${job.job} ${job.date}): ${r.text}`); return 0;
+    if (opts.final || job.closeBlocks > 2) { return closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date}: ${r.text}`); }
+    return closeReply(hook, 'block', `⛔ HAROLD CLOSE (housekeeping job ${job.job} ${job.date}): ${r.text}`);
   }
   job.closeBlocks = (job.closeBlocks || 0) + 1; saveHkJob(root, job);
   const { problems } = hkProblems(root, job);
@@ -1658,9 +1905,9 @@ function closeHousekeepingJob(root, today, opts, hook) {
   if (opts.final || job.closeBlocks > 2) {
     // A cloud checkout is thrown away after the run: save what the job did, with the problems noted for the next brief.
     const r = finishHousekeepingJob(root, job, { anyway: true });
-    closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date} ended unfinished after ${job.closeBlocks} close checks. ${r.text}`); return 0;
+    return closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date} ended unfinished after ${job.closeBlocks} close checks. ${r.text}`);
   }
-  closeReply(hook, 'block', reason); return 0;
+  return closeReply(hook, 'block', reason);
 }
 
 // ───────────────────────── main ─────────────────────────
@@ -1677,23 +1924,32 @@ function main() {
   if (!root) {
     const msg = `⛔ HAROLD: cannot resolve the workspace root from ${process.cwd()} (need a directory containing AGENTS.md, playbook/, harold/). Set HAROLD_ROOT or invoke bin/harold by its own path.`;
     if (cmd === 'close' && hook) { closeReply(hook, 'notice', msg); process.exit(0); }
-    if (cmd === 'boot' && hook) { console.log(hook._harness === 'cursor' ? JSON.stringify({ additional_context: msg }) : msg); process.exit(0); }
+    if (cmd === 'boot' && hook) { startReply(hook, msg); process.exit(0); }
     console.error(msg); process.exit(2);
   }
-  // Cursor runs the Claude Code hook file too. With Cursor's own file present, the Claude one steps aside.
-  if (hook && hook._harness === 'cursor' && via === 'claude' && fs.existsSync(path.join(root, '.cursor/hooks.json'))) {
-    console.log('{}'); process.exit(0);
+  // Cursor, Grok Build and Copilot CLI also run another harness's hook file (.claude/settings.json; Grok Build also
+  // .cursor/hooks.json). Where the harness's own Harold wiring is present, the borrowed hook steps aside and the
+  // harness's own hook does the work, once. Without it, the borrowed hook does the work in the harness's format.
+  const own = hook && via && hook._harness !== via && OWN_WIRING[hook._harness];
+  if (own && (cmd === 'boot' || cmd === 'close')) {
+    let wired = false; try { wired = readFull(path.join(root, own)).includes('bin/harold'); } catch (_) {}
+    if (wired) { if (cmd === 'close') closeReply(hook, 'ok'); else if (hook._harness !== 'grok') console.log('{}'); process.exit(0); }
+  }
+  // Grok Build fires one more Stop at session end (reason channel_closed or shutdown) and ignores its answer, with
+  // half a second to run. SessionEnd does the final close; this one does nothing.
+  if (cmd === 'close' && hook && hook._harness === 'grok' && /^stop$/i.test(hook.hook_event_name) && hook.reason && hook.reason !== 'end_turn') {
+    closeReply(hook, 'ok'); process.exit(0);
   }
   // A hook with a hard time limit (Codex SessionEnd: 3 seconds at most) hands the work to a detached
   // process and returns at once. Its output goes to harold/active-sessions/.state/<session>.detached.log.
   if (opts.detach && cmd === 'close' && !process.env.HAROLD_DETACHED) {
-    const id = sessionId(hook);
+    const id = closeSession(root, hook).id;
     const log = statePath(root, id).replace(/\.json$/, '.detached.log');
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const fd = fs.openSync(log, 'a');
     const { spawn } = require('child_process');
     const child = spawn(process.execPath, [CLI(root), 'close', ...argv.slice(1).filter(a => a !== '--detach' && !a.startsWith('--via='))], {
-      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1' },
+      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1', ...(hook && hook._harness !== 'claude' && !process.env.HAROLD_AGENT ? { HAROLD_AGENT: hook._harness } : {}) },
     });
     child.unref();
     if (hook) closeReply(hook, 'ok'); else console.log(`harold close: running detached (pid ${child.pid}); output in ${path.relative(root, log)}`);
@@ -1709,11 +1965,11 @@ function main() {
     case 'replay': code = cmdReplay(root, opts); break;
     case 'brief': code = cmdBrief(root, today, argv.slice(1), now); break;
     case 'housekeeping': code = cmdHousekeeping(root, today, argv.slice(1), now); break;
-    case 'search': code = cmdSearch(root, args, opts); break;
-    case 'index': console.log(rebuildIndex(root)); break;
+    case 'search': case 'related': case 'backlinks': code = cmdIndexQuery(root, cmd, argv.slice(1)); break;
+    case 'index': console.log(rebuildIndex(root, opts.full)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=claude|codex|cursor picks the answer format; close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

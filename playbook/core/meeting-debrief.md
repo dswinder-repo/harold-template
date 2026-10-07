@@ -1,5 +1,7 @@
 # Playbook: Meeting Debrief
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Capture a meeting's outcomes and file them into the CRM, vault, tasks and facts so nothing is lost.
 **Trigger:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted notes or a transcript, or any mention of a completed meeting with a contact.
 
@@ -57,7 +59,7 @@ For each attendee, open their `vault/people/<Name>.md` profile.
 Target the gaps only. Never re-ask what the notes already answer.
 
 ### 3. Log the interaction to the CRM
-**`harold_log_interaction`**, immediately after processing:
+**`crm_log_interaction` / `harold_log_interaction`**, immediately after processing:
 - type: `meeting` (or `call`)
 - contact: the primary contact (one interaction per attendee you track)
 - subject: brief description (e.g. "Pilot scoping call")
@@ -72,13 +74,13 @@ bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":
 ### 4. Create tasks
 For each action item:
 - **Task manager (Linear by default):** clear title, owner, due date, linked to the right project (resolve it with `bin/harold where <topic>`).
-- **`harold_crm_task`** for contact-specific follow-ups ("Send case studies to Jane Doe", "Schedule follow-up with Sam Lee"), with due dates taken from what was said ("by Friday", "next week"). Queue with `bin/harold file crm` (`action: crm_task`) if the CRM is down.
+- **`crm_task` / `harold_crm_task`** for contact-specific follow-ups ("Send case studies to Jane Doe", "Schedule follow-up with Sam Lee"), with due dates taken from what was said ("by Friday", "next week"). Queue with `bin/harold file crm` (`action: crm_task`) if the CRM is down.
 - *If the task manager is unreachable:* list the tasks in today's daily note under "Tasks to create" so the next session files them.
 
 ### 5. Update the relationship
 All three together, per the CRM filing protocol:
-1. **`harold_upsert_contact`** — warmth if the meeting changed closeness (e.g. Cold → Lukewarm after a good intro, Warm → Hot after deep engagement), status (pending → active after the first real meeting), notes with the meeting context.
-2. **Pipeline** — if the meeting *established a purpose* ("they want to pilot", "they're considering investing"), add an entry with `harold_pipeline` (`add`, with that purpose and a stage). If it moved an existing purpose, `move` the stage. If it ended one, `close` it. Never create an entry the conversation didn't establish.
+1. **`crm_upsert_contact` / `harold_upsert_contact`** — warmth if the meeting changed closeness (e.g. Cold → Lukewarm after a good intro, Warm → Hot after deep engagement), status (pending → active after the first real meeting), notes with the meeting context.
+2. **Pipeline** — if the meeting *established a purpose* ("they want to pilot", "they're considering investing"), add an entry with `crm_pipeline` / `harold_pipeline` (`add`, with that purpose and a stage). If it moved an existing purpose, `move` the stage. If it ended one, `close` it. Never create an entry the conversation didn't establish.
 3. **`vault/people/<Name>.md`** — **evolve** the profile, don't just append: update `warmth`, `status`, `last_updated`, correct any facts that changed (role, company, focus), and add a Timeline entry using the template below.
 
 If the contact belongs to a project, also update that project's folder or `vault/projects/<slug>.md` card with the status change.
@@ -181,9 +183,9 @@ Best,
 ## Completion checklist
 
 - [ ] Gate checked for every attendee (`crm: none` and `HAROLD_NO_LOG_TYPES`, if set, respected)
-- [ ] `harold_log_interaction` called (or queued) for each contact
-- [ ] Tasks created in the task manager; `harold_crm_task` for contact-specific follow-ups
-- [ ] `harold_upsert_contact` called; pipeline entry added/moved/closed only if the conversation established it
+- [ ] `crm_log_interaction` / `harold_log_interaction` called (or queued) for each contact
+- [ ] Tasks created in the task manager; `crm_task` / `harold_crm_task` for contact-specific follow-ups
+- [ ] `crm_upsert_contact` / `harold_upsert_contact` called; pipeline entry added/moved/closed only if the conversation established it
 - [ ] `vault/people/` profile evolved (warmth, status, `last_updated`, timeline)
 - [ ] Atomic facts in `harold/facts.md` (contradictions updated, not duplicated)
 - [ ] `vault/meetings/` note created; intel note + analyst run if applicable

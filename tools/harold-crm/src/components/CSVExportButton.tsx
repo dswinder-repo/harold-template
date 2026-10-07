@@ -22,7 +22,6 @@ const EXPORT_COLUMNS: { key: keyof Contact; header: string }[] = [
   { key: 'website', header: 'Website' },
   { key: 'investor_type', header: 'Investor Type' },
   { key: 'region', header: 'Region' },
-  { key: 'focus_area', header: 'Focus Area' },
   { key: 'pipeline', header: 'Pipeline Purpose' },
   { key: 'pipeline_stage', header: 'Pipeline Stage' },
   { key: 'notes', header: 'Notes' },

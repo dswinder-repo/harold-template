@@ -35,7 +35,6 @@ export default function OutreachEmailPanel({
     const email = generateOutreach({
       contactName: contact.name,
       orgName: contact.org,
-      focusArea: contact.focus_area,
       region: contact.region,
       investorType: contact.investor_type,
       senderName,

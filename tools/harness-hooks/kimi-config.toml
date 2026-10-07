@@ -1,0 +1,23 @@
+# Harold for Kimi Code CLI. Kimi reads hooks only from its own config (~/.kimi/config.toml, or $KIMI_SHARE_DIR/config.toml),
+# never from a project, so copy these three blocks into that file. Each command does nothing unless the folder Kimi runs in is
+# a Harold workspace (or HAROLD_ROOT names one), so they are safe in every other project.
+#   SessionStart  boot. Kimi never shows a hook's output to the model, so this registers the session and the agent runs
+#                 bin/harold boot itself (AGENTS.md says so; close blocks the turn until it has, and that run prints the context).
+#   Stop          close. Exit 2 with the reason on stderr is how Kimi keeps the agent going (once per turn).
+#   SessionEnd    close --final, detached: Kimi waits 5 seconds at most.
+# Source: MoonshotAI/kimi-cli, docs/en/customization/hooks.md and src/kimi_cli/hooks/.
+
+[[hooks]]
+event = "SessionStart"
+command = 'r="${HAROLD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; [ -x "$r/bin/harold" ] && [ -f "$r/AGENTS.md" ] || exit 0; exec "$r/bin/harold" boot --via=kimi'
+timeout = 60
+
+[[hooks]]
+event = "Stop"
+command = 'r="${HAROLD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; [ -x "$r/bin/harold" ] && [ -f "$r/AGENTS.md" ] || exit 0; exec "$r/bin/harold" close --via=kimi'
+timeout = 240
+
+[[hooks]]
+event = "SessionEnd"
+command = 'r="${HAROLD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; [ -x "$r/bin/harold" ] && [ -f "$r/AGENTS.md" ] || exit 0; exec "$r/bin/harold" close --final --via=kimi --detach'
+timeout = 5

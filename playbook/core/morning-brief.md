@@ -1,5 +1,7 @@
 # Playbook: Morning Brief
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Start the day in three guided steps: intel, then the brief and priorities, then ready-to-run prompts.
 **Trigger:** a start-of-day opener, at any hour: "good morning", "morning", "gm", "let's get started", "let's go", "start the day", "daily brief", or the same idea in other words. **Not a trigger:** a first message that is a request about a project; do the request and do not run or offer the brief. Once the brief has run today, do not re-run it unless asked.
 
@@ -115,10 +117,11 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 1. **Task manager (Linear by default):** overdue tasks, tasks due today, tasks due this week and not started, high-priority tasks. (`bin/harold-linear tasks` if you use the helper.)
 2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 3-7 days = 🟠. A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
 3. **`harold/events.md`:** days until each event. An event fewer than 10 days out with prep not complete fires `event-prep:<event>`.
-4. **Rebuild the "Current Alerts" section** of `harold/alerts.md` from those three sources.
-5. Move resolved items to the Alert History section.
-6. Update the `Last updated: <Month D, YYYY>` line at the bottom of the file.
-7. Record the trigger:
+4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job has no CRM tool, so the alerts it rebuilds do not include stale relationships; with no CRM tool here either, say so in one line.
+5. **Rebuild the "Current Alerts" section** of `harold/alerts.md` from those sources.
+6. Move resolved items to the Alert History section.
+7. Update the `Last updated: <Month D, YYYY>` line at the bottom of the file.
+8. Record the trigger:
    ```bash
    bin/harold file trigger alerts-rebuild ran "morning brief"
    ```
@@ -131,7 +134,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 
 1. **Tasks** — overdue, due today, high priority this week, plus anything overnight changed.
 2. **Raw inbox** — check `raw/` for sources without `compiled: true`. If any: "[N] items in raw/ inbox. Run /compile to process." Do NOT auto-compile during the brief.
-3. **Pipeline health** — `harold_cadence_check` (or `harold_pipeline` with `list`). One pipeline; every entry has a purpose.
+3. **Pipeline health** — `harold_cadence_check` on harold-mcp (on the connector: `crm_pipeline` with `list`, and `crm_stale` for who has gone quiet). One pipeline; every entry has a purpose.
 
    | Contact | Purpose | Stage | Last Touch | Days Silent | Flag | Next Action |
    |---------|---------|-------|------------|-------------|------|-------------|
