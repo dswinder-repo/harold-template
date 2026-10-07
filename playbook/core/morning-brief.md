@@ -133,7 +133,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 
 1. **Tasks** — overdue, due today, high priority this week, plus anything overnight changed.
 2. **Raw inbox** — check `raw/` for sources without `compiled: true`. If any: "[N] items in raw/ inbox. Run /compile to process." Do NOT auto-compile during the brief.
-3. **Pipeline health** — `harold_cadence_check` on harold-mcp (on the connector: `crm_pipeline` with `list`, and `crm_search_contacts` for who has gone quiet). One pipeline; every entry has a purpose.
+3. **Pipeline health** — `harold_cadence_check` on harold-mcp (on the connector: `crm_pipeline` with `list`, and `crm_stale` for who has gone quiet). One pipeline; every entry has a purpose.
 
    | Contact | Purpose | Stage | Last Touch | Days Silent | Flag | Next Action |
    |---------|---------|-------|------------|-------------|------|-------------|
