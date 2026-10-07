@@ -203,51 +203,110 @@ function readStdinJson() {
 }
 
 // ───────────────────────── hook harnesses ─────────────────────────
-// boot and close run as lifecycle hooks in three harnesses. Each hook file passes --via=<harness>, so
-// the answer format never depends on guessing; the input is the fallback when the flag is absent.
-//   claude  Claude Code (.claude/settings.json). Input: session_id, hook_event_name SessionStart|Stop|
-//           SessionEnd, stop_hook_active. SessionStart: plain stdout becomes context. Stop: {} or
-//           {"decision":"block","reason"}; {"systemMessage"} for a notice.
-//   codex   Codex (.codex/hooks.json). Same event names, fields and answers as Claude Code; Stop also
-//           carries turn_id. SessionEnd may run for 3 seconds at most, so it is handed to a detached
-//           process (--detach).
-//   cursor  Cursor (.cursor/hooks.json). Input: conversation_id, cursor_version, workspace_roots,
-//           hook_event_name sessionStart|stop|sessionEnd; session_id on sessionStart/sessionEnd; stop has
-//           status and loop_count. sessionStart answers {"additional_context"}; stop answers {} or
-//           {"followup_message"}; sessionEnd's answer is ignored.
-// Cursor also runs Claude Code hooks from .claude/settings.json by default ("third-party configs"), as
-// well as its own. When the Claude Code file's hook (--via=claude) fires inside Cursor and the
-// workspace has .cursor/hooks.json, it steps aside: Cursor's own hook does the work, once.
+// boot and close run as lifecycle hooks (or from a small plugin) in every harness that has them. Each wiring
+// passes --via=<harness>, so the answer format never depends on guessing. The input is only used to notice
+// that one harness is running another harness's hook file, and as the fallback when the flag is absent.
+// Sources for every row: README.md, "Every harness with lifecycle hooks". In each harness:
+//   start   how boot's context reaches the model        stop   how close says "filing incomplete, keep going"
+//   claude   Claude Code   .claude/settings.json   SessionStart plain stdout | Stop {"decision":"block","reason"}
+//   codex    Codex         .codex/hooks.json       as Claude Code; Stop carries turn_id; SessionEnd ≤3 s → --detach
+//   cursor   Cursor        .cursor/hooks.json      {"additional_context"} | {"followup_message"}, only after a normal finish
+//   gemini   Gemini CLI    .gemini/settings.json   {"hookSpecificOutput":{"additionalContext"}} | AfterAgent {"decision":"block"}
+//   qwen     Qwen Code     .qwen/settings.json     plain stdout | as Claude Code
+//   copilot  Copilot CLI   .github/copilot/settings.json  {"additionalContext"} | agentStop {"decision":"block"}
+//   grok     Grok Build    .grok/hooks/harold.json SessionStart output is ignored (see below) | Stop as Claude Code
+//   kimi     Kimi Code     ~/.kimi/config.toml     SessionStart output is ignored | Stop: exit 2, reason on stderr
+//   goose    goose         .agents/plugins/harold  SessionStart output is a banner for the person | Stop {"decision":"block"}
+//   hermes   Hermes Agent  ~/.hermes/config.yaml   pre_llm_call {"context"} | pre_verify {"decision":"block"}
+//   cline    Cline         .clinerules/hooks/      TaskStart {"contextModification"} | TaskComplete cannot block
+//   opencode, amp, openclaw: plugins (.opencode/plugins, .amp/plugins, tools/openclaw-plugin) that run bin/harold
+//            and translate: plain stdout at start, Claude Code's answers at the end of a turn.
+// noStartContext: the harness never shows session-start output to the model. The hook still registers the session;
+//   when the agent then runs `bin/harold boot` itself (AGENTS.md tells it to), that run adopts the hook's session
+//   and prints the context, and until it has, close blocks the turn with "run bin/harold boot".
+// repeatStart: the start event fires on every turn. After the first, boot answers with nothing, or with what the
+//   last close found unfiled, because these harnesses cannot block at the end of a turn (or only sometimes can).
+const HARNESSES = {
+  claude: { label: 'claude-code' }, codex: {}, cursor: {}, gemini: {}, qwen: {}, copilot: {},
+  grok: { noStartContext: true }, kimi: { noStartContext: true }, goose: { noStartContext: true },
+  hermes: { repeatStart: true }, cline: { repeatStart: true },
+  opencode: {}, amp: {}, openclaw: {},
+};
+// A harness that also loads another harness's hook file steps aside there when its own Harold wiring exists:
+// Cursor and Grok Build load .claude/settings.json, Grok Build also .cursor/hooks.json, Copilot CLI .claude/settings.json.
+const OWN_WIRING = { cursor: '.cursor/hooks.json', grok: '.grok/hooks/harold.json', copilot: '.github/copilot/settings.json' };
 const CURSOR_EVENTS = new Set(['sessionStart', 'stop', 'sessionEnd']);
 function isCursorInput(h) { return !!(h && (typeof h.cursor_version === 'string' || Array.isArray(h.workspace_roots) || CURSOR_EVENTS.has(h.hook_event_name))); }
+// Grok Build's envelope is camelCase (hookEventName, sessionId, workspaceRoot, stopHookActive) with snake_case aliases.
+function isGrokInput(h) { return !!(h && ('workspaceRoot' in h || 'hookEventName' in h)); }
+// Copilot CLI runs .claude/settings.json hooks with its "VS Code compatible" payload, which carries an ISO timestamp
+// that neither Claude Code nor Codex sends.
+function isCopilotInput(h, via) { return !!(h && via === 'claude' && typeof h.timestamp === 'string' && !('turn_id' in h) && process.env.CLAUDECODE !== '1'); }
 function hookContext(raw, via) {
   const h = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
-  let harness = null;
-  if (isCursorInput(h)) harness = 'cursor';
-  else if (via === 'claude' || via === 'codex' || via === 'cursor') harness = via;
-  else if (h && h.hook_event_name) harness = 'turn_id' in h ? 'codex' : 'claude';
+  const seen = isCursorInput(h) ? 'cursor' : isGrokInput(h) ? 'grok' : isCopilotInput(h, via) ? 'copilot' : null;
+  let harness = seen || (via && HARNESSES[via] ? via : null);
+  if (!harness && !via && h && h.hook_event_name) harness = 'turn_id' in h ? 'codex' : 'claude';
   if (!harness) return null;  // a terminal, a script, an agent running it by hand
-  const event = (h && h.hook_event_name) || `(${via || harness})`;
+  const extra = h && h.extra && typeof h.extra === 'object' ? h.extra : {};
+  const event = (h && (h.hook_event_name || h.event || h.hookName)) || `(${via || harness})`;
   return {
     ...(h || {}),
     hook_event_name: event,
-    session_id: (h && (h.session_id || h.conversation_id)) || undefined,
-    stop_hook_active: !!(h && (h.stop_hook_active || (typeof h.loop_count === 'number' && h.loop_count > 0))),
+    session_id: (h && (h.session_id || h.sessionId || h.conversation_id || h.taskId)) || undefined,
+    stop_hook_active: !!(h && (h.stop_hook_active || h.stopHookActive || (typeof h.loop_count === 'number' && h.loop_count > 0) || extra.attempt > 0)),
+    first_turn: extra.is_first_turn,
     _harness: harness,
     _via: via || null,
   };
 }
-// What close says back to the harness. kind: ok | block | notice.
-function closeReply(hook, kind, text) {
-  if (hook._harness === 'cursor') {
-    // A follow-up restarts the agent: only after a normal finish, never after the operator aborted it.
-    if (kind === 'block' && (!hook.status || hook.status === 'completed')) return console.log(JSON.stringify({ followup_message: text }));
-    if (text) console.error(text);  // Cursor's stop has no notice field; this lands in its Hooks output channel
-    return console.log('{}');
+// How boot's context goes back to the harness.
+function startReply(hook, text) {
+  const out = o => console.log(JSON.stringify(o));
+  switch (hook && hook._harness) {
+    case 'cursor': return out({ additional_context: text });
+    case 'gemini': return out({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } });
+    case 'copilot': return out({ additionalContext: text });
+    case 'hermes': return out(text ? { context: text } : {});
+    case 'cline': return out({ cancel: false, contextModification: text, errorMessage: '' });
+    case 'goose': return out({ banner: text.split('\n')[0] });  // shown to the person, never to the model
+    case 'kimi': return;                                        // Kimi never reads it
+    default: return text ? console.log(text) : undefined;
   }
-  if (kind === 'block') return console.log(JSON.stringify({ decision: 'block', reason: text }));
-  if (kind === 'notice' && text) return console.log(JSON.stringify({ systemMessage: text }));
-  return console.log('{}');
+}
+// What close says back to the harness. kind: ok | block | notice. Returns the exit code.
+function closeReply(hook, kind, text) {
+  const out = o => console.log(JSON.stringify(o));
+  switch (hook._harness) {
+    case 'cursor':
+      // A follow-up restarts the agent: only after a normal finish, never after the operator aborted it.
+      if (kind === 'block' && (!hook.status || hook.status === 'completed')) { out({ followup_message: text }); return 0; }
+      if (text) console.error(text);  // Cursor's stop has no notice field; this lands in its Hooks output channel
+      out({}); return 0;
+    case 'kimi':
+      // Kimi never reads a hook's stdout; exit 2 with the reason on stderr is how a Stop hook keeps it going.
+      if (text) console.error(text);
+      return kind === 'block' ? 2 : 0;
+    case 'goose':
+      // stdout is goose's decision channel, and {} would read as "the hook gave no decision".
+      if (kind === 'block') { out({ decision: 'block', reason: text }); return 0; }
+      if (text) console.error(text);
+      out({ decision: 'allow' }); return 0;
+    case 'hermes':
+      // Only pre_verify can keep Hermes going; on_session_end ignores its answer.
+      if (kind === 'block' && hook.hook_event_name === 'pre_verify') { out({ decision: 'block', reason: text }); return 0; }
+      if (text) console.error(text);
+      out({}); return 0;
+    case 'cline':
+      // TaskComplete cannot keep Cline going: the problems are kept and the next TaskStart hands them to the model.
+      if (text) console.error(text);
+      out({ cancel: false, contextModification: '', errorMessage: '' }); return 0;
+    default:  // Claude Code, Codex, Gemini CLI, Qwen Code, Copilot CLI, Grok Build and the plugins
+      if (kind === 'block') out({ decision: 'block', reason: text });
+      else if (kind === 'notice' && text) out({ systemMessage: text });
+      else out({});
+      return 0;
+  }
 }
 
 // ───────────────────────── knowledge loaders ─────────────────────────
@@ -564,9 +623,30 @@ function cmdCheck(root, today, opts) {
   return c.failures.length ? 1 : 0;
 }
 
+// The newest hook boot from the last 30 minutes whose output the harness never showed to the model and that no
+// agent-run boot has picked up yet (HARNESSES[].noStartContext).
+function pendingHookBoot(root, nowMs) {
+  const dir = path.join(root, STATE_DIR);
+  let files = []; try { files = fs.readdirSync(dir).filter(f => f.endsWith('.json')); } catch (_) { return null; }
+  return files.map(f => { try { return JSON.parse(readFull(path.join(dir, f))); } catch (_) { return null; } })
+    .filter(s => s && s.contextDelivered === false && !s.adoptedAt && s.id && s.bootedAtMs && nowMs - s.bootedAtMs < 1800000 && s.sessionFile && fs.existsSync(path.join(root, s.sessionFile)))
+    .sort((a, b) => b.bootedAtMs - a.bootedAtMs)[0] || null;
+}
+
 function cmdBoot(root, today, opts, hook) {
-  // Cursor answers sessionStart in JSON; Claude Code and Codex take plain stdout as context.
-  const emit = text => console.log(hook && hook._harness === 'cursor' ? JSON.stringify({ additional_context: text }) : text);
+  // Each harness takes the context in its own shape (startReply); a terminal gets plain text.
+  const emit = text => hook ? startReply(hook, text) : console.log(text);
+  const H = (hook && HARNESSES[hook._harness]) || {};
+  // A harness whose start event fires on every turn gets the context once. Later turns get nothing, or what the
+  // last close found unfiled: these harnesses cannot (always) block at the end of a turn, so the next turn says it.
+  if (H.repeatStart && hook.first_turn !== true && !opts.full) {
+    const prev = loadState(root, sessionId(hook));
+    if (prev && prev.bootedAtMs && Date.now() - prev.bootedAtMs < 12 * 3600000) {
+      const open = prev.lastProblems || [];
+      emit(open.length ? `⛔ Harold: the check at the end of the last turn found filing incomplete. Fix this before you finish:\n${open.map(p => `  • ${p}`).join('\n')}` : '');
+      return 0;
+    }
+  }
   // Other writers may push to origin (the scheduled brief, another machine, a phone session). Fast-forward
   // first so this session reads their latest files; never merge, never block boot on it.
   const up = git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
@@ -582,9 +662,21 @@ function cmdBoot(root, today, opts, hook) {
   let st = loadState(root, id);
   const nowMs = Date.now();
   let resumed = false;
+  // Run by the agent itself (no hook input) shortly after a hook boot in a harness that never showed that boot's
+  // output to the model: this run belongs to that session. Adopt it and print the context here.
+  let adopted = null;
+  if (!hook && !(st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000)) {
+    adopted = pendingHookBoot(root, nowMs);
+    if (adopted) {
+      adopted.adoptedAt = new Date(nowMs).toISOString();
+      saveState(root, adopted.id, adopted);
+      st = { ...adopted, id, bootedAtMs: nowMs, adoptedFrom: adopted.id };
+      saveState(root, id, st);
+    }
+  }
   // Two harnesses can both wire boot (project hooks + a plugin). A second boot within two minutes
   // prints one line instead of the whole context again: idempotent, no guessing which harness fired.
-  if (st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000 && !opts.full) {
+  if (!adopted && st && st.bootedAtMs && nowMs - st.bootedAtMs < 120000 && !opts.full) {
     emit(`Harold already booted ${Math.round((nowMs - st.bootedAtMs) / 1000)}s ago for this session (${st.harness}); context above still applies. Session file: ${path.join(root, st.sessionFile)}`);
     return 0;
   }
@@ -594,8 +686,15 @@ function cmdBoot(root, today, opts, hook) {
     const rel = path.join(SESSIONS_DIR, `${slug}.json`);
     fs.mkdirSync(path.join(root, SESSIONS_DIR), { recursive: true });
     fs.writeFileSync(path.join(root, rel), JSON.stringify(blankSession('Booting — set this to what the session is doing'), null, 2));
-    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: hook ? `${hook._harness === 'claude' ? 'claude-code' : hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
+    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: hook ? `${H.label || hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
     saveState(root, id, st);
+  }
+  if (H.noStartContext) {
+    // The model will never see this output. Register the session and leave the context to the agent's own
+    // `bin/harold boot`, which adopts this session; close blocks the turn until it has run.
+    if (!st.adoptedAt) { st.contextDelivered = false; saveState(root, id, st); }
+    emit(`Harold: session registered (${st.harness}); ${hook._harness} does not pass session-start output to the model, so the agent runs ${CLI(root)} boot itself to load the context.`);
+    return 0;
   }
   // Cloud runners are throwaway checkouts: tidying session files there only creates a commit to push.
   const archived = isCloudRunner() ? [] : archiveStaleSessions(root, nowMs);
@@ -606,7 +705,7 @@ function cmdBoot(root, today, opts, hook) {
   const P = rel => path.join(root, rel);
   L.push(`# HAROLD BOOTED — ${today.weekday} ${today.iso} ${today.hm} ${TZ}`);
   L.push(`Workspace root: ${root}   (use absolute paths under this root for every read and write)`);
-  L.push(`Harness: ${st.harness}${resumed ? '   (resumed existing session state)' : ''}`);
+  L.push(`Harness: ${st.harness}${adopted ? `   (this run loads the context for the session its hook registered ${Math.round((nowMs - adopted.bootedAtMs) / 1000)}s ago; that harness cannot show hook output to the model)` : resumed ? '   (resumed existing session state)' : ''}`);
   L.push(`Session file: ${P(st.sessionFile)}   ← set "task" and the working activity on your first tool call; all activities back to "sleeping" on your last. Rename it to a descriptive slug if you like; harold close will find it.`);
   if (archived.length) L.push(`Archived stale session files (>48h): ${archived.join(', ')}`);
   L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown; ${idxNote}; replaces Obsidian)`);
@@ -1033,6 +1132,9 @@ function closeOnce(root, today, opts, hook) {
   // note for Monday's work. Never look back past local midnight. Same-day sessions are unaffected.
   const sinceMs = Math.max(bootMs, startOfLocalDayMs());
   if (!st) notes.push('no boot state for this session (boot did not run in this harness) — checks use a 6h window');
+  // A harness that never shows session-start output to the model (HARNESSES[].noStartContext): until the agent has
+  // run boot itself, it is working without its instructions.
+  if (hook && (HARNESSES[hook._harness] || {}).noStartContext && st && st.contextDelivered === false && !st.adoptedAt) problems.push(`Harold's context is not loaded: ${hook._harness} does not pass session-start hook output to the model. Run ${CLI(root)} boot now, read what it prints, and check your work against it before you finish.`);
 
   // 1. session file → sleeping (final: session=false). Deterministic, never a block.
   const sf = findSessionFile(root, st);
@@ -1172,18 +1274,18 @@ function closeOnce(root, today, opts, hook) {
   st = st || { id, bootedAtMs: bootMs, blocks: 0 };
   const isHook = !!hook;
   if (problems.length) {
-    st.blocks = (st.blocks || 0) + 1; saveState(root, id, st);
+    st.blocks = (st.blocks || 0) + 1; st.lastProblems = problems.slice(0, 8); saveState(root, id, st);
     const reason = `⛔ HAROLD CLOSE: filing incomplete (attempt ${st.blocks}). Fix these, then finish:\n` + problems.map(p => `  • ${p}`).join('\n') + (gitNote ? `\n  git: ${gitNote}` : '');
     if (isHook) {
-      if (stopHookActive && st.blocks > 3) { closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); return 0; }
-      closeReply(hook, 'block', reason); return 0;
+      if (stopHookActive && st.blocks > 3) { return closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); }
+      return closeReply(hook, 'block', reason);
     }
     console.error(reason); return 2;
   }
-  st.blocks = 0; st.lastCloseOkMs = Date.now(); if (final) { try { fs.unlinkSync(statePath(root, id)); } catch (_) {} } else saveState(root, id, st);
+  st.blocks = 0; delete st.lastProblems; st.lastCloseOkMs = Date.now(); if (final) { try { fs.unlinkSync(statePath(root, id)); } catch (_) {} } else saveState(root, id, st);
   const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
   const pushFailed = gitNote.startsWith('PUSH FAILED');
-  if (isHook) { closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); return 0; }
+  if (isHook) { return closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); }
   console.log(summary); return pushFailed ? 1 : 0;
 }
 
@@ -1455,8 +1557,8 @@ function closeBriefJob(root, today, opts, hook) {
   job.closeBlocks = (job.closeBlocks || 0) + 1; saveJob(root, job);
   const reason = `⛔ HAROLD CLOSE (scheduled brief job ${job.date}): not finished. Write harold/briefs/${job.date}.md, then run ${CLI(root)} brief finish. If the brief cannot be written, say why in one line and stop.`;
   if (!isHook) { console.error(reason); return 2; }
-  if (opts.final || job.closeBlocks > 2) { closeReply(hook, 'notice', `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.`); return 0; }
-  closeReply(hook, 'block', reason); return 0;
+  if (opts.final || job.closeBlocks > 2) { return closeReply(hook, 'notice', `Scheduled brief job ${job.date} ended unfinished after ${job.closeBlocks} close checks.`); }
+  return closeReply(hook, 'block', reason);
 }
 
 // ───────────────────────── housekeeping (weekly scan, monthly full audit, month-end review) ─────────────────────────
@@ -1657,8 +1759,8 @@ function closeHousekeepingJob(root, today, opts, hook) {
     job = loadHkJob(root);
     job.closeBlocks = (job.closeBlocks || 0) + 1; saveHkJob(root, job);
     if (!isHook) { console.error(r.text); return 2; }
-    if (opts.final || job.closeBlocks > 2) { closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date}: ${r.text}`); return 0; }
-    closeReply(hook, 'block', `⛔ HAROLD CLOSE (housekeeping job ${job.job} ${job.date}): ${r.text}`); return 0;
+    if (opts.final || job.closeBlocks > 2) { return closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date}: ${r.text}`); }
+    return closeReply(hook, 'block', `⛔ HAROLD CLOSE (housekeeping job ${job.job} ${job.date}): ${r.text}`);
   }
   job.closeBlocks = (job.closeBlocks || 0) + 1; saveHkJob(root, job);
   const { problems } = hkProblems(root, job);
@@ -1667,9 +1769,9 @@ function closeHousekeepingJob(root, today, opts, hook) {
   if (opts.final || job.closeBlocks > 2) {
     // A cloud checkout is thrown away after the run: save what the job did, with the problems noted for the next brief.
     const r = finishHousekeepingJob(root, job, { anyway: true });
-    closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date} ended unfinished after ${job.closeBlocks} close checks. ${r.text}`); return 0;
+    return closeReply(hook, 'notice', `Housekeeping job ${job.job} ${job.date} ended unfinished after ${job.closeBlocks} close checks. ${r.text}`);
   }
-  closeReply(hook, 'block', reason); return 0;
+  return closeReply(hook, 'block', reason);
 }
 
 // ───────────────────────── main ─────────────────────────
@@ -1686,12 +1788,21 @@ function main() {
   if (!root) {
     const msg = `⛔ HAROLD: cannot resolve the workspace root from ${process.cwd()} (need a directory containing AGENTS.md, playbook/, harold/). Set HAROLD_ROOT or invoke bin/harold by its own path.`;
     if (cmd === 'close' && hook) { closeReply(hook, 'notice', msg); process.exit(0); }
-    if (cmd === 'boot' && hook) { console.log(hook._harness === 'cursor' ? JSON.stringify({ additional_context: msg }) : msg); process.exit(0); }
+    if (cmd === 'boot' && hook) { startReply(hook, msg); process.exit(0); }
     console.error(msg); process.exit(2);
   }
-  // Cursor runs the Claude Code hook file too. With Cursor's own file present, the Claude one steps aside.
-  if (hook && hook._harness === 'cursor' && via === 'claude' && fs.existsSync(path.join(root, '.cursor/hooks.json'))) {
-    console.log('{}'); process.exit(0);
+  // Cursor, Grok Build and Copilot CLI also run another harness's hook file (.claude/settings.json; Grok Build also
+  // .cursor/hooks.json). Where the harness's own Harold wiring is present, the borrowed hook steps aside and the
+  // harness's own hook does the work, once. Without it, the borrowed hook does the work in the harness's format.
+  const own = hook && via && hook._harness !== via && OWN_WIRING[hook._harness];
+  if (own && (cmd === 'boot' || cmd === 'close')) {
+    let wired = false; try { wired = readFull(path.join(root, own)).includes('bin/harold'); } catch (_) {}
+    if (wired) { if (cmd === 'close') closeReply(hook, 'ok'); else if (hook._harness !== 'grok') console.log('{}'); process.exit(0); }
+  }
+  // Grok Build fires one more Stop at session end (reason channel_closed or shutdown) and ignores its answer, with
+  // half a second to run. SessionEnd does the final close; this one does nothing.
+  if (cmd === 'close' && hook && hook._harness === 'grok' && /^stop$/i.test(hook.hook_event_name) && hook.reason && hook.reason !== 'end_turn') {
+    closeReply(hook, 'ok'); process.exit(0);
   }
   // A hook with a hard time limit (Codex SessionEnd: 3 seconds at most) hands the work to a detached
   // process and returns at once. Its output goes to harold/active-sessions/.state/<session>.detached.log.
@@ -1702,7 +1813,7 @@ function main() {
     const fd = fs.openSync(log, 'a');
     const { spawn } = require('child_process');
     const child = spawn(process.execPath, [CLI(root), 'close', ...argv.slice(1).filter(a => a !== '--detach' && !a.startsWith('--via='))], {
-      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1' },
+      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1', ...(hook && hook._harness !== 'claude' && !process.env.HAROLD_AGENT ? { HAROLD_AGENT: hook._harness } : {}) },
     });
     child.unref();
     if (hook) closeReply(hook, 'ok'); else console.log(`harold close: running detached (pid ${child.pid}); output in ${path.relative(root, log)}`);
@@ -1722,7 +1833,7 @@ function main() {
     case 'index': console.log(rebuildIndex(root)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=claude|codex|cursor picks the answer format; close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

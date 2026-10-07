@@ -1,0 +1,4 @@
+#!/bin/sh
+# Cline TaskStart hook (Cline runs .clinerules/hooks/<HookName> with the event as JSON on stdin). Harold boot: the first run of a task gets the context, later runs only what the last check found unfiled.
+# bin/harold resolves the workspace from its own path, so this works from any working directory.
+exec "$(dirname "$0")/../../bin/harold" boot --via=cline

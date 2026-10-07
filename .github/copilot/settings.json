@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "sessionStart": [
+      { "type": "command", "bash": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" boot --via=copilot", "timeoutSec": 60 }
+    ],
+    "agentStop": [
+      { "type": "command", "bash": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" close --via=copilot", "timeoutSec": 240 }
+    ],
+    "sessionEnd": [
+      { "type": "command", "bash": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" close --final --via=copilot --detach", "timeoutSec": 10 }
+    ]
+  }
+}

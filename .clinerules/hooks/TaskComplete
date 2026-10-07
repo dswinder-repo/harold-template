@@ -1,0 +1,4 @@
+#!/bin/sh
+# Cline TaskComplete hook (Cline runs .clinerules/hooks/<HookName> with the event as JSON on stdin). Harold close: check filing, commit and push. Cline cannot keep the agent going from here, so it runs detached (no 30-second hook limit) and the next TaskStart carries any problems.
+# bin/harold resolves the workspace from its own path, so this works from any working directory.
+exec "$(dirname "$0")/../../bin/harold" close --via=cline --detach
