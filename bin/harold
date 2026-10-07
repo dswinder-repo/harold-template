@@ -18,12 +18,14 @@
  *   harold brief   the scheduled morning brief: start | finish | status | notify
  *   harold housekeeping  the scheduled weekly scan / full audit / month-end review: start | finish | status
  *   harold where   resolve a topic or alias to a folder via harold/projects.md
+ *   harold search | related | backlinks   full-text search and the link graph (bin/harold-index)
  *
  * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path):
  *   HAROLD_TZ          IANA time zone, e.g. America/Chicago. Default: the zone of the machine running this.
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
  *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
  *                      as CRM interactions (records are still kept current). Empty by default.
+ *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
  *   HAROLD_NOW         TESTING ONLY: pretend it is this time ("2026-10-05T06:10:00" is wall-clock time
  *                      in HAROLD_TZ; add Z or an offset for an absolute instant).
  *
@@ -575,22 +577,32 @@ function runCheck(root, today) {
 
 
 // ───────────────────────── search index (SQLite FTS5 via bin/harold-index) ─────────────────────────
-function indexStale(root) {
-  const db = path.join(root, 'harold/search.db');
-  if (!fs.existsSync(db)) return 'missing';
-  const dbm = fs.statSync(db).mtimeMs;
-  let newest = 0;
-  for (const d of ['vault', 'harold', 'memory', 'dashboard', 'playbook']) walk(path.join(root, d), p => { if (p.endsWith('.md')) { try { const m = fs.statSync(p).mtimeMs; if (m > newest) newest = m; } catch (_) {} } return false; });
-  return newest > dbm ? 'stale' : null;
+// The index carries the link graph too (nodes, edges, broken links). harold-index decides staleness itself
+// by comparing every indexed file's mtime and size, and every deleted file, against what it last built, and
+// rebuilds incrementally (only new and changed files are read). "Today" and the stale threshold come from here,
+// so ~/.harold/env settings reach it.
+function haroldIndex(root, args, timeout = 120000) {
+  const env = { ...process.env, HAROLD_TODAY: process.env.HAROLD_TODAY || todayParts(nowDate()).iso, HAROLD_TZ: TZ };
+  for (const k of ['HAROLD_STALE_DAYS', 'HAROLD_HUB_DEGREE']) { const v = setting(k); if (v) env[k] = v; }
+  return spawnSync('python3', [path.join(root, 'bin/harold-index'), ...args], { cwd: root, encoding: 'utf8', timeout, env });
 }
-function rebuildIndex(root) {
-  const r = spawnSync('python3', [path.join(root, 'bin/harold-index'), 'build'], { cwd: root, encoding: 'utf8', timeout: 120000 });
+function indexStale(root) {
+  const r = haroldIndex(root, ['stale'], 30000);
+  if (r.status !== 0) return fs.existsSync(path.join(root, 'harold/search.db')) ? null : 'missing';
+  return (r.stdout || '').trim() || null;
+}
+function rebuildIndex(root, full) {
+  const r = haroldIndex(root, ['build', ...(full ? ['--full'] : [])]);
   return r.status === 0 ? r.stdout.trim() : `index build failed: ${(r.stderr || r.error && r.error.message || '').trim().slice(0, 200)}`;
 }
-function cmdSearch(root, args, opts) {
-  if (!args.length) { console.error('usage: harold search <query>   (FTS5: words, "phrases", prefix*, AND/OR/NOT)'); return 2; }
-  if (indexStale(root)) rebuildIndex(root);
-  const r = spawnSync('python3', [path.join(root, 'bin/harold-index'), 'search', ...(opts.json ? ['--json'] : []), args.join(' ')], { cwd: root, encoding: 'utf8', timeout: 60000 });
+// search, related and backlinks refresh the index themselves when any file changed since the last build.
+function cmdIndexQuery(root, sub, argv) {
+  if (!argv.filter(a => !a.startsWith('--')).length) {
+    console.error({ search: 'usage: harold search <query> [--json]   (FTS5: words, "phrases", prefix*, AND/OR/NOT)',
+      related: 'usage: harold related "<note path, title or topic>" [--depth 1|2] [--limit N] [--all] [--json]',
+      backlinks: 'usage: harold backlinks <note path or title> [--json]' }[sub]); return 2;
+  }
+  const r = haroldIndex(root, [sub, ...argv], 60000);
   process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); return r.status == null ? 2 : r.status;
 }
 
@@ -708,7 +720,8 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`Harness: ${st.harness}${adopted ? `   (this run loads the context for the session its hook registered ${Math.round((nowMs - adopted.bootedAtMs) / 1000)}s ago; that harness cannot show hook output to the model)` : resumed ? '   (resumed existing session state)' : ''}`);
   L.push(`Session file: ${P(st.sessionFile)}   ← set "task" and the working activity on your first tool call; all activities back to "sleeping" on your last. Rename it to a descriptive slug if you like; harold close will find it.`);
   if (archived.length) L.push(`Archived stale session files (>48h): ${archived.join(', ')}`);
-  L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown; ${idxNote}; replaces Obsidian)`);
+  L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown, archives included; ${idxNote}; replaces Obsidian)`);
+  L.push(`Links: ${CLI(root)} related "<person, company, project or topic>"   (follows [[links]] 1-2 hops; read only the notes that matter; state staleness and gaps)`);
   L.push(crmQueue.line);
   L.push('');
   // A successful pull already fetched origin: no second network round trip inside the 60s hook.
@@ -1148,7 +1161,7 @@ function closeOnce(root, today, opts, hook) {
 
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
-  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && !f.endsWith('search.db'));
+  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/graph.json' && !f.endsWith('search.db'));
   const dailyDir = path.join(root, 'vault/daily');
   const todaysNotes = fs.existsSync(dailyDir) ? fs.readdirSync(dailyDir).filter(f => f.startsWith(today.iso)) : [];
   const freshNote = todaysNotes.some(f => fs.statSync(path.join(dailyDir, f)).mtimeMs >= sinceMs);
@@ -1209,6 +1222,16 @@ function closeOnce(root, today, opts, hook) {
     const line = `\n\n**Maintenance (${today.iso}):** ` + (needs.length ? needs.map(d => { const s = loggedToday(log, d.id, today).pop(); return `${d.id} → ${s ? s.status + (s.reason ? ' (' + s.reason + ')' : '') : 'NOT RECORDED'}`; }).join('; ') : 'no scheduled triggers due') + '. Recorded by harold close.\n';
     if (!readFull(note).includes(`**Maintenance (${today.iso}):**`)) fs.appendFileSync(note, line);
     notes.push(`maintenance line appended to ${path.relative(root, note)}`);
+  }
+
+  // 5b. link graph: refresh the index, then harold/graph.json (the compact graph, no note text, that a chat
+  //     surface without the workspace can read from the repo; rewritten only when it changed, so it rides along
+  //     in this commit). Never a block.
+  {
+    const g = haroldIndex(root, ['graph-json'], 60000);
+    const out = (g.stdout || '').trim().split('\n').pop();
+    if (g.status !== 0) notes.push(`graph.json not refreshed: ${(g.stderr || (g.error && g.error.message) || '').trim().split('\n').pop().slice(0, 160)}`);
+    else if (/written/.test(out)) notes.push(out);
   }
 
   // 6. commit + push. The repo is the authoritative copy; unpushed work is invisible work.
@@ -1829,11 +1852,11 @@ function main() {
     case 'replay': code = cmdReplay(root, opts); break;
     case 'brief': code = cmdBrief(root, today, argv.slice(1), now); break;
     case 'housekeeping': code = cmdHousekeeping(root, today, argv.slice(1), now); break;
-    case 'search': code = cmdSearch(root, args, opts); break;
-    case 'index': console.log(rebuildIndex(root)); break;
+    case 'search': case 'related': case 'backlinks': code = cmdIndexQuery(root, cmd, argv.slice(1)); break;
+    case 'index': console.log(rebuildIndex(root, opts.full)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown (auto-rebuilds when stale)\n  index              rebuild harold/search.db\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

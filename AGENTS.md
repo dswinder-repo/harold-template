@@ -131,12 +131,18 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 4. **Check `harold/alerts.md`** — urgent items and time-sensitive flags. **If its `Last updated:` date is more than a day old, say so and rebuild the Current Alerts section from the task manager + `harold/blockers.md` + `harold/events.md` before proceeding.** Alerts is a derived view that must be regenerated from source, never hand-maintained.
 5. **Check `harold/blockers.md`** — active blockers and dependencies
 6. **Load learnings** — boot prints every `critical` entry of `harold/learnings.jsonl`; also read the `warning`/`info` entries matching the current session's project. These are lessons from past corrections. They are binding.
-7. **Search the knowledge base** (`bin/harold search "<query>"`) — pull today's and yesterday's daily notes from `vault/daily/` and search for the people and companies relevant to today's agenda.
+7. **Search the knowledge base** (`bin/harold search "<query>"`) — pull today's and yesterday's daily notes from `vault/daily/` and search for the people and companies relevant to today's agenda, then `bin/harold related` to follow their links.
 8. **Run `playbook/core/pre-flight-verification.md`** before presenting ANY output
 9. **If the morning brief is triggered** → follow `playbook/core/morning-brief.md` EXACTLY (3-step sequence, do not improvise)
 10. **When new intel surfaces** → follow `playbook/core/analyst.md`: apply insights across the knowledge base, don't just mention them
 
-> **On-demand context:** search with `bin/harold search` for people, companies, intel, decisions and meetings. Don't load everything upfront; pull what you need, when you need it. Resolve any project to its folder with `bin/harold where <topic>`.
+> **On-demand context: follow the links.** To answer about a person, company, project or decision:
+> 1. `bin/harold search "<query>"` finds the note (each hit lists its top linked notes);
+> 2. `bin/harold related "<note or topic>"` follows the links 1 hop (`--depth 2` for 2): people ↔ companies ↔ projects ↔ decisions ↔ meetings, with how each is linked and the line where;
+> 3. read only the notes that matter. Never load whole folders;
+> 4. always state staleness and gaps: `related` ends with a `gaps:` line (stale after `HAROLD_STALE_DAYS`, default 30 days; broken links; orphans; no meeting notes). Say them in the answer.
+>
+> `bin/harold backlinks "<note>"` lists everything pointing at a note. Links are `[[wikilinks]]` (by filename, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related` and similar). The graph lives in `harold/search.db` (gitignored, rebuilt by boot, search and close whenever a file changed); `harold/graph.json` is its committed copy (paths, titles, types, dates and links, no note text), rewritten by close, so a surface without the workspace can read the graph from the repository (for example with the connector's `harold_read`). Archived notes (`archive/` folders, `*-archive.md`) are indexed and searchable, and never flagged stale. Resolve any project to its folder with `bin/harold where <topic>`.
 
 ---
 
@@ -193,6 +199,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 | **Events** | `harold/events.md` |
 | **Facts & Metrics** | `harold/facts.md` |
 | **Project Map** | `harold/projects.md` (`bin/harold where <topic>`) |
+| **Search index + link graph** | `harold/search.db` (gitignored; `bin/harold search`, `related`, `backlinks`) and its committed copy `harold/graph.json` |
 | **Cross-file cascade rules** | `harold/sync-map.md` |
 | **Lessons** | `harold/learnings.jsonl` (`bin/harold file learning`) |
 | **Scheduled-work log** | `harold/trigger-log.jsonl` (`bin/harold file trigger`) |
