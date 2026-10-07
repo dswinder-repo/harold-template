@@ -175,7 +175,6 @@ function buildPrepUserContext(
   const existingData = [
     contact.location && `- Location: ${contact.location}`,
     contact.investor_type && `- Investor Type: ${contact.investor_type}`,
-    contact.focus_area && `- Focus Area: ${contact.focus_area}`,
     contact.website && `- Website: ${contact.website}`,
     contact.region && `- Region: ${contact.region}`,
     contact.warmth && `- Warmth: ${contact.warmth}`,

@@ -47,7 +47,6 @@ export type ResearchAPIResponse = ResearchResponse | ResearchError
 
 export const ENRICHABLE_FIELDS: Record<string, string> = {
   name: 'Name',
-  focus_area: 'Focus Area',
   website: 'Website',
   investor_type: 'Investor Type',
   region: 'Region',
@@ -107,7 +106,7 @@ Be specific. "They invest in agritech" is too vague. "They led a $5M Series A fo
 Format each on its own line:
 - **field_name**: suggested_value | confidence: high/medium/low | source: URL or description
 
-Valid field names: name, focus_area, website, investor_type, region, location, email, phone, notes
+Valid field names: name, website, investor_type, region, location, email, phone, notes
 - For **name**: ONLY suggest if the current contact name is "TBD" or a placeholder. In that case, identify the best point of contact at the organization and suggest their full name.
 - For **notes**: compile the 3-5 most actionable intelligence findings into a concise paragraph (2-4 sentences) that would help someone prepare for a conversation with this contact. Focus on talking points, mutual interests, and relationship angles.
 - For **website**: prefer the organization's main website. If not found, a LinkedIn profile URL is acceptable.
@@ -122,7 +121,6 @@ function buildUserContext(contact: Contact, category: string): string {
   const existingData = [
     contact.location && `- Location: ${contact.location}`,
     contact.investor_type && `- Investor Type: ${contact.investor_type}`,
-    contact.focus_area && `- Focus Area: ${contact.focus_area}`,
     contact.website && `- Website: ${contact.website}`,
     contact.region && `- Region: ${contact.region}`,
     contact.email && `- Email: ${contact.email}`,
@@ -223,7 +221,6 @@ ${existingData ? `\n**Existing CRM Data:**\n${existingData}` : ''}
 
 6. For "Suggested CRM Field Updates":
    - Always suggest a **notes** update with a 2-4 sentence intelligence summary capturing the key talking points and relationship angles.
-   - Update **focus_area** if you can be more specific than what we currently have.
    - Update **location** and **region** if we're missing them.${contactInfoRequest}${tbdRequest}
 
 7. If information is sparse, say so directly. "Limited public information available for this individual" is better than fabricated filler.`

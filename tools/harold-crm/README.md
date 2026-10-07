@@ -71,6 +71,7 @@ In the Supabase dashboard open **SQL Editor** and run each file in
 | `004_security.sql` | Members-only row-level security on every table, and the private attachments bucket |
 | `005_realtime.sql` | Adds the tables to Supabase Realtime |
 | `006_bug_reports.sql` | Bug reports and feature requests, members-only like everything else |
+| `007_drop_focus_area.sql` | Retires a contact field that older databases still have; does nothing on a new one |
 
 Every file is safe to run again. With the Supabase CLI you can instead link the
 project from this folder and run `supabase db push`.
@@ -82,7 +83,8 @@ change it, copy it over `001_harold_core.sql`; the workspace test
 To check the migrations without touching any database, run
 `pnpm test:migrations` in this folder: it applies them to a throwaway in-memory
 Postgres (PGlite, with Supabase's `auth` schema, roles and realtime publication
-stubbed) and checks the security rules.
+stubbed), checks the security rules and upgrades a database set up before 007.
+The workspace test `tests/crm.test.js` runs it too, once `pnpm install` has run here.
 
 ### 3. Create your account
 

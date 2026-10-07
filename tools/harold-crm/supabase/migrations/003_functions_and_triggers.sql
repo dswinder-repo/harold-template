@@ -295,7 +295,6 @@ begin
     website           = case when coalesce(p.website, '') = ''       then s.website       else p.website end,
     warmth            = case when coalesce(p.warmth, '') = ''        then s.warmth        else p.warmth end,
     region            = case when coalesce(p.region, '') = ''        then s.region        else p.region end,
-    focus_area        = case when coalesce(p.focus_area, '') = ''    then s.focus_area    else p.focus_area end,
     investor_type     = case when coalesce(p.investor_type, '') = '' then s.investor_type else p.investor_type end,
     organization_id   = coalesce(p.organization_id, s.organization_id),
     last_contacted_at = greatest(p.last_contacted_at, s.last_contacted_at),

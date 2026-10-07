@@ -845,7 +845,7 @@ const PRIORITIES = ['high', 'medium', 'low'];
 const INTERACTION_TYPES = ['call', 'email', 'meeting', 'note', 'linkedin', 'other'];
 const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
 // harold_upsert_contact's fields (tools/harold-mcp/schema.sql → contacts).
-const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'focus_area', 'investor_type'];
+const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'investor_type'];
 // The words the vault cards and playbooks use, mapped to the CRM's column names.
 const CONTACT_ALIASES = { company: 'org', type: 'category', labels: 'categories' };
 

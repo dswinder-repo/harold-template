@@ -97,7 +97,7 @@ export async function logInteraction(sb: Sb, a: LogInteractionArgs): Promise<Crm
 
 export interface UpsertArgs {
   contact_id?: string; name: string; org?: string; category?: string; categories?: string[]; warmth?: string; status?: string; priority?: string;
-  email?: string; phone?: string; location?: string; website?: string; notes?: string; region?: string; focus_area?: string; investor_type?: string;
+  email?: string; phone?: string; location?: string; website?: string; notes?: string; region?: string; investor_type?: string;
 }
 
 export async function upsertContact(sb: Sb, a: UpsertArgs): Promise<CrmResult> {
@@ -116,7 +116,7 @@ export async function upsertContact(sb: Sb, a: UpsertArgs): Promise<CrmResult> {
   } else if (existingId) isUpdate = true;
 
   const record: Record<string, unknown> = {};
-  for (const k of ["name", "org", "category", "warmth", "status", "priority", "email", "phone", "location", "website", "notes", "region", "focus_area", "investor_type"] as const) {
+  for (const k of ["name", "org", "category", "warmth", "status", "priority", "email", "phone", "location", "website", "notes", "region", "investor_type"] as const) {
     if (a[k] !== undefined) record[k] = a[k];
   }
   let contact: { id: string; name: string; org?: string; warmth?: string; status?: string; category?: string };
@@ -155,13 +155,13 @@ export async function upsertContact(sb: Sb, a: UpsertArgs): Promise<CrmResult> {
 
 export interface SearchArgs {
   name?: string; org?: string; category?: string; purpose?: string; project?: string; pipeline_stage?: string; warmth?: string; status?: string;
-  priority?: string; region?: string; focus_area?: string; investor_type?: string; keyword?: string; has_email?: boolean; has_phone?: boolean;
+  priority?: string; region?: string; investor_type?: string; keyword?: string; has_email?: boolean; has_phone?: boolean;
   limit?: number; order_by?: "name" | "updated_at" | "created_at" | "warmth" | "org";
 }
 
 export async function searchContacts(sb: Sb, a: SearchArgs): Promise<CrmResult> {
   const lim = Math.min(Math.max(a.limit || 25, 1), 100);
-  let q = sb.from("contacts").select("id, name, org, category, warmth, status, priority, email, phone, location, region, focus_area, investor_type, notes, updated_at");
+  let q = sb.from("contacts").select("id, name, org, category, warmth, status, priority, email, phone, location, region, investor_type, notes, updated_at");
   let pipelineIds: string[] | null = null;
   if (a.purpose || a.project || a.pipeline_stage) {
     let pq = sb.from("contact_pipelines").select("contact_id");
@@ -179,14 +179,13 @@ export async function searchContacts(sb: Sb, a: SearchArgs): Promise<CrmResult> 
   if (a.status) q = q.eq("status", a.status);
   if (a.priority) q = q.eq("priority", a.priority);
   if (a.region) q = q.ilike("region", `%${likeEsc(a.region)}%`);
-  if (a.focus_area) q = q.ilike("focus_area", `%${likeEsc(a.focus_area)}%`);
   if (a.investor_type) q = q.ilike("investor_type", `%${likeEsc(a.investor_type)}%`);
   if (a.has_email) q = q.not("email", "is", null).neq("email", "");
   if (a.has_phone) q = q.not("phone", "is", null).neq("phone", "");
   if (a.keyword) {
     // PostgREST or() syntax: strip characters that would break the filter grammar.
     const k = a.keyword.replace(/[,()*%\\]/g, " ").trim();
-    if (k) q = q.or(["name", "org", "notes", "focus_area", "region", "location"].map(f => `${f}.ilike.*${k}*`).join(","));
+    if (k) q = q.or(["name", "org", "notes", "region", "location"].map(f => `${f}.ilike.*${k}*`).join(","));
   }
   const sortField = a.order_by || "updated_at";
   q = q.order(sortField, { ascending: sortField === "name" || sortField === "org" }).limit(lim);
@@ -232,7 +231,7 @@ export async function getContact(sb: Sb, a: GetArgs): Promise<CrmResult> {
   for (const cp of (pipes || []) as Record<string, string>[]) {
     L.push(`**Pipeline:** **${cp.stage}**${cp.purpose ? ` — ${cp.purpose}` : ""}${cp.project ? ` [${cp.project}]` : ""} (since ${day(cp.entered_at)})${cp.closed_at ? ` — closed ${day(cp.closed_at)}${cp.outcome ? `: ${cp.outcome}` : ""}` : ""}`);
   }
-  for (const [k, label] of [["email", "Email"], ["phone", "Phone"], ["location", "Location"], ["region", "Region"], ["focus_area", "Focus Area"], ["investor_type", "Investor Type"], ["website", "Website"], ["notes", "Notes"]] as const) {
+  for (const [k, label] of [["email", "Email"], ["phone", "Phone"], ["location", "Location"], ["region", "Region"], ["investor_type", "Investor Type"], ["website", "Website"], ["notes", "Notes"]] as const) {
     if (c[k]) L.push(`**${label}:** ${c[k]}`);
   }
   L.push(`**Created:** ${day(c.created_at)}`, `**Updated:** ${day(c.updated_at)}`, `**ID:** ${c.id}`);

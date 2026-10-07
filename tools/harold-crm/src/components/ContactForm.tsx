@@ -46,7 +46,6 @@ export default function ContactForm({ initialData, mode = 'create', categories }
     warmth: (initialData?.warmth ?? '') as WarmthType,
     investor_type: (initialData?.investor_type ?? '') as InvestorType,
     region: (initialData?.region ?? '') as RegionType,
-    focus_area: initialData?.focus_area ?? '',
   })
 
   const [saving, setSaving] = useState(false)
@@ -272,17 +271,6 @@ export default function ContactForm({ initialData, mode = 'create', categories }
               <option key={r} value={r}>{r || '(none)'}</option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium" style={labelStyle}>Focus Area</label>
-          <input
-            type="text"
-            value={form.focus_area}
-            onChange={(e) => handleChange('focus_area', e.target.value)}
-            className="w-full rounded-md px-3 py-2 text-sm outline-none"
-            style={inputStyle}
-          />
         </div>
 
         {/* Notes */}

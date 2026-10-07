@@ -67,7 +67,6 @@ export async function POST(request: NextRequest) {
     phone: 'Phone number (with country code)',
     website: 'Organization or personal website URL',
     location: 'City and country (e.g. "Lisbon, Portugal")',
-    focus_area: 'Primary professional sector or focus area (brief, 2-5 words)',
   }
 
   const fieldsPrompt = missingFields
@@ -169,7 +168,7 @@ Rules:
     }
 
     // Map to SuggestedUpdate format
-    const allowedFields = new Set(['email', 'phone', 'website', 'location', 'focus_area'])
+    const allowedFields = new Set(['email', 'phone', 'website', 'location'])
     const updates = suggestions
       .filter((s) => allowedFields.has(s.field) && s.value)
       .map((s) => ({

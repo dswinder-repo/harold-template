@@ -35,7 +35,6 @@ export default function BulkOutreachPanel({ contacts, onClose }: BulkOutreachPan
         const email = generateOutreach({
           contactName: c.name,
           orgName: c.org,
-          focusArea: c.focus_area,
           region: c.region,
           investorType: c.investor_type,
           senderName,

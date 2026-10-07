@@ -577,7 +577,6 @@ export default function ContactDetailPage() {
                   options={getOptions('region').map((r) => ({ value: r, label: r || '(none)' }))}
                   onSave={handleSave}
                 />
-                <EditableField label="Focus Area" value={contact.focus_area} field="focus_area" onSave={handleSave} />
 
                 <div className="sm:col-span-2">
                   <EditableField label="Notes" value={contact.notes} field="notes" type="textarea" onSave={handleSave} />

@@ -183,9 +183,9 @@ function ContactMiniCard({ contact, color }: { contact: Contact; color: string }
         <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
           {contact.name}
         </p>
-        {(contact.pipeline_stage || contact.focus_area) && (
+        {contact.pipeline_stage && (
           <p className="truncate text-xs" style={{ color: 'var(--text-faint)' }}>
-            {contact.pipeline_stage ? `${contact.pipeline_stage}: ${contact.pipeline}` : contact.focus_area}
+            {`${contact.pipeline_stage}: ${contact.pipeline}`}
           </p>
         )}
       </div>

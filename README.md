@@ -44,7 +44,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored.
 
    **b. Optional: the web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
-   - In the SQL editor, run `tools/harold-crm/supabase/migrations/002` to `006` in order (`001` is the schema you already ran).
+   - In the SQL editor, run `tools/harold-crm/supabase/migrations/002` to `007` in order (`001` is the schema you already ran).
    - Deploy it on Vercel or any Next.js host: import this repository with **Root Directory** `tools/harold-crm`, and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the publishable key, never the service role key).
    - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
    - Optional AI (contact research, enrichment, meeting prep) runs on Google Gemini, whose free tier covers it: get a free API key at [Google AI Studio](https://aistudio.google.com/apikey) and set it as `GEMINI_API_KEY` in the host's environment variables (and in `tools/harold-crm/.env.local` for local development). Without it, the AI buttons say AI is off.
@@ -180,7 +180,7 @@ playbook/
 tools/
   harold-mcp/              MCP server (14 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
   harold-crm/              optional CRM web app (Next.js + Supabase) on the same database; deploy with root directory
-                           tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-006 add the app's tables
+                           tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-007 add the app's tables
   harold-connector/        hosted MCP server (Vercel or any Node host): reach the knowledge base and the CRM
                            from any MCP client (chat apps, coding agents, scheduled jobs), on any device
   harold-plugin/           Cowork plugin: the same hooks + a "boot Harold" skill

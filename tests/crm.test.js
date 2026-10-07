@@ -102,3 +102,22 @@ test('close asks for a touched contact to be filed unless its type is in HAROLD_
   assert.strictEqual(r.code, 0, `${r.out}\n${r.err}`);
   assert.match(r.out, /Sam Lee: type team is in HAROLD_NO_LOG_TYPES/);
 });
+
+// Focus Area is retired. Nothing in the starter reads, writes or mentions it, except the migration that
+// drops the column from databases created before it was retired, and that migration's test.
+test('Focus Area is gone: only migration 007 (and its test) names it, to drop it', () => {
+  const files = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: SRC, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
+  const self = path.relative(SRC, __filename);
+  const hits = files.filter(f => f !== self && f !== 'tools/harold-crm/supabase/migrations/007_drop_focus_area.sql' && f !== 'tools/harold-crm/scripts/test-migrations.mjs' && fs.existsSync(path.join(SRC, f)) && fs.statSync(path.join(SRC, f)).isFile())
+    .filter(f => /focus[ _]?area/i.test(fs.readFileSync(path.join(SRC, f), 'utf8')));
+  assert.deepStrictEqual(hits, []);
+  assert.match(fs.readFileSync(path.join(SRC, 'tools/harold-crm/supabase/migrations/007_drop_focus_area.sql'), 'utf8'), /drop column if exists focus_area/);
+});
+
+// The app's migrations, applied to an in-memory Postgres (PGlite), including the upgrade of a database that
+// predates 007. Needs the app's dev dependencies (cd tools/harold-crm && pnpm install); skipped without them.
+test('CRM migrations apply, re-run, and upgrade an older database', { skip: !fs.existsSync(path.join(SRC, 'tools/harold-crm/node_modules/@electric-sql/pglite')) && 'run pnpm install in tools/harold-crm first' }, () => {
+  const r = spawnSync(process.execPath, [path.join(SRC, 'tools/harold-crm/scripts/test-migrations.mjs')], { cwd: path.join(SRC, 'tools/harold-crm'), encoding: 'utf8', timeout: 180000 });
+  assert.strictEqual(r.status, 0, (r.stdout || '').split('\n').filter(l => /FAIL/.test(l)).join('\n') + (r.stderr || '').slice(-2000));
+  assert.match(r.stdout, /All checks passed/);
+});

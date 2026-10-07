@@ -15,7 +15,7 @@ interface DuplicateDetectionPanelProps {
 
 type MergeField = 'name' | 'org' | 'email' | 'phone' | 'category' | 'status' |
   'priority' | 'warmth' | 'location' | 'website' | 'investor_type' | 'region' |
-  'focus_area' | 'notes'
+  'notes'
 
 const MERGE_FIELDS: { key: MergeField; label: string }[] = [
   { key: 'name', label: 'Name' },
@@ -30,7 +30,6 @@ const MERGE_FIELDS: { key: MergeField; label: string }[] = [
   { key: 'website', label: 'Website' },
   { key: 'investor_type', label: 'Investor Type' },
   { key: 'region', label: 'Region' },
-  { key: 'focus_area', label: 'Focus Area' },
   { key: 'notes', label: 'Notes' },
 ]
 

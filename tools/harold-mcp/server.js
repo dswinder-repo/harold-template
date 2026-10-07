@@ -1312,10 +1312,9 @@ server.tool(
     website: z.string().optional().describe("Website URL"),
     notes: z.string().optional().describe("Freeform notes about this contact"),
     region: z.string().optional().describe("Geographic region (e.g., 'Pacific Northwest', 'Western Europe')"),
-    focus_area: z.string().optional().describe("Professional focus or sector"),
     investor_type: z.string().optional().describe("For investors: VC, Angel, PE, Family Office, etc."),
   },
-  async ({ contact_id, name, org, category, categories: multiCategories, warmth, status, priority, email, phone, location, website, notes, region, focus_area, investor_type }) => {
+  async ({ contact_id, name, org, category, categories: multiCategories, warmth, status, priority, email, phone, location, website, notes, region, investor_type }) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
@@ -1364,7 +1363,6 @@ server.tool(
       if (website !== undefined) record.website = website;
       if (notes !== undefined) record.notes = notes;
       if (region !== undefined) record.region = region;
-      if (focus_area !== undefined) record.focus_area = focus_area;
       if (investor_type !== undefined) record.investor_type = investor_type;
 
       let resultContact;
@@ -1458,15 +1456,14 @@ server.tool(
     status: z.string().optional().describe("Filter by status: active, pending, cold, archived"),
     priority: z.string().optional().describe("Filter by priority: high, medium, low"),
     region: z.string().optional().describe("Filter by geographic region (fuzzy match)"),
-    focus_area: z.string().optional().describe("Filter by professional focus/sector (fuzzy match)"),
     investor_type: z.string().optional().describe("Filter by investor type: VC, Angel, PE, Family Office, etc."),
-    keyword: z.string().optional().describe("General keyword search across name, org, notes, focus_area, region"),
+    keyword: z.string().optional().describe("General keyword search across name, org, notes, region, location"),
     has_email: z.boolean().optional().describe("If true, only return contacts with email addresses"),
     has_phone: z.boolean().optional().describe("If true, only return contacts with phone numbers"),
     limit: z.number().optional().describe("Max results to return (default: 25, max: 100)"),
     order_by: z.enum(["name", "updated_at", "created_at", "warmth", "org"]).optional().describe("Sort field (default: updated_at)"),
   },
-  async ({ name, org, category, purpose, project, pipeline_stage, warmth, status, priority, region, focus_area, investor_type, keyword, has_email, has_phone, limit: maxResults, order_by }) => {
+  async ({ name, org, category, purpose, project, pipeline_stage, warmth, status, priority, region, investor_type, keyword, has_email, has_phone, limit: maxResults, order_by }) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
@@ -1475,7 +1472,7 @@ server.tool(
 
       let query = supabase
         .from("contacts")
-        .select("id, name, org, category, warmth, status, priority, email, phone, location, region, focus_area, investor_type, notes, updated_at, contact_pipelines ( stage, purpose, project )");
+        .select("id, name, org, category, warmth, status, priority, email, phone, location, region, investor_type, notes, updated_at, contact_pipelines ( stage, purpose, project )");
 
       // One pipeline: filter by stage, by why they are in it, or by project.
       let pipelineContactIds = null;
@@ -1502,7 +1499,6 @@ server.tool(
       if (status) query = query.eq("status", status);
       if (priority) query = query.eq("priority", priority);
       if (region) query = query.ilike("region", `%${region}%`);
-      if (focus_area) query = query.ilike("focus_area", `%${focus_area}%`);
       if (investor_type) query = query.ilike("investor_type", `%${investor_type}%`);
       if (has_email) query = query.not("email", "is", null).neq("email", "");
       if (has_phone) query = query.not("phone", "is", null).neq("phone", "");
@@ -1510,7 +1506,7 @@ server.tool(
       // Keyword search — use OR across multiple text fields
       if (keyword) {
         query = query.or(
-          `name.ilike.%${keyword}%,org.ilike.%${keyword}%,notes.ilike.%${keyword}%,focus_area.ilike.%${keyword}%,region.ilike.%${keyword}%,location.ilike.%${keyword}%`
+          `name.ilike.%${keyword}%,org.ilike.%${keyword}%,notes.ilike.%${keyword}%,region.ilike.%${keyword}%,location.ilike.%${keyword}%`
         );
       }
 
@@ -1668,7 +1664,6 @@ server.tool(
       if (contact.phone) lines.push(`**Phone:** ${contact.phone}`);
       if (contact.location) lines.push(`**Location:** ${contact.location}`);
       if (contact.region) lines.push(`**Region:** ${contact.region}`);
-      if (contact.focus_area) lines.push(`**Focus Area:** ${contact.focus_area}`);
       if (contact.investor_type) lines.push(`**Investor Type:** ${contact.investor_type}`);
       if (contact.website) lines.push(`**Website:** ${contact.website}`);
       if (contact.notes) lines.push(`**Notes:** ${contact.notes}`);

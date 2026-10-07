@@ -16,7 +16,6 @@ export interface OutreachTemplateInput {
   contactName: string
   /** Organization name (generic). Aliases: fundName, orgName */
   orgName: string
-  focusArea?: string
   region?: string
   investorType?: string
   senderName: string
@@ -85,12 +84,8 @@ function signoff(input: OutreachTemplateInput): string {
 
 function pickInvestorHook(input: OutreachTemplateInput): string {
   const fund = resolveOrg(input)
-  const fa = (input.focusArea ?? '').toLowerCase()
   const rg = (input.region ?? '').toLowerCase()
 
-  if (fund && fa) {
-    return `Given ${fund}’s work in ${input.focusArea}, I thought there could be real alignment with what we’re building.`
-  }
   if (fund && rg) {
     return `Given ${fund}’s focus on ${input.region}, I wanted to share what we’re building.`
   }
@@ -122,9 +117,6 @@ ${signoff(input)}`,
 
 function pickAgencyHook(input: OutreachTemplateInput): string {
   const org = resolveOrg(input)
-  if (org && input.focusArea) {
-    return `Given ${org}’s work on ${input.focusArea}, I wanted to introduce what we’re building and explore where it might support your programs.`
-  }
   if (org) {
     return `I wanted to reach out to explore potential areas of collaboration with ${org}.`
   }
@@ -152,9 +144,6 @@ ${signoff(input)}`,
 
 function pickPartnerHook(input: OutreachTemplateInput): string {
   const org = resolveOrg(input)
-  if (org && input.focusArea) {
-    return `I’ve been following ${org}’s work in ${input.focusArea} and see a natural opportunity to work together.`
-  }
   if (org) {
     return `I wanted to reach out to explore potential synergies between ${org} and what we’re building.`
   }

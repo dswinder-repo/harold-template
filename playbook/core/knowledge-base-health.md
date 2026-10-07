@@ -53,7 +53,7 @@ A lighter pass, done alongside the weekly summary.
 
 7. **Weekly summary**
    - Write the summary to `harold/weekly-summary.md` (overwrite; the previous week lives in git history), or, if you prefer not to keep that file, into today's daily note `vault/daily/YYYY-MM-DD-weekly-scan.md`. Pick one and stay consistent.
-   - Contents: tasks completed this week (Monday to Friday) from the task manager (Linear by default; `bin/harold-linear tasks` if the helper is configured), tasks in progress, open blockers, events in the next two weeks, and next week's focus areas.
+   - Contents: tasks completed this week (Monday to Friday) from the task manager (Linear by default; `bin/harold-linear tasks` if the helper is configured), tasks in progress, open blockers, events in the next two weeks, and next week's priorities.
    - **If the task manager is unreachable:** write the summary from `vault/daily/` notes and say in the summary that task data is missing.
 
 8. **Working folder cleanup**
