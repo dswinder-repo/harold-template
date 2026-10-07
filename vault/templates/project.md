@@ -6,6 +6,7 @@ type:                 # employer | client | venture | workstream | personal | to
 folder: {{path/relative/to/workspace}}
 owner: [YOUR NAME]
 last_updated: {{date}}
+next_step:            # one line: the next thing that moves it forward (bin/harold pulse shows it)
 ---
 
 # {{name}}
