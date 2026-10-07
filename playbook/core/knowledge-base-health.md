@@ -1,5 +1,7 @@
 # Playbook: Knowledge Base Health Check
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Keep the knowledge base accurate, consistent and fresh: a weekly quick scan and a monthly full audit.
 **Trigger:** Scheduled: every Friday (Quick Scan, `weekly-scan`), 1st of the month (Full Audit, `full-audit`). On demand: "run health check", "audit the knowledge base", after a restructure or file migration.
 
@@ -104,7 +106,7 @@ bin/harold search "Dough"
 grep -rli "Globecs\|Globax" vault/ dashboard/ harold/
 ```
 
-**Action:** fix every hit. Check the CRM record too (`harold_search_contacts`); a wrong spelling there spreads into every draft.
+**Action:** fix every hit. Check the CRM record too (`crm_search_contacts` / `harold_search_contacts`); a wrong spelling there spreads into every draft.
 
 ### Step 3: Cross-file consistency
 
@@ -196,7 +198,7 @@ Action: fix non-standard values; add missing frontmatter.
 
 **Purpose:** keep the CRM and the vault people cards saying the same thing about each person.
 
-**Read** the CRM with whatever CRM tool this session has (the harold-mcp tools `harold_search_contacts` and `harold_get_contact`, or a CRM connector). If none is available in this run, skip this step and say so in the report.
+**Read** the CRM with whatever CRM tool this session has (`crm_search_contacts` and `crm_get_contact` on the connector, `harold_search_contacts` and `harold_get_contact` on harold-mcp). If none is available in this run, skip this step and say so in the report.
 
 **Compare** every `vault/people/` card (except `crm: none`) with its CRM record, and correct the CRM when the vault (or a dated meeting or daily note) clearly shows the right value:
 
@@ -210,7 +212,7 @@ Action: fix non-standard values; add missing frontmatter.
 
 **Never:** log an interaction, change last-contacted dates, add, move or close pipeline entries, create tasks, merge or delete contacts, or touch any record's interactions. Anything ambiguous (two plausible values, a possible duplicate, warmth without clear evidence) is not corrected: it goes to the operator as one line in the report (and, for an unattended run, in `harold/briefs/housekeeping-notes.md` under `## New`).
 
-**How to write:** with `harold_upsert_contact`, passing the `contact_id` of the existing record (a name correction cannot be matched by the new name; omit it only when creating) and only the corrected fields. If the CRM tool is a connector that `bin/harold` cannot see from here, record each write so `bin/harold close` counts it as filed: `bin/harold file crm '{"contact":"<name>","action":"upsert_contact","applied":"connector","payload":{...the same fields...}}'`. If the CRM is unreachable, queue the correction without `applied` (`bin/harold file crm '{"contact":"<name>","action":"upsert_contact","payload":{"contact_id":"<id>", ...}}'`); boot and close apply it once the CRM answers.
+**How to write:** with `crm_upsert_contact` / `harold_upsert_contact`, passing the `contact_id` of the existing record (a name correction cannot be matched by the new name; omit it only when creating) and only the corrected fields. If the CRM tool is a connector that `bin/harold` cannot see from here, record each write so `bin/harold close` counts it as filed: `bin/harold file crm '{"contact":"<name>","action":"upsert_contact","applied":"connector","payload":{...the same fields...}}'`. If the CRM is unreachable, queue the correction without `applied` (`bin/harold file crm '{"contact":"<name>","action":"upsert_contact","payload":{"contact_id":"<id>", ...}}'`); boot and close apply it once the CRM answers.
 
 **Record:** list every correction (contact, field, old → new, the evidence file) in the report.
 
@@ -220,7 +222,7 @@ List files in `raw/` without `compiled: true` in frontmatter. Report the count a
 
 ### Step 11: Size budgets (slim-down)
 
-Every session loads a few files at startup, so their size is a cost paid on every boot. `bin/harold boot` warns when one is over its character budget (defaults: `AGENTS.md` 30k, `memory/CLAUDE.md` 10k, `dashboard/status.md` 10k, `dashboard/processes.md` 15k, `harold/alerts.md` 8k; change any of them under `"size_budgets"` in `harold/housekeeping.json`).
+Every session loads a few files at startup, so their size is a cost paid on every boot. `bin/harold boot` warns when one is over its character budget (defaults: `AGENTS.md` 36k, `memory/CLAUDE.md` 10k, `dashboard/status.md` 10k, `dashboard/processes.md` 15k, `harold/alerts.md` 8k; change any of them under `"size_budgets"` in `harold/housekeeping.json`).
 
 For each file over budget, move the sections that are clearly stale (superseded, finished, or older than 90 days and not referenced by an active project in `harold/projects.md`) into an archive file beside it, `<same folder>/<name>-archive.md`, leaving a one-line pointer where they were. `bin/harold search` still finds them; sessions no longer load them. Never move rules, instructions or anything current. If a file cannot get under budget without a judgment call, leave the rest and tell the operator in one line. Nothing is deleted.
 

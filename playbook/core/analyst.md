@@ -1,5 +1,7 @@
 # Playbook: Analyst
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Cross-reference new intel against the whole knowledge base and apply it to every file it touches.
 **Trigger:** New intel from a morning brief, meeting, market data, news, strategy session or team update; "analyze this", "what does this mean for us", "implications", "/analyst".
 
@@ -33,13 +35,13 @@ Name the signal precisely. Not "Acme Corp is using AI" but "Acme Corp moved its 
 |--------|---------------|---------------|
 | **Active projects** | Every entry with `status: active`: its `keywords`, `people` and folder | `harold/projects.md`, `bin/harold where <topic>` |
 | **Competitors** | The `competitors` line of each active entry | `harold/projects.md` |
-| **Upcoming events and meetings** | Who are we meeting, and about what? Does this change the conversation? | `harold/events.md`, calendar, `harold_get_contact` |
+| **Upcoming events and meetings** | Who are we meeting, and about what? Does this change the conversation? | `harold/events.md`, calendar, `crm_get_contact` / `harold_get_contact` |
 | **Blockers** | Does this resolve, worsen, or create a blocker? | `harold/blockers.md` |
-| **Key relationships** | Does it touch an active contact, a pipeline entry, or a target? | `harold_search_contacts`, `harold_pipeline list`, `bin/harold search "<name or company>"` |
+| **Key relationships** | Does it touch an active contact, a pipeline entry, or a target? | `crm_search_contacts` / `harold_search_contacts`, `crm_pipeline list` / `harold_pipeline list`, `bin/harold search "<name or company>"` |
 | **Strategy and narrative** | Does it strengthen or weaken your positioning, fundraising story or pitch to partners? | `dashboard/strategy.md` |
 | **Product / offering** | Roadmap, priorities, pricing, competitive position | the relevant project folder |
 | **Policy watchlist** | [YOUR POLICY WATCHLIST] (e.g. trade, tax, immigration, sector regulation) | `dashboard/strategy.md` |
-| **Geographic focus** | [YOUR REGIONS] | `harold_search_contacts` by region |
+| **Geographic focus** | [YOUR REGIONS] | `crm_search_contacts` / `harold_search_contacts` by region |
 | **Current priorities** | Does it change what matters this week? | `memory/CLAUDE.md` |
 | **Personal context** | Location, travel, commitments the operator has told Harold about | `memory/CLAUDE.md` |
 
@@ -51,11 +53,11 @@ For each real connection, update the file or system it touches:
 
 | Where it's relevant | What to update | CRM action |
 |---------------------|----------------|------------|
-| An upcoming meeting | Add a "Current events — talking points" section to the meeting prep | `harold_crm_task` → "Mention [intel] to [contact]" if actionable |
-| Investor / buyer conversations | Talking points or objection handling in the project folder | `harold_crm_task` → "Reference [intel] in next touch with [contact]" if relevant |
+| An upcoming meeting | Add a "Current events — talking points" section to the meeting prep | `crm_task` / `harold_crm_task` → "Mention [intel] to [contact]" if actionable |
+| Investor / buyer conversations | Talking points or objection handling in the project folder | `crm_task` / `harold_crm_task` → "Reference [intel] in next touch with [contact]" if relevant |
 | Strategy | Positioning, messaging or competitive analysis in `dashboard/strategy.md` or the project folder | — |
 | Product / roadmap | Flag it to whoever owns the roadmap (a task in the task manager, Linear by default) | — |
-| A contact's situation changed (they raised, moved, got promoted) | Their `vault/people/` profile (`last_updated`) | `harold_upsert_contact` → notes, maybe warmth |
+| A contact's situation changed (they raised, moved, got promoted) | Their `vault/people/` profile (`last_updated`) | `crm_upsert_contact` / `harold_upsert_contact` → notes, maybe warmth |
 | A company changed | `vault/companies/<Company>.md` | — |
 | A blocker | `harold/blockers.md` (resolve, update, or add) | — |
 | A date or deadline | `harold/events.md` | — |

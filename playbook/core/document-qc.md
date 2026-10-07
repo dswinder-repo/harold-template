@@ -1,5 +1,7 @@
 # Playbook: Document QC
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Fact-check a final document before it leaves the building, and fix the knowledge base wherever it was wrong.
 **Trigger:** The operator signals a document is final: "this is final", "ready to send", "lock it in", "good to go", "send this to [person]", "finalize this".
 
@@ -69,7 +71,7 @@ Cross-reference document content against the knowledge base:
 
 | Check | Against |
 |-------|---------|
-| People: names, spellings, titles, companies | `vault/people/<name>.md` (frontmatter `company`, `role`) **and** the CRM record (`harold_search_contacts` / `harold_get_contact`) |
+| People: names, spellings, titles, companies | `vault/people/<name>.md` (frontmatter `company`, `role`) **and** the CRM record (`crm_search_contacts` / `harold_search_contacts` / `crm_get_contact` / `harold_get_contact`) |
 | Metrics and numbers (revenue, users, raise size, headcount) | `harold/facts.md` first, then `dashboard/status.md` |
 | Terminology and product names | `harold/facts.md`, `memory/glossary.md` |
 | Dates and timelines | `harold/events.md`, project milestones |
@@ -129,7 +131,7 @@ When external sources conflict with the knowledge base:
 3. **If the KB was wrong, fix it at the source, all places at once:**
    - The file the wrong value came from (project doc, `dashboard/status.md`, `harold/events.md`, etc.).
    - `harold/facts.md` if it is a discrete fact (`harold_fact`, or edit the file).
-   - **For a person:** the CRM contact record comes first (`harold_upsert_contact` with the corrected title/company/name), then `vault/people/<name>.md` (fix the field, bump `last_updated`). A correction is not an interaction: do not call `harold_log_interaction` for it. If the CRM is unreachable, queue the update: `bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{...}}'`.
+   - **For a person:** the CRM contact record comes first (`crm_upsert_contact` / `harold_upsert_contact` with the corrected title/company/name), then `vault/people/<name>.md` (fix the field, bump `last_updated`). A correction is not an interaction: do not call `crm_log_interaction` / `harold_log_interaction` for it. If the CRM is unreachable, queue the update: `bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{...}}'`.
    - If the error came from something Harold introduced (misheard, assumed, mis-transcribed) or the operator corrected it, file a lesson immediately: `bin/harold file learning '{"severity":"critical","project":"global","category":"facts","lesson":"..."}'` (use category `names` or `titles` where that fits).
 4. **Update the document** with the correct information.
 5. **Note the fix** in today's daily note: `bin/harold file daily <slug> "Document QC: corrected [X] to [Y] in [files], source [citation]"`.

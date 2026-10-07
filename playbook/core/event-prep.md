@@ -1,5 +1,7 @@
 # Playbook: Event Prep & Debrief
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Prepare for events before they arrive, capture well on the day, and debrief afterwards so nothing is lost.
 **Trigger:** Boot lists an event in `harold/events.md` less than 10 days out with Prep Status not Complete (trigger id `event-prep:<event name>`); "prep me for [event]"; "debrief [event]"; an event's end date has passed with the debrief open.
 
@@ -42,7 +44,7 @@ Every session, `bin/harold boot` checks this table against the system date. Any 
 2. **Identify goals.**
    - Business goals: meetings, partnerships, deals.
    - Content goals: what to capture (trends, quotes, observations) for later writing.
-   - Relationship goals: who to meet or reconnect with. For each person, check the vault profile (`vault/people/`) and the CRM (`harold_get_contact`) for warmth, history and any open pipeline entry.
+   - Relationship goals: who to meet or reconnect with. For each person, check the vault profile (`vault/people/`) and the CRM (`crm_get_contact` / `harold_get_contact`) for warmth, history and any open pipeline entry.
 
 3. **Write the prep brief** using the template below. Save it in the project's folder (resolved through `harold/projects.md`), for example `<project>/notes/YYYY-MM-DD-<event>-prep.md`. Run `playbook/core/pre-flight-verification.md` over it before presenting.
 
@@ -119,15 +121,15 @@ Harold's job on event days is to make capture cheap:
 
 - Keep the prep brief one search away (`bin/harold search "<event name>"`).
 - When the operator sends quick notes ("met Sam Lee from Globex, wants a follow-up on pricing"), append them to today's daily note: `bin/harold file daily <event-slug> "<note>"`. Don't process them into the CRM mid-event unless asked; the debrief does that properly.
-- Nightly: prompt the operator for the day's highlights and append them to the same daily note.
+- At the end of each event day, if the operator is in a session, ask for the day's highlights and append them to the same daily note. Nothing runs this on a schedule.
 
 ---
 
 ## Part 3: Post-Event Debrief
 
 ### Trigger
-- Debrief Due date reached (end date + 1-2 days) and Debrief Status still open.
-- "Debrief [event]".
+- "Debrief [event]", or the operator says the event is over.
+- An event's Debrief Due date (in `harold/events.md`; usually the end date plus a day or two) has passed and its Debrief Status is still open. Boot does not compute this one: the session that rebuilds alerts sees it in the Upcoming Events table (the "event ended, no debrief" rule in `harold/alerts.md`) and offers the debrief.
 
 ### Steps
 
@@ -136,7 +138,7 @@ Harold's job on event days is to make capture cheap:
 2. **Process contacts.** For each person met:
    - Check the vault and CRM first; don't treat known contacts as new.
    - New people → run `playbook/core/contact-intake.md` (or the intake flow).
-   - File all three together: `harold_log_interaction` + `harold_upsert_contact` + the `vault/people/` profile (warmth, last_updated). If the CRM is unreachable, queue with `bin/harold file crm '{...}'`.
+   - File all three together: `crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the `vault/people/` profile (warmth, last_updated). If the CRM is unreachable, queue with `bin/harold file crm '{...}'`.
    - Types listed in the optional `HAROLD_NO_LOG_TYPES` (see `AGENTS.md`) get their record updated, never an interaction.
    - Pipeline: only add a pipeline entry if a conversation established a purpose. Never auto-place someone because you met them.
 

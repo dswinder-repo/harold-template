@@ -521,7 +521,7 @@ function readHousekeeping(root) { try { const j = JSON.parse(readFull(path.join(
 // boot notes it, and the monthly full audit moves stale sections into an archive file beside it
 // (searchable with harold search, not loaded at startup). Nothing is deleted. Override per file in
 // harold/housekeeping.json → "size_budgets".
-const SIZE_BUDGETS = { 'AGENTS.md': 30000, 'memory/CLAUDE.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
+const SIZE_BUDGETS = { 'AGENTS.md': 36000, 'memory/CLAUDE.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
 function sizeBudgets(root) {
   const o = readHousekeeping(root).size_budgets; const b = { ...SIZE_BUDGETS };
   if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (Number.isFinite(+v) && +v > 0) b[k] = +v;

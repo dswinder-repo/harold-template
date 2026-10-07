@@ -1,5 +1,7 @@
 # Playbook: Blocker Escalation
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Move blockers that aren't resolving: flag, escalate by age, and force a decision before they rot.
 **Trigger:** Boot lists a blocker in `harold/blockers.md` older than 7 days (trigger id `blocker-escalation:<ID>`); "escalate [blocker]"; the same blocker mentioned repeatedly without progress.
 
@@ -119,7 +121,7 @@ Does that work, or is there a firmer timeline for the original path?
 - Day 7: follow-up message.
 - Day 14: try a different channel (email → phone or another platform).
 - Day 21: find an alternate path or accept the delay.
-- Each touch is an external interaction: file it with the CRM filing protocol (`harold_log_interaction` + `harold_upsert_contact` + the vault profile). If the CRM is unreachable, queue it: `bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{...}}'`.
+- Each touch is an external interaction: file it with the CRM filing protocol (`crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the vault profile). If the CRM is unreachable, queue it: `bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{...}}'`.
 
 ### Waiting on board, legal or a regulator
 - These legitimately take time.

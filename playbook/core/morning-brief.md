@@ -1,5 +1,7 @@
 # Playbook: Morning Brief
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Start the day in three guided steps: intel, then the brief and priorities, then ready-to-run prompts.
 **Trigger:** a start-of-day opener, at any hour: "good morning", "morning", "gm", "let's get started", "let's go", "start the day", "daily brief", or the same idea in other words. **Not a trigger:** a first message that is a request about a project; do the request and do not run or offer the brief. Once the brief has run today, do not re-run it unless asked.
 
@@ -131,7 +133,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 
 1. **Tasks** — overdue, due today, high priority this week, plus anything overnight changed.
 2. **Raw inbox** — check `raw/` for sources without `compiled: true`. If any: "[N] items in raw/ inbox. Run /compile to process." Do NOT auto-compile during the brief.
-3. **Pipeline health** — `harold_cadence_check` (or `harold_pipeline` with `list`). One pipeline; every entry has a purpose.
+3. **Pipeline health** — `harold_cadence_check` on harold-mcp (on the connector: `crm_pipeline` with `list`, and `crm_search_contacts` for who has gone quiet). One pipeline; every entry has a purpose.
 
    | Contact | Purpose | Stage | Last Touch | Days Silent | Flag | Next Action |
    |---------|---------|-------|------------|-------------|------|-------------|

@@ -68,6 +68,7 @@ for (const now of ['2026-10-12T09:00:00', '2026-10-30T09:00:00', '2026-12-01T09:
     assert.strictEqual(b.code, 0, b.out + b.err);
     assert.match(b.out, /nothing due, nothing overdue/);
     assert.match(b.out, /Harold started in this workspace today/);
+    assert.doesNotMatch(b.out, /over its \d+k budget/, 'the starter\'s own startup files fit their budgets');
     const log = fs.readFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
     assert.deepStrictEqual(log.map(e => [e.id, e.date]), [['harold-start', now.slice(0, 10)]]);
     const c = run(w, ['close'], env);

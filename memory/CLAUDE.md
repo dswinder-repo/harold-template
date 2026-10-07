@@ -13,7 +13,7 @@
 
 - Calendar: [how Harold reads your calendar, e.g. the calendar connector, or "ask me"]
 - Task manager: [Linear by default; team key `[TEAM]`]
-- CRM: harold-mcp (`harold_*` tools). If it is unreachable, queue with `bin/harold file crm` and say so.
+- CRM: the hosted connector (`crm_*` tools) or harold-mcp (`harold_*` tools), whichever this harness has. A connector write on a computer without CRM credentials: `bin/harold file crm '{...,"applied":"connector"}'`. CRM unreachable: queue with `bin/harold file crm` and say so.
 
 ---
 

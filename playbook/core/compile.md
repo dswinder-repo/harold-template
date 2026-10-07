@@ -1,5 +1,7 @@
 # Playbook: Compile / Recompile Knowledge Base
 
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+
 **Purpose:** Turn raw sources in `raw/` into structured vault knowledge, or re-synthesize one topic from everything known.
 **Trigger:** "/compile", "compile", "process raw sources", "/compile [topic]", "recompile [topic]". Boot flags uncompiled `raw/` items but never compiles them itself.
 
@@ -33,7 +35,7 @@ For each source:
 2. **Classify it.** Which domain does it touch (a person, a company, a market, product, regulation, an event, a decision)?
 3. **Extract structured knowledge:**
    - key facts, figures, quotes;
-   - people mentioned (search the vault with `bin/harold search "<name>"` and the CRM with `harold_search_contacts` first; don't treat known contacts as new);
+   - people mentioned (search the vault with `bin/harold search "<name>"` and the CRM with `crm_search_contacts` / `harold_search_contacts` first; don't treat known contacts as new);
    - companies and organizations;
    - dates, deadlines, events;
    - implications for active projects.
@@ -75,7 +77,7 @@ When called with a topic (for example `/compile acme-corp`):
 1. `raw/` files on the topic (compiled or not).
 2. Existing vault notes: `bin/harold search "<topic>"`.
 3. Project docs mentioning it (via `harold/projects.md`).
-4. CRM contact and interaction history if it's a person or company (`harold_get_contact`).
+4. CRM contact and interaction history if it's a person or company (`crm_get_contact` / `harold_get_contact`).
 5. Related tasks in the task manager (Linear by default).
 
 **If a source is unreachable** (CRM or task manager down): continue with what's available and say which sources were missing in the report.
