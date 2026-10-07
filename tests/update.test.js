@@ -251,7 +251,8 @@ test('settings.env: a label counts like a type; credential-like names are never 
   assert.strictEqual(harold(w.ws, w.home, logRow('Ana Ruiz')).code, 0);
   const c = harold(w.ws, w.home, ['check']);
   assert.match(c.out, /settings\.env is committed, so only non-secret HAROLD_\* settings are read from it; ignored: SUPABASE_URL, HAROLD_API_KEY/);
-  write(path.join(w.ws, 'harold/settings.env'), 'HAROLD_TZ="UTC"\nSUPABASE_SERVICE_ROLE_KEY="sb_secret_abcdefghijklmnopqrstuvwxyz"\n');
+  // Built at run time, so this file never trips a secret scan itself.
+  write(path.join(w.ws, 'harold/settings.env'), `HAROLD_TZ="UTC"\nSUPABASE_SERVICE_ROLE_KEY="${'sb_' + 'secret_'}abcdefghijklmnopqrstuvwxyz"\n`);
   assert.match(harold(w.ws, w.home, ['check']).out, /looks like it holds a credential/);
   const close = harold(w.ws, w.home, ['close', '--final']);
   assert.match(close.out + close.err, /refusing to commit: possible secrets in harold\/settings\.env/);
