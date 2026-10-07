@@ -103,3 +103,12 @@ test('an existing install (a trigger log without the start row) is unchanged', (
   run(w, ['boot'], { HAROLD_NOW: '2026-10-07T09:00:00' });
   assert.ok(!fs.readFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), 'utf8').includes('harold-start'), 'boot marks only an empty log');
 });
+
+test('a clone still pointing at the public starter is warned about at boot (review B-03)', () => {
+  const w = freshInstall();
+  const quiet = JSON.parse(run(w, ['check', '--json']).out);
+  assert.ok(!quiet.warnings.some(x => /public Harold starter/.test(x)), 'your own repository: no warning');
+  w.git('remote', 'set-url', 'origin', 'https://github.com/example-owner/harold-template.git');
+  const c = JSON.parse(run(w, ['check', '--json']).out);
+  assert.ok(c.warnings.some(x => /looks like the public Harold starter.*PRIVATE repository.*remote set-url origin/.test(x)), JSON.stringify(c.warnings));
+});

@@ -1,4 +1,4 @@
-# Harold 2.0 — starter workspace
+# Harold 2.1 — starter workspace
 
 Harold is an AI chief of staff that works with any AI tool and any model: it is platform-, model- and harness-agnostic, and runs in any harness that can read `AGENTS.md` and run a shell command, from any computer or from the cloud. Every harness with lifecycle hooks is wired: boot and close run on their own in Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI, Qwen Code, Copilot CLI, Grok Build, Kimi Code, goose, Hermes Agent, Cline, opencode, Amp and OpenClaw. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
 
@@ -13,16 +13,21 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 ## Quick start
 
-1. **Make it your own private repository.** On GitHub use "Use this template" (or clone and push to a new repo), and make it **private**: it will hold your working life.
+1. **Make it your own private repository.** Every close commits your work and pushes it to `origin`, so `origin` must be a **private** repository of your own: it will hold your working life. On this repository's GitHub page choose **Use this template → Create a new repository**, set it to **Private**, and clone your copy:
    ```bash
-   git clone https://github.com/dswinder-repo/harold-template my-harold
+   git clone https://github.com/<you>/<your-repo>.git my-harold
    cd my-harold
    ```
-   Requirements: git, Node 18+, Python 3 (stdlib only, for search). Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
+   If you cloned the starter itself instead, `origin` still points at the public starter, where your pushes would fail (boot warns about it). Create an empty private repository on GitHub and point `origin` at it before your first session:
+   ```bash
+   git remote set-url origin https://github.com/<you>/<your-repo>.git
+   git push -u origin main
+   ```
+   Requirements: git, Node 18+ and Python 3.8+ (standard library only, for search and the link graph). Each optional component has its own: the CRM web app needs Node 20+ and pnpm, the hosted connector Node 22+ (both only where you build or host them). Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
 
 2. **Check it works as-is.**
    ```bash
-   bin/harold check     # → RESULT: PASS  (warnings about the example content are expected)
+   bin/harold check     # → RESULT: PASS  (until step 3, a warning that HAROLD_TZ is not set)
    ```
 
 3. **Fill in the placeholders.** Search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/CLAUDE.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `~/.harold/env`:
@@ -30,8 +35,8 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    mkdir -p ~/.harold && chmod 700 ~/.harold
    echo 'export HAROLD_TZ="America/Chicago"' >> ~/.harold/env && chmod 600 ~/.harold/env
    ```
-   Without it, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
-   Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it.
+   Without it, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC). The scheduled jobs never read that file: give them the same zone as a repository variable ([below](#morning-brief-your-time-zone-your-time)).
+   Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it. Until you do, it is inert: the example blocker and event carry no dates, so they never fall due, and your first boot starts the clock for scheduled work (it writes a `harold-start` line into the empty `harold/trigger-log.jsonl`, so the weekly scan, full audit and month-end review count from the next day, and nothing the starter's own dates imply is ever "overdue"). Your first session closes cleanly with the examples still in place.
 
 4. **Set up the CRM (Supabase).**
 
@@ -51,7 +56,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on.
 
-6. **Optional: the scheduled jobs and the connector.** The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)); the hosted connector lets a chat app on your phone or in a browser read and write Harold ([below](#from-any-chat-app-the-hosted-connector)). Both are off until you set them up.
+6. **The connector and the scheduled jobs.** The hosted connector lets any MCP client (a chat app on your phone or in a browser, a coding agent, a scheduled job) read and write Harold without the workspace folder ([below](#from-any-chat-app-the-hosted-connector)); you deploy it once. The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
 
 7. **Start a session and say good morning**, in whichever harness you use. Most harnesses run boot and close from the hook files and plugins already in this repository (some ask you to trust them once); Kimi Code and Hermes Agent need a snippet copied into your user config, and OpenClaw a plugin install. Where a harness has no hooks, the first instruction in `AGENTS.md` has the agent run them. Details below.
 
@@ -63,7 +68,7 @@ Harold is platform-, model- and harness-agnostic. A harness is the app or comman
 2. **Run a shell command:** `bin/harold boot` at the start of a session, `bin/harold close` at the end of every turn.
 3. **Ideally, connect to MCP servers** ([an open standard](https://modelcontextprotocol.io/introduction)) for the CRM and knowledge tools. Without MCP the agent still works from the files; CRM changes it cannot make wait in `harold/crm-queue.jsonl`, which boot and close apply once the CRM's credentials are present.
 
-Any model the harness offers works; Harold doesn't depend on a particular one, because the checks are a program, not the model. Automatic hooks are a convenience: where a harness supports them, the checks run on their own; where it doesn't, the first instruction in `AGENTS.md` has the agent run them. Switching harness or model doesn't mean rebuilding anything: the knowledge, rules and tools stay the same. The author runs Harold on Claude; that is his setup, not a requirement.
+Any model the harness offers works; Harold doesn't depend on a particular one, because the checks are a program, not the model. Automatic hooks are a convenience: where a harness supports them, the checks run on their own; where it doesn't, the first instruction in `AGENTS.md` has the agent run them. Switching harness or model doesn't mean rebuilding anything: the knowledge, rules and tools stay the same.
 
 ### Any other harness: a checklist
 
@@ -156,8 +161,9 @@ CLAUDE.md                  one line: @AGENTS.md
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
 bin/
   harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | housekeeping |
-                           where | search | index | root
-  harold-index             SQLite FTS5 search index over every markdown file (Python stdlib)
+                           where | search | related | backlinks | index | root
+  harold-index             SQLite FTS5 search index and link graph over every markdown file, archives included
+                           (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
   harold-linear            optional Linear task layer
   harold-setup-crm         stores your Supabase URL + key outside the repo and tests them
@@ -166,6 +172,8 @@ bin/
 harold/                    operational state
   alerts.md  blockers.md  events.md  facts.md  projects.md  sync-map.md
   learnings.jsonl  trigger-log.jsonl  crm-queue.jsonl  active-sessions/  briefs/  brief-prompt.md
+  graph.json               the link graph (paths, titles, types, dates, links; no note text), written by close
+  search.db                the search index and link graph (gitignored, rebuilt whenever a file changed)
   housekeeping.json        the switch for cloud housekeeping ("cloud": false until you turn it on)
   housekeeping-prompt.md   the prompt the scheduled housekeeping job runs
 memory/                    CLAUDE.md (working memory), glossary.md
@@ -191,6 +199,7 @@ tools/
   morning-brief.yml        OPTIONAL scheduled morning brief, in your time zone at your time, written by
                            any agent with a headless mode; HAROLD_AGENT picks it, subscription first (see below)
   housekeeping.yml         OPTIONAL weekly scan, monthly full audit and month-end review, silently, same switch
+  brief-notify.yml         OPTIONAL phone notice (ntfy) when anything pushes a new brief draft; off until NTFY_TOPIC is set
 .github/actions/harold-agent/
   action.yml               runs the chosen agent for both jobs: Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI,
                            Grok Build, Kimi Code, Qwen Code, or any other CLI through a custom command
@@ -202,13 +211,24 @@ tests/
   housekeeping.test.js     the housekeeping gate across time zones, the job, and close inside it: node --test tests/housekeeping.test.js
   agent-action.test.js     each agent's credential choice (subscription first) and what it is given, with stub CLIs
   agent-auth.test.js       sign-in files kept fresh across runs, and a custom agent's secrets
+  index.test.js            search, related, backlinks and graph.json end to end; runs test_harold_index.py
+  test_harold_index.py     the link graph: resolution, backlinks, traversal, stale and broken flags, archives
+  first-run.test.js        a fresh install: first boot and first close pass on any date, with the examples in place
 ```
+
+Run them all with `node --test tests/*.test.js` (Node 18+ and Python 3.8+). `tests/crm.test.js` also runs the CRM app's migration checks once `pnpm install` has run in `tools/harold-crm`.
 
 ### The CRM model
 
 Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`; the web app adds its own tables around them.
 
 Every conversation with a contact is logged unless you choose otherwise: the optional setting `HAROLD_NO_LOG_TYPES` in `~/.harold/env` (empty by default) lists contact types whose conversations are never logged, for example your own team. "CRM Filing Protocol" in `AGENTS.md` describes exactly what it changes.
+
+## Finding things: search and the link graph
+
+`bin/harold search "<query>"` is full-text search over every markdown file in the workspace (the knowledge directories, every folder in the project map, and archives: `archive/` folders and `*-archive.md` files). Each hit also lists the notes it links to. `bin/harold related "<person, company, project or topic>"` follows the links from a note, one hop or two (`--depth 2`): people, companies, projects, decisions and meetings, how each is linked and the line where, and a closing `gaps:` line (stale notes, broken links, orphans, no meeting notes). `bin/harold backlinks "<note>"` lists everything that points at a note. Links are `[[wikilinks]]` (by file name, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related`). A note counts as stale after `HAROLD_STALE_DAYS` (default 30) without an update; daily notes, meetings and archives never do.
+
+All of it lives in `harold/search.db`, which boot, search and close rebuild whenever a file changed (only changed files are read). Close also writes `harold/graph.json`, a compact copy of the graph with no note text, and commits it, so anything that reads your repository (the connector's `harold_read`, for example) can see the links without the workspace.
 
 ## Scheduled jobs in the cloud
 
@@ -302,7 +322,9 @@ To turn it on, add the secret for your agent (above) and set two repository **va
 | `HAROLD_TZ` | `America/Chicago`, `Europe/London`, `Asia/Singapore` | UTC on GitHub's machines (each run warns until you set it) |
 | `HAROLD_BRIEF_TIME` | `07:15` (24-hour, your local time) | `06:30` |
 
-To change the time or zone later, change the variables; nothing else. Check the gate any time with `bin/harold brief status`. The workflow file explains the rest (dry runs, the optional ntfy phone push, and how to spend fewer Actions minutes).
+To change the time or zone later, change the variables; nothing else. Check the gate any time with `bin/harold brief status`. When the brief is due, the job first runs `bin/harold check` (the same contract test as boot). Until you add a secret for your agent, a due run ends green at the agent step with a notice that the job is not set up, rather than failing every hour. If a run does fail, the next hourly run tries again, for up to six hours after your brief time (`HAROLD_BRIEF_WINDOW_HOURS` changes that). The workflow wakes about 720 times a month; each wake-up that is not due stops in seconds, but on a private repository every run counts as at least one Actions minute (the workflow file shows how to narrow the hours).
+
+**Phone notice.** Set the repository secret `NTFY_TOPIC` (a topic name only you know, in the free ntfy app) and you get a notice when a draft lands. The job notifies from its own run; `.github/workflows/brief-notify.yml` covers every other writer (a routine, a session, another computer) by sending one for each new `harold/briefs/YYYY-MM-DD.md` pushed to your default branch. The notice says only that the brief is ready, with a link to the file.
 
 **Prefer a Claude Code routine?** Delete the workflow and create a routine whose prompt is `harold/brief-prompt.md`, on its own schedule (for example weekdays at your brief time). The routine's schedule is the clock; the same gate still skips weekends and days that already have a brief. Set `HAROLD_TZ` in the routine's environment so dates are yours, not the server's.
 
@@ -322,7 +344,7 @@ The job ends with `bin/harold housekeeping finish`, which checks that the job wa
 
 ## From any chat app: the hosted connector
 
-Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed.
+Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed ("CRM Filing Protocol" in `AGENTS.md`).
 
 ## Keeping it private
 

@@ -122,7 +122,7 @@ Every tool uses the same address, **`<PUBLIC_BASE_URL>/mcp`** (MCP Streamable HT
 
 | Tool | How to connect | Tested with this connector? |
 |---|---|---|
-| Claude (web, desktop, phone) | claude.ai in a browser: Settings → Connectors → Add custom connector | Yes, by the author (claude.ai in a browser) |
+| Claude (web, desktop, phone) | claude.ai in a browser: Settings → Connectors → Add custom connector | Yes (claude.ai in a browser) |
 | Claude Code | `claude mcp add --transport http harold <PUBLIC_BASE_URL>/mcp`, then `/mcp` (or `claude mcp login harold`) | No; command from Claude Code's docs |
 | Codex CLI | `codex mcp add harold --url <PUBLIC_BASE_URL>/mcp`, then `codex mcp login harold` | No; commands from Codex's docs |
 | Cursor | `mcpServers` entry with a `url` in `~/.cursor/mcp.json` (below) | No; format from Cursor's docs |

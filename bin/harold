@@ -583,6 +583,10 @@ function runCheck(root, today) {
   const ctx = { alerts: al, blockers: bl, events: ev, daily: latestDaily(root), raw: rawUncompiled(root) };
   const triggers = computeTriggers(root, today, ctx);
   const idx = indexStale(root); if (idx) warnings.push(`search index ${idx} (boot rebuilds it)`);
+  // A clone of the public starter still pushes to it: every close would end in PUSH FAILED (or worse, if it is
+  // your own public fork). The workspace belongs in a private repository of your own.
+  const origin = git(root, ['remote', 'get-url', 'origin']);
+  if (origin.code === 0 && /[/:][^/:]+\/harold-template(?:\.git)?\/?$/i.test(origin.out)) warnings.push(`origin is ${origin.out.replace(/\/\/[^@/]*@/, '//')}, which looks like the public Harold starter (or a fork of it): close would push your knowledge base there. Create your own PRIVATE repository and point origin at it: git -C "${root}" remote set-url origin <your private repo URL>, then git push -u origin HEAD. (If this already is your own private repository, rename it to silence this.)`);
   const cm = tryRead(path.join(root, 'CLAUDE.md'));
   if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
   if (TZ_INFO.warning) warnings.push(TZ_INFO.warning);
