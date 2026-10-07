@@ -6,9 +6,11 @@ import { z } from "zod";
 import { MAX_RESULT_CHARS, noLogTypes, repoConfig } from "./config.js";
 import * as crm from "./crm.js";
 import { HaroldRepo } from "./github.js";
+import * as graph from "./graph.js";
 import * as kb from "./kb.js";
 import { CATEGORIES, SEVERITIES } from "./learnings.js";
-import { truncate } from "./text.js";
+import * as stale from "./stale.js";
+import { localParts, truncate } from "./text.js";
 
 export interface ToolDeps {
   repoFor: (ctx: ServerContext) => HaroldRepo;
@@ -53,7 +55,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("harold_today", {
     title: "Harold: today",
-    description: "Start here when the conversation is about the owner's work day. Returns today's date in the owner's time zone (HAROLD_TZ; UTC if unset), today's morning brief draft if one exists (harold/briefs/<date>.md), the Current Alerts section of harold/alerts.md, and the five most recent daily notes with their first lines.",
+    description: "Start here when the conversation is about the owner's work day. Returns today's date in the owner's time zone (HAROLD_TZ; UTC if unset), today's morning brief draft if one exists (harold/briefs/<date>.md), the Current Alerts section of harold/alerts.md, the critical lessons from harold/learnings.jsonl, the housekeeping notes waiting in harold/briefs/housekeeping-notes.md, the five most recent daily notes with their first lines, and how to start the day (show the draft, ask what came in overnight, then the day's priorities).",
     inputSchema: z.object({}),
     annotations: READ,
   }, async (_args, ctx) => guard(() => kb.today(deps.repoFor(ctx), now())));
@@ -88,6 +90,18 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     inputSchema: z.object({ topic: z.string().min(1).max(200).describe("What the owner called it, e.g. 'the example', 'the raise', a client's name") }),
     annotations: READ,
   }, async ({ topic }, ctx) => guard(() => kb.where(deps.repoFor(ctx), topic)));
+
+  server.registerTool("harold_related", {
+    title: "Harold: related notes",
+    description: "Follow the links from a note: give a note path, a title or a topic (a topic is resolved with the same search as harold_search). Returns the notes linked to it, 1 hop out (and 2 hops through shared links; depth 2 follows every second hop), each with how it is linked (wikilink, md link or a frontmatter field) and its last_updated date, then a gaps line: stale (not updated in 30+ days), broken links, orphans, no meeting notes. Reads harold/graph.json, which bin/harold close writes. Use it before answering about a person, company, project or decision, and say the staleness and gaps in the answer.",
+    inputSchema: z.object({
+      query: z.string().min(1).max(300).describe("A note path (vault/people/Jane Doe.md), an exact title or file name, or a topic"),
+      depth: z.number().int().min(1).max(2).optional().describe("1 (default): direct links plus notes sharing 2+ links; 2: every note 2 hops out"),
+      limit: z.number().int().min(1).max(50).optional().describe("Maximum notes listed (default 15)"),
+      all: z.boolean().optional().describe("true: list every daily note instead of the latest 3"),
+    }),
+    annotations: READ,
+  }, async ({ query, depth, limit, all }, ctx) => guard(() => graph.relatedText(deps.repoFor(ctx), query, localParts(now()).iso, { depth, limit, all })));
 
   server.registerTool("harold_person", {
     title: "Harold: look up a person",
@@ -154,6 +168,20 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     }),
     annotations: READ,
   }, async (args) => guard(() => withSb(sb => crm.getContact(sb, args))));
+
+  server.registerTool("crm_stale", {
+    title: "CRM: who has gone quiet",
+    description: "Contacts whose last logged interaction is older than their cadence, most overdue first. Same rule as harold_cadence_check: active or pending contacts with warmth Lukewarm, Warm or Hot; the cadence is the tightest stage cadence among their open pipeline entries, else Hot 7 days, Warm 14, Lukewarm 28; Hot or Warm with nothing logged is flagged too. Types in HAROLD_NO_CADENCE_TYPES (default other) and HAROLD_NO_LOG_TYPES are never checked. Read-only.",
+    inputSchema: z.object({
+      type: z.string().max(60).optional().describe("Only this contact type, e.g. investor or partner"),
+      stale_days: z.number().int().min(1).max(365).optional().describe("Warm threshold in days (default 14; Lukewarm is twice this)"),
+      hot_days: z.number().int().min(1).max(365).optional().describe("Hot threshold in days (default 7)"),
+      limit: z.number().int().min(1).max(200).optional().describe("Maximum contacts listed (default 50)"),
+    }),
+    annotations: READ,
+  }, async ({ type, stale_days, hot_days, limit }) => guard(() => withSb(sb => stale.staleText(sb, {
+    skipTypes: stale.cadenceSkipTypes(noLogTypes()), type, staleDays: stale_days, hotDays: hot_days, limit, now: now(),
+  }))));
 
   // ───────────── write ─────────────
 
@@ -297,6 +325,6 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 }
 
 export const TOOL_NAMES = [
-  "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_person", "crm_search_contacts", "crm_get_contact",
+  "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
   "harold_capture", "harold_note", "harold_update", "harold_learning", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
 ];
