@@ -1,4 +1,4 @@
-# Harold for Kimi Code CLI. Kimi reads hooks only from its own config (~/.kimi/config.toml, or $KIMI_SHARE_DIR/config.toml),
+# Harold for Kimi Code CLI. Kimi reads hooks only from its own config (~/.kimi-code/config.toml, or $KIMI_CODE_HOME/config.toml),
 # never from a project, so copy these three blocks into that file. Each command does nothing unless the folder Kimi runs in is
 # a Harold workspace (or HAROLD_ROOT names one), so they are safe in every other project.
 #   SessionStart  boot. Kimi never shows a hook's output to the model, so this registers the session and the agent runs

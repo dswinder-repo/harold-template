@@ -163,8 +163,9 @@ test('kimi and qwen: provider config written as their docs show; the key only in
   let r = run(sb, 'kimi', 'subscription', { IN_KIMI_KEY: 'kk' });
   assert.strictEqual(r.status, 0, r.stdout + r.stderr);
   assert.deepStrictEqual(r.rec.env, { KIMI_API_KEY: 'kk' });
-  assert.strictEqual(r.rec.stdin, 'PROMPT TEXT');
-  const toml = fs.readFileSync(path.join(sb.home, '.kimi/config.toml'), 'utf8');
+  assert.ok(r.rec.argv.includes('-p') && r.rec.argv.includes('PROMPT TEXT'), JSON.stringify(r.rec.argv));
+  const toml = fs.readFileSync(path.join(sb.home, '.kimi-code/config.toml'), 'utf8');
+  assert.match(toml, /^api_key_env = "KIMI_API_KEY"$/m);
   assert.match(toml, /^default_model = "harold"$/m); assert.match(toml, /^base_url = "https:\/\/api\.kimi\.com\/coding\/v1"$/m);
   assert.match(toml, /^model = "kimi-for-coding"$/m); assert.ok(!toml.includes('kk'));
   sb = sandbox();

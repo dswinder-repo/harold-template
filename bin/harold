@@ -219,7 +219,7 @@ function readStdinJson() {
 //   qwen     Qwen Code     .qwen/settings.json     plain stdout | as Claude Code
 //   copilot  Copilot CLI   .github/copilot/settings.json  {"additionalContext"} | agentStop {"decision":"block"}
 //   grok     Grok Build    .grok/hooks/harold.json SessionStart output is ignored (see below) | Stop as Claude Code
-//   kimi     Kimi Code     ~/.kimi/config.toml     SessionStart output is ignored | Stop: exit 2, reason on stderr
+//   kimi     Kimi Code     ~/.kimi-code/config.toml    SessionStart output is ignored | Stop: exit 2, reason on stderr
 //   goose    goose         .agents/plugins/harold  SessionStart output is a banner for the person | Stop {"decision":"block"}
 //   hermes   Hermes Agent  ~/.hermes/config.yaml   pre_llm_call {"context"} | pre_verify {"decision":"block"}
 //   cline    Cline         .clinerules/hooks/      TaskStart {"contextModification"} | TaskComplete cannot block
@@ -1183,6 +1183,13 @@ function cmdClose(root, today, opts, hook) {
   try { fs.mkdirSync(path.dirname(lock), { recursive: true }); fs.mkdirSync(lock); }
   catch (e) {
     let fresh = false; try { fresh = Date.now() - fs.statSync(lock).mtimeMs < 300000; } catch (_) {}
+    // The final close must still run (it ends the session): wait up to 2 minutes for the other close to finish.
+    if (fresh && opts.final) {
+      const until = Date.now() + 120000, nap = new Int32Array(new SharedArrayBuffer(4));
+      while (fs.existsSync(lock) && Date.now() < until) Atomics.wait(nap, 0, 0, 500);
+      try { fs.mkdirSync(lock); fresh = false; } catch (_) {}
+      if (!fresh) { try { return closeOnce(root, today, opts, hook, sess); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} } }
+    }
     if (fresh) { if (hook) closeReply(hook, 'ok'); else console.log('harold close: another close for this session is running right now; it does the work'); return 0; }
     try { fs.rmSync(lock, { recursive: true, force: true }); fs.mkdirSync(lock); } catch (_) {}
   }
@@ -1374,7 +1381,8 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     st.blocks = (st.blocks || 0) + 1; st.lastProblems = problems.slice(0, 8); saveState(root, id, st);
     const reason = `⛔ HAROLD CLOSE: filing incomplete (attempt ${st.blocks}). Fix these, then finish:\n` + problems.map(p => `  • ${p}`).join('\n') + (gitNote ? `\n  git: ${gitNote}` : '');
     if (isHook) {
-      if (stopHookActive && st.blocks > 3) { return closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); }
+      // goose's Stop input carries no stop_hook_active, so count the blocks alone there.
+      if ((stopHookActive || hook._harness === 'goose') && st.blocks > 3) { return closeReply(hook, 'notice', `Harold close could not be satisfied after ${st.blocks} attempts. UNFILED SESSION:\n${problems.join('\n')}${gitNote ? `\ngit: ${gitNote}` : ''}`); }
       return closeReply(hook, 'block', reason);
     }
     console.error(reason); return 2;

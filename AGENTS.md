@@ -26,7 +26,7 @@ Harold is platform-, model- and harness-agnostic: it works the same in any AI to
 | Qwen Code | `.qwen/settings.json` | `SessionStart` | `Stop` | `SessionEnd` |
 | GitHub Copilot CLI | `.github/copilot/settings.json` | `sessionStart` | `agentStop` | `sessionEnd` |
 | Grok Build | `.grok/hooks/harold.json` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
-| Kimi Code CLI | `tools/harness-hooks/kimi-config.toml`, copied into `~/.kimi/config.toml` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| Kimi Code CLI | `tools/harness-hooks/kimi-config.toml`, copied into `~/.kimi-code/config.toml` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
 | goose | `.agents/plugins/harold/` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
 | Hermes Agent | `tools/harness-hooks/hermes-config.yaml`, merged into `~/.hermes/config.yaml` | first `pre_llm_call` | `pre_verify` + `on_session_end` | `on_session_finalize` |
 | Cline | `.clinerules/hooks/` | `TaskStart` | `TaskComplete` (cannot block: the next `TaskStart` lists what is unfiled) | `SessionShutdown` |

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Cline TaskError hook (Cline runs .clinerules/hooks/<HookName> with the event as JSON on stdin). Harold close after a run that ended in an error: same as TaskComplete and TaskCancel.
+# bin/harold resolves the workspace from its own path, so this works from any working directory.
+exec "$(dirname "$0")/../../bin/harold" close --via=cline --detach

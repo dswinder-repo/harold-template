@@ -95,7 +95,7 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 | Qwen Code | yes | `.qwen/settings.json` | `SessionStart` (plain stdout) | `Stop` | `SessionEnd` | QwenLM/qwen-code `docs/users/features/hooks.md` |
 | GitHub Copilot CLI | yes | `.github/copilot/settings.json` | `sessionStart` (`additionalContext`) | `agentStop` (`decision: block`) | `sessionEnd` (detached) | github/docs `content/copilot/reference/hooks-reference.md` |
 | Grok Build | yes | `.grok/hooks/harold.json` | `SessionStart` registers only ¹ | `Stop` | `SessionEnd` (1.5 s budget: detached) | xai-org/grok-build `docs/user-guide/10-hooks.md`, `xai-grok-hooks` |
-| Kimi Code CLI | yes, user-level only | `tools/harness-hooks/kimi-config.toml` → copy into `~/.kimi/config.toml` | `SessionStart` registers only ¹ | `Stop` (exit 2) | `SessionEnd` (5 s: detached) | MoonshotAI/kimi-cli `docs/en/customization/hooks.md`, `src/kimi_cli/hooks/` |
+| Kimi Code CLI | yes, user-level only | `tools/harness-hooks/kimi-config.toml` → copy into `~/.kimi-code/config.toml` | `SessionStart` registers only ¹ | `Stop` (exit 2) | `SessionEnd` (5 s: detached) | MoonshotAI/kimi-cli `docs/en/customization/hooks.md`, `src/kimi_cli/hooks/` |
 | goose | yes | plugin `.agents/plugins/harold/` | `SessionStart` registers only ¹ | `Stop` (`decision: block`) | `SessionEnd` | block/goose `documentation/docs/guides/context-engineering/hooks.md` |
 | Hermes Agent | yes, user-level only | `tools/harness-hooks/hermes-config.yaml` → merge into `~/.hermes/config.yaml` | first `pre_llm_call` (`context`) | `pre_verify` (blocks, after file edits) + `on_session_end` | `on_session_finalize` (detached) | NousResearch/hermes-agent `website/docs/user-guide/features/hooks.md`, `agent/shell_hooks.py` |
 | Cline | yes | `.clinerules/hooks/` | `TaskStart` (`contextModification`) | `TaskComplete` (cannot block ²) | `SessionShutdown` (CLI only) | cline/cline `apps/vscode/src/sdk/hooks-adapter.ts`, `sdk/packages/core/src/hooks/` |
@@ -124,7 +124,7 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 - **Copilot CLI.** Reads `.github/copilot/settings.json` in a trusted folder; in prompt mode (`-p`) it fires `sessionEnd` after each prompt.
 - **Kimi Code CLI and Hermes Agent.** Both read hooks only from your user config, so copy the snippet from `tools/harness-hooks/` once. Each command does nothing unless the tool runs inside a Harold workspace (or `HAROLD_ROOT` names one). Hermes asks you to approve each hook once (or start it with `--accept-hooks`).
 - **goose.** Loads `.agents/plugins/harold/` when it works in the workspace.
-- **Cline.** Turn on hooks in Cline's settings; the scripts in `.clinerules/hooks/` must stay executable.
+- **Cline.** The Cline command-line tool runs hooks by default; in the VS Code extension, turn hooks on in Cline's settings. The scripts in `.clinerules/hooks/` must stay executable.
 - **opencode.** Loads `.opencode/plugins/harold.js` at startup. It uses `experimental.chat.system.transform` for the context; if a later opencode drops that, the agent boots itself from `AGENTS.md`.
 - **Amp.** Loads `.amp/plugins/harold.ts`; after editing it, run `plugins: reload`.
 - **OpenClaw.** `openclaw plugins install --link tools/openclaw-plugin`, `openclaw plugins enable harold`, then in `openclaw.json` set `plugins.entries.harold.hooks.allowConversationAccess: true` (and `config.root` if the agent's workspace is not the Harold workspace). See `tools/openclaw-plugin/README.md`.
@@ -158,7 +158,7 @@ CLAUDE.md                  one line: @AGENTS.md
 .github/copilot/settings.json  Copilot CLI hooks: sessionStart, agentStop, sessionEnd
 .grok/hooks/harold.json    Grok Build hooks: SessionStart, Stop, SessionEnd
 .agents/plugins/harold/    goose plugin (Open Plugins layout): SessionStart, Stop, SessionEnd
-.clinerules/hooks/         Cline hooks: TaskStart, TaskComplete, TaskCancel, SessionShutdown
+.clinerules/hooks/         Cline hooks: TaskStart, TaskComplete, TaskCancel, TaskError, SessionShutdown
 .opencode/plugins/harold.js  opencode plugin: boot into the system prompt, close on session.idle
 .amp/plugins/harold.ts     Amp plugin: boot on agent.start, close on agent.end
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
@@ -280,7 +280,7 @@ What to run once, on your own computer, for each:
 - **Kimi Code CLI.** Store your Kimi Code API key (the one its `/login` asks for) as `KIMI_API_KEY`. The job writes the provider settings its documentation gives (`https://api.kimi.com/coding/v1`, model `kimi-for-coding`).
 - **Qwen Code.** Store your Coding Plan key (`sk-sp-…`) as `QWEN_CODING_PLAN_KEY`. The job uses the international endpoint; for an account in the Beijing region set `HAROLD_AGENT_BASE_URL` to `https://coding.dashscope.aliyuncs.com/v1`.
 
-How tightly each agent is limited differs because the CLIs differ: Claude Code, Gemini CLI, Copilot CLI, Grok Build and Qwen Code get an explicit list of allowed commands; Codex runs in its workspace-write sandbox; Cursor (`--force`) and Kimi (`--print`) approve every tool call, because their headless modes have no per-command list. In every case the job's last step, outside the agent, checks the result, refuses to commit anything that looks like a credential, and pushes.
+How tightly each agent is limited differs because the CLIs differ: Claude Code, Gemini CLI, Copilot CLI, Grok Build and Qwen Code get an explicit list of allowed commands; Codex runs in its workspace-write sandbox; Cursor (`--force`) and Kimi (prompt mode) approve every tool call, because their headless modes have no per-command list. In every case the job's last step, outside the agent, checks the result, refuses to commit anything that looks like a credential, and pushes.
 
 ### Claude Code with another model provider
 

@@ -201,7 +201,7 @@ runs:
           gemini)
             if [ "$AUTH" = subscription ]; then export GOOGLE_GENAI_USE_GCA=true; else export GEMINI_API_KEY="$IN_GEMINI_KEY"; fi
             npm install -g @google/gemini-cli >/dev/null 2>&1
-            gemini --approval-mode auto_edit --allowed-tools "$allow_gemini" ${MODEL:+--model "$MODEL"} -p "$(cat "$PROMPT_FILE")" > "$LOG" 2>&1 || fail ;;
+            gemini --skip-trust --approval-mode auto_edit --allowed-tools "$allow_gemini" ${MODEL:+--model "$MODEL"} -p "$(cat "$PROMPT_FILE")" > "$LOG" 2>&1 || fail ;;
           copilot)
             export COPILOT_GITHUB_TOKEN="$IN_COPILOT_SUB"
             npm install -g @github/copilot >/dev/null 2>&1
@@ -213,24 +213,24 @@ runs:
             grok -p "$(cat "$PROMPT_FILE")" --trust --no-auto-update --max-turns "$MAX_TURNS" ${MODEL:+--model "$MODEL"} \
               --allow Read --allow Grep --allow Edit --allow Write --allow WebSearch --allow WebFetch "${grok_args[@]}" > "$LOG" 2>&1 || fail ;;
           kimi)
-            # Kimi Code CLI reads its provider from ~/.kimi/config.toml; KIMI_API_KEY overrides the key there.
+            # Kimi Code CLI (@moonshot-ai/kimi-code) reads its provider from ~/.kimi-code/config.toml; the key comes from KIMI_API_KEY (api_key_env).
             export KIMI_API_KEY="$IN_KIMI_KEY"
             npm install -g @moonshot-ai/kimi-code >/dev/null 2>&1
-            mkdir -p ~/.kimi && cat > ~/.kimi/config.toml <<TOML
+            mkdir -p ~/.kimi-code && cat > ~/.kimi-code/config.toml <<TOML
         default_model = "harold"
 
         [providers.harold]
         type = "kimi"
         base_url = "${BASE_URL:-https://api.kimi.com/coding/v1}"
-        api_key = ""
+        api_key_env = "KIMI_API_KEY"
 
         [models.harold]
         provider = "harold"
         model = "${MODEL:-kimi-for-coding}"
         max_context_size = 262144
         TOML
-            # --print approves every tool call (Kimi's AFK mode): Kimi has no per-command allowlist flag.
-            kimi --print --output-format text < "$PROMPT_FILE" > "$LOG" 2>&1 || fail ;;
+            # Prompt mode (-p) approves every tool call: Kimi has no per-command allowlist flag.
+            kimi -p "$(cat "$PROMPT_FILE")" --output-format text > "$LOG" 2>&1 || fail ;;
           qwen)
             # Alibaba Cloud Coding Plan, configured as its docs show for CI (~/.qwen/settings.json + the key's env var).
             export BAILIAN_CODING_PLAN_API_KEY="$IN_QWEN_SUB"

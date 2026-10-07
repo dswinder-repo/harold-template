@@ -9,10 +9,10 @@ OpenClaw does not run Claude-style hook files (its bundle loader detects `hooks/
 | `agent_end` | `bin/harold close` again, for runtimes without a finalize step (a no-op right after a clean close) |
 | `session_end` | `bin/harold close --final`, detached (shutdown gives `session_end` two seconds) |
 
-**Install** (on the Gateway host):
+**Install** (on the Gateway host; OpenClaw itself needs the Node version its own documentation names, newer than the Node 22 Harold needs):
 
 ```bash
-openclaw plugins install --link /ABSOLUTE/PATH/TO/your-harold-workspace/tools/openclaw-plugin --force
+openclaw plugins install --link /ABSOLUTE/PATH/TO/your-harold-workspace/tools/openclaw-plugin
 openclaw plugins enable harold
 ```
 
