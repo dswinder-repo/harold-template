@@ -358,4 +358,4 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 ---
 
-*Harold 2.1 starter. Fill in the bracketed placeholders, then delete this line.*
+*Harold 2.0 starter. Fill in the bracketed placeholders, then delete this line.*
