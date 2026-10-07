@@ -13,6 +13,8 @@ name: Harold morning brief
 # (Settings → Secrets and variables → Actions → Variables):
 #   HAROLD_TZ           your IANA time zone, e.g. America/Chicago, Europe/London, Asia/Singapore
 #                       (unset = UTC here, and every run prints a warning saying so)
+#                       Either variable may instead live in the committed harold/settings.env, which
+#                       bin/harold reads too; a repository variable, when set, wins.
 #   HAROLD_BRIEF_TIME   HH:MM, 24-hour, local time in that zone (unset = 06:30)
 # It wakes at 35 minutes past each hour, so the default 06:30 brief starts at about 06:35 (GitHub can
 # start scheduled runs a few minutes late). If your brief time is on another minute, or your zone is

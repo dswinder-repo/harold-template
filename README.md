@@ -33,12 +33,11 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    bin/harold check     # → RESULT: PASS  (until step 3, a warning that HAROLD_TZ is not set)
    ```
 
-3. **Fill in the placeholders.** Search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/CLAUDE.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `~/.harold/env`:
+3. **Fill in the placeholders.** Search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/CLAUDE.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `harold/settings.env` (uncomment the line and put your zone):
    ```bash
-   mkdir -p ~/.harold && chmod 700 ~/.harold
-   echo 'export HAROLD_TZ="America/Chicago"' >> ~/.harold/env && chmod 600 ~/.harold/env
+   HAROLD_TZ="America/Chicago"
    ```
-   Without it, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC). The scheduled jobs never read that file: give them the same zone as a repository variable ([below](#morning-brief-your-time-zone-your-time)).
+   That file is committed and holds only non-secret `HAROLD_*` settings (`HAROLD_TZ`, `HAROLD_BRIEF_TIME`, `HAROLD_NO_LOG_TYPES`, `HAROLD_STALE_DAYS`, `HAROLD_PULSE_DAYS`), so every computer, cloud session and scheduled job gets them with nothing to set up. A value in the environment or in `~/.harold/env` (the per-machine file where credentials live) overrides it. Without a zone, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
    Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it. Until you do, it is inert: the example blocker and event carry no dates, so they never fall due, and your first boot starts the clock for scheduled work (it writes a `harold-start` line into the empty `harold/trigger-log.jsonl`, so the weekly scan, full audit and month-end review count from the next day, and nothing the starter's own dates imply is ever "overdue"). Your first session closes cleanly with the examples still in place.
 
 4. **Set up the CRM (Supabase).**
@@ -164,7 +163,7 @@ CLAUDE.md                  one line: @AGENTS.md
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
 bin/
   harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | housekeeping |
-                           where | search | related | backlinks | pulse | index | root
+                           update | where | search | related | backlinks | pulse | index | root
   harold-index             SQLite FTS5 search index and link graph over every markdown file, archives included
                            (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
@@ -179,6 +178,9 @@ harold/                    operational state
   search.db                the search index and link graph (gitignored, rebuilt whenever a file changed)
   housekeeping.json        the switch for cloud housekeeping ("cloud": false until you turn it on)
   housekeeping-prompt.md   the prompt the scheduled housekeeping job runs
+  settings.env             your non-secret settings (HAROLD_TZ, HAROLD_NO_LOG_TYPES, ...), committed
+  update-manifest.txt      which files are Harold's machinery (what bin/harold update may change)
+  upstream.json            where updates come from, and the starter commit last applied
 memory/                    CLAUDE.md (working memory), glossary.md
 dashboard/                 index.md, status.md, processes.md (Context Engine), people.md, strategy.md
 vault/                     people/ companies/ projects/ intel/ decisions/ meetings/ daily/ templates/
@@ -227,7 +229,7 @@ Run them all with `node --test tests/*.test.js` (Node 22+ and Python 3.8+). `tes
 
 Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`; the web app adds its own tables around them.
 
-Every conversation with a contact is logged unless you choose otherwise: the optional setting `HAROLD_NO_LOG_TYPES` in `~/.harold/env` (empty by default) lists contact types whose conversations are never logged, for example your own team. "CRM Filing Protocol" in `AGENTS.md` describes exactly what it changes.
+Every conversation with a contact is logged unless you choose otherwise: the optional setting `HAROLD_NO_LOG_TYPES` in `harold/settings.env` (empty by default) lists contact types whose conversations are never logged, for example your own team; a contact matches by its type or any of its labels. (The hosted connector reads it from its own environment variables.) "CRM Filing Protocol" in `AGENTS.md` describes exactly what it changes.
 
 ## Finding things: search and the link graph
 
@@ -245,7 +247,7 @@ All of it lives in `harold/search.db`, which boot, search and close rebuild when
 
 - **Activity** is the newest of: the project card, any note that links to it, the meeting, daily and decision notes it links to, any note in the project's folder, daily and meeting notes that name the project or one of its aliases (in the title or a heading; in the text only when the note names at most three projects, so a monthly review that walks through every project is not activity for all of them), and the newest git commit touching its folder. Note dates are the ones written in the notes (`last_updated`, `date`, or a dated file name); a date after today (a planned meeting) does not count.
 - **Next step** is `next_step:` in the project's `harold/projects.md` entry, else `next_step:` in its card's frontmatter, else a `Next step:` line (or the first line under a `Next step` heading) in the card, then in the folder's `README.md`. With none, it says "no next step recorded", which is a gap worth closing.
-- **Quiet** means no activity in more than `HAROLD_PULSE_DAYS` days (default 14, set it in `~/.harold/env`). Paused and archived projects are not judged.
+- **Quiet** means no activity in more than `HAROLD_PULSE_DAYS` days (default 14, set it in `harold/settings.env`). Paused and archived projects are not judged.
 
 Quiet projects come first, with their next step; the rest follow in one line each. `--all` adds every next step and lists the projects that are not active; `--json` gives the data. Boot prints only the quiet ones (or one line saying all are active), and the morning brief lists them under WATCH next to stale relationships. The connector's `harold_pulse` computes the same thing from `harold/graph.json`, the project map and the repository's commit history, so a chat on your phone gets the same answer as a terminal session.
 
@@ -334,7 +336,7 @@ Say "good morning" and Harold runs the morning brief (`playbook/core/morning-bri
 
 `.github/workflows/morning-brief.yml` does it on GitHub's machines, so no computer of yours needs to be on. GitHub schedules only in UTC, so the workflow wakes every hour (at :35, so a 6:30 brief starts about 6:35) and asks `bin/harold brief start` whether the brief is due: a weekday in your zone, at or after your time, and no brief yet today. Every other hour it stops in seconds, and daylight saving takes care of itself. The draft lands in `harold/briefs/YYYY-MM-DD.md`; the next time you boot, Harold sees it and shows it instead of re-running those steps.
 
-To turn it on, add the secret for your agent (above) and set two repository **variables**:
+To turn it on, add the secret for your agent (above) and give it your zone and time: in `harold/settings.env` (committed, so the job reads it too), or as two repository **variables**, which win when set:
 
 | Variable | Example | Default |
 |---|---|---|
@@ -365,10 +367,25 @@ The job ends with `bin/harold housekeeping finish`, which checks that the job wa
 
 Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed ("CRM Filing Protocol" in `AGENTS.md`).
 
+## Keeping Harold up to date
+
+Your workspace starts as a copy of the starter, and the starter keeps improving. `bin/harold update` brings Harold's own machinery up to it, and nothing else:
+
+```bash
+bin/harold update --dry-run   # what would change
+bin/harold update             # do it; review with git diff, harold close commits it
+```
+
+- **What it changes:** only the files `harold/update-manifest.txt` lists (`bin/`, `tests/`, the `tools/` code, every harness's hook and plugin files, the scheduled-job workflows and action, `playbook/core/`, `vault/templates/`, the brief and housekeeping prompts, `.gitignore`). New ones are added and ones the starter removed are removed.
+- **What it never touches:** your content: the vault (except its templates), `memory/`, `dashboard/`, `raw/`, and Harold's data files (learnings, blockers, alerts, events, facts, `projects.md`, the CRM queue, briefs, `settings.env`).
+- **Your edits are never overwritten.** A machinery file you changed, which the starter also changed, stays as it is; the starter's copy is written next to it as `<file>.upstream` and listed. Merge it by hand (a session can do it), then delete the copy; `bin/harold check` warns until you do. `AGENTS.md` is yours: when the starter's changes, you get `AGENTS.md.upstream` to bring the new sections in.
+- **Where from:** `harold/upstream.json` names the starter (`url`, `ref`, default `main`) and records the commit last applied, which is how it tells your edits from the starter's. `--from <git url or path>` and `--ref <branch>` override them for one run. To keep a path out of updates, add it to `"skip"` there.
+- **When:** boot prints one line when the starter has moved past your last update (a quick look, at most twice a day, never in scheduled jobs).
+
 ## Keeping it private
 
 - The workspace repo must be private. Everything in it is your context.
-- Credentials live in `~/.harold/env`, never in the repo. `bin/harold close` refuses to commit anything that looks like a key.
+- Credentials live in `~/.harold/env`, never in the repo (`harold/settings.env` is committed and is read only for non-secret `HAROLD_*` settings). `bin/harold close` refuses to commit anything that looks like a key.
 - The visualizer listens on localhost only. Do not expose its port.
 
 ## License and credit
