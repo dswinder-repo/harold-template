@@ -1,0 +1,50 @@
+name: Harold morning brief notify
+
+# OPTIONAL, and off until you set the NTFY_TOPIC secret. A phone notice when a new morning brief draft
+# lands, whoever wrote it: a scheduled routine, a session in any harness, another computer. Anything that
+# pushes a new harold/briefs/YYYY-MM-DD.md to your default branch triggers it, and it runs
+# `bin/harold brief notify` for each draft that push added. The notice carries no brief content: only
+# that it is ready, and a link to the file in your repository.
+#
+# ntfy is free and needs no account: install the ntfy app (iOS, Android) or open ntfy.sh in a browser and
+# subscribe to a topic name only you know. To turn it on, store that name as the repository secret
+# NTFY_TOPIC (Settings → Secrets and variables → Actions). For a self-hosted ntfy server, also set the
+# repository variable NTFY_SERVER (default https://ntfy.sh). Without NTFY_TOPIC every step is skipped.
+#
+# No double notices: morning-brief.yml notifies from its own run, and its push (made with the workflow's
+# GITHUB_TOKEN) does not start other workflows, so this one never fires for it.
+on:
+  push:
+    paths: ['harold/briefs/20*.md']
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    # Only pushes to the branch the knowledge base lives on.
+    if: ${{ github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HAROLD_TZ: ${{ vars.HAROLD_TZ }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+      BEFORE: ${{ github.event.before }}
+    steps:
+      - name: Not set up
+        if: ${{ env.NTFY_TOPIC == '' }}
+        run: echo "NTFY_TOPIC is not set, so there is nobody to notify. Nothing to do."
+
+      - uses: actions/checkout@v4
+        if: ${{ env.NTFY_TOPIC != '' }}
+        with: { fetch-depth: 0 }
+
+      - name: Notify for each brief draft this push added
+        if: ${{ env.NTFY_TOPIC != '' }}
+        run: |
+          before="$BEFORE"
+          if ! git cat-file -e "${before}^{commit}" 2>/dev/null; then before="HEAD~1"; fi
+          files=$(git diff --name-only --diff-filter=A "$before" HEAD -- 'harold/briefs/20*.md')
+          [ -n "$files" ] || { echo "no new brief draft in this push"; exit 0; }
+          for f in $files; do bin/harold brief notify --date="$(basename "$f" .md)" < /dev/null; done

@@ -21,6 +21,7 @@ inputs:
   log-file: { description: "Where the agent's output goes", required: true }
   max-turns: { description: "Turn limit, for the agents that take one (claude, grok)", default: "80" }
   commands: { description: "Comma-separated shell command prefixes the agent may run", default: "bin/harold,cat,date" }
+  if-no-credential: { description: "fail (default), or skip: with no credential for the agent the job is not set up yet, so end green with a notice and output skipped=true", default: fail }
   # Subscription credentials (preferred) and API keys. Pass the repository secrets; empty ones are ignored.
   claude-code-oauth-token: { default: "" }
   anthropic-api-key: { default: "" }
@@ -43,6 +44,9 @@ inputs:
   custom-install: { description: "HAROLD_AGENT_INSTALL: optional command that installs the CLI", default: "" }
   custom-secrets: { description: "HAROLD_AGENT_SECRETS: secret names to export, or NAME:~/path to write as a file", default: "" }
   all-secrets: { description: "toJSON(secrets), passed only for a custom agent that names secrets", default: "" }
+
+outputs:
+  skipped: { description: "true when if-no-credential is skip and no credential was found (nothing ran)", value: "${{ steps.creds.outputs.auth == 'none' }}" }
 
 runs:
   using: composite
@@ -67,6 +71,7 @@ runs:
         PROVIDER_URL: ${{ inputs.anthropic-base-url }}
         PROVIDER_TOKEN: ${{ inputs.anthropic-auth-token }}
         CUSTOM_CMD: ${{ inputs.custom-command }}
+        ON_MISSING: ${{ inputs.if-no-credential }}
       run: |
         signin=""; file=""
         if [ "$AGENT" = claude ] && [ -n "$PROVIDER_URL" ]; then
@@ -96,12 +101,16 @@ runs:
           *) echo "::error::Repository variable HAROLD_AGENT is '$AGENT'. Use claude, codex, cursor, gemini, copilot, grok, kimi, qwen or custom (or delete it for claude)."; exit 1 ;;
         esac
         if [ -n "$sub" ]; then auth=subscription; elif [ -n "$key" ]; then auth=api-key
+        elif [ "$ON_MISSING" = skip ]; then
+          echo "::notice::No model credential for $AGENT yet, so this scheduled job is not set up and was skipped (nothing ran). $how"
+          echo "auth=none" >> "$GITHUB_OUTPUT"; exit 0
         else echo "::error::No model credential for $AGENT. $how"; exit 1; fi
         echo "auth=$auth" >> "$GITHUB_OUTPUT"
         if [ "$auth" = subscription ] && [ -n "$signin" ]; then echo "signin=$signin" >> "$GITHUB_OUTPUT"; echo "signin-file=$file" >> "$GITHUB_OUTPUT"; fi
         echo "Agent: $AGENT, signed in with $([ "$auth" = subscription ] && echo 'your subscription' || echo 'an API key')"
 
     - uses: actions/setup-node@v4
+      if: ${{ steps.creds.outputs.auth != 'none' }}
       with: { node-version: 22 }
 
     - name: Restore a renewed sign-in (Actions cache)
@@ -123,6 +132,7 @@ runs:
 
     - name: Run the agent
       id: run
+      if: ${{ steps.creds.outputs.auth != 'none' }}
       shell: bash
       env:
         AGENT: ${{ inputs.agent }}

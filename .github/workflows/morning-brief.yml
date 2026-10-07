@@ -43,11 +43,16 @@ name: Harold morning brief
 # Actions cache, encrypted (bin/harold-agent-auth), and with those agents this workflow and housekeeping.yml
 # share one concurrency group, so two runs never renew the same sign-in at once.
 #
+# Until you add a secret for your agent, each due run ends green at the agent step with a notice
+# ("not set up"), so nothing fails while you have not turned it on.
+#
 # To enable:
 #   1. Add the repository secret for your agent (above). With no HAROLD_AGENT variable that is
 #      CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY.
 #   2. Set the two variables above (and HAROLD_AGENT if you are not using Claude Code).
-#   3. Optional: a repository secret NTFY_TOPIC for a phone push (ntfy app) when the brief lands.
+#   3. Optional: a repository secret NTFY_TOPIC for a phone push (ntfy app) when the brief lands. This job
+#      notifies from its own run; brief-notify.yml notifies when anything else (a routine, a session)
+#      pushes a new brief.
 #   4. Try it: Actions → "Harold morning brief" → Run workflow, with force=true and dry_run=true first.
 #
 # Cost: about 720 short runs a month. On a private repository each run counts as at least one Actions
@@ -88,6 +93,7 @@ jobs:
       HAROLD_SESSION_ID: github-actions-${{ github.run_id }}
       HAROLD_AGENT: ${{ vars.HAROLD_AGENT || 'claude' }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      NTFY_SERVER: ${{ vars.NTFY_SERVER }}
       FORCE: ${{ inputs.force }}
       DRY_RUN: ${{ inputs.dry_run }}
     steps:
@@ -100,6 +106,11 @@ jobs:
         run: |
           if [ "$FORCE" = "true" ]; then bin/harold brief start --force < /dev/null; else bin/harold brief start < /dev/null; fi
 
+      # The same contract test a session's boot runs: an unreadable core file or playbook stops the job here.
+      - name: Contract check (bin/harold check)
+        if: ${{ steps.gate.outputs.due == 'true' }}
+        run: bin/harold check < /dev/null
+
       - name: Prepare the prompt
         if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
         run: |
@@ -110,10 +121,13 @@ jobs:
           } > "$RUNNER_TEMP/brief-prompt.md"
 
       - name: Write the brief with the agent HAROLD_AGENT names (morning-brief.md Steps 1-2, analyst.md standard)
+        id: agent
         if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
         uses: ./.github/actions/harold-agent
         with:
           agent: ${{ env.HAROLD_AGENT }}
+          # Not set up yet (no secret for the agent): end green with a notice instead of failing every hour.
+          if-no-credential: skip
           model: ${{ vars.HAROLD_AGENT_MODEL }}
           base-url: ${{ vars.HAROLD_AGENT_BASE_URL }}
           prompt-file: ${{ runner.temp }}/brief-prompt.md
@@ -143,7 +157,7 @@ jobs:
           all-secrets: ${{ vars.HAROLD_AGENT == 'custom' && vars.HAROLD_AGENT_SECRETS != '' && toJSON(secrets) || '' }}
 
       - name: Finish (commit only the brief paths, push) and notify
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && steps.agent.outputs.skipped != 'true' }}
         run: |
           bin/harold brief finish
           bin/harold brief notify

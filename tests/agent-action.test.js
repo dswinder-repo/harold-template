@@ -197,3 +197,30 @@ test('a failing agent fails the step and shows the end of its log', () => {
   assert.notStrictEqual(r.status, 0);
   assert.match(r.stdout, /model said no/); assert.match(r.stdout, /the claude run failed/);
 });
+
+test('credential choice: if-no-credential=skip ends green with a notice and auth=none (a job not set up yet)', () => {
+  for (const agent of ['claude', 'codex', 'cursor', 'gemini', 'copilot', 'grok', 'kimi', 'qwen']) {
+    const r = creds(sandbox(), { AGENT: agent, ON_MISSING: 'skip' });
+    assert.strictEqual(r.status, 0, agent + r.stdout);
+    assert.strictEqual(r.outputs.auth, 'none', agent);
+    assert.match(r.stdout, /::notice::No model credential for .* not set up and was skipped/, agent);
+  }
+  assert.strictEqual(creds(sandbox(), { AGENT: 'claude', ON_MISSING: 'skip', CLAUDE_SUB: 's' }).outputs.auth, 'subscription', 'a credential still runs');
+  assert.notStrictEqual(creds(sandbox(), { AGENT: 'nope', ON_MISSING: 'skip' }).status, 0, 'a wrong HAROLD_AGENT still fails');
+  const action = fs.readFileSync(path.join(ROOT, '.github/actions/harold-agent/action.yml'), 'utf8');
+  assert.match(action, /- name: Run the agent\n\s+id: run\n\s+if: \$\{\{ steps\.creds\.outputs\.auth != 'none' \}\}/);
+  const brief = fs.readFileSync(path.join(ROOT, '.github/workflows/morning-brief.yml'), 'utf8');
+  assert.match(brief, /if-no-credential: skip/);
+  assert.match(brief, /steps\.agent\.outputs\.skipped != 'true'/);
+  const hk = fs.readFileSync(path.join(ROOT, '.github/workflows/housekeeping.yml'), 'utf8');
+  assert.doesNotMatch(hk, /if-no-credential: skip/, 'housekeeping, once switched on, fails loudly without a credential');
+});
+
+test('brief-notify.yml: off without NTFY_TOPIC, notices only for drafts a push added, default branch only', () => {
+  const y = fs.readFileSync(path.join(ROOT, '.github/workflows/brief-notify.yml'), 'utf8');
+  assert.match(y, /paths: \['harold\/briefs\/20\*\.md'\]/);
+  assert.match(y, /github\.ref_name == github\.event\.repository\.default_branch/);
+  assert.strictEqual((y.match(/if: \$\{\{ env\.NTFY_TOPIC != '' \}\}/g) || []).length, 2);
+  assert.match(y, /--diff-filter=A/);
+  assert.match(y, /bin\/harold brief notify --date=/);
+});
