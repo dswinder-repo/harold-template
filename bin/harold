@@ -80,7 +80,9 @@ function envFileSetting(name) {
   return settingFrom(envFileCache, name);
 }
 const CREDENTIAL_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i;
-function committedSettingAllowed(name) { return /^HAROLD_[A-Z0-9_]+$/.test(name) && !CREDENTIAL_NAME.test(name); }
+// Non-secret names outside HAROLD_* that the committed file may also carry (read by their own tools).
+const COMMITTED_EXTRA = new Set(['LINEAR_TEAM_KEY']);
+function committedSettingAllowed(name) { return (/^HAROLD_[A-Z0-9_]+$/.test(name) && !CREDENTIAL_NAME.test(name)) || COMMITTED_EXTRA.has(name); }
 let committedCache = null;
 function committedSettingsText() {
   if (committedCache === null) { committedCache = ''; try { const r = findRoot(); if (r) committedCache = fs.readFileSync(path.join(r, SETTINGS_FILE), 'utf8'); } catch (_) {} }

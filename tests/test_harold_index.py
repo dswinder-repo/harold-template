@@ -288,6 +288,15 @@ class IndexTest(unittest.TestCase):
     def test_project_map_folders_are_indexed(self):
         self.assertIn(('projects/side/notes.md', 'vault/people/Bob Smith.md', 'wikilink'), self.edges())
 
+    def test_nested_repository_is_not_indexed(self):
+        write(self.root, 'projects/side/app/README.md', '# App\n\nSee [[Bob Smith]].\n')
+        os.makedirs(os.path.join(self.root, 'projects/side/app/.git'))
+        write(self.root, 'projects/side/more.md', '# More\n\nSee [[Bob Smith]].\n')
+        self.build()
+        srcs = {s for s, d, k in self.edges()}
+        self.assertIn('projects/side/more.md', srcs)
+        self.assertNotIn('projects/side/app/README.md', srcs)
+
     def test_graph_json_written_only_when_changed_and_has_no_text(self):
         self.assertTrue(hi.graph_json(quiet=True))
         self.assertFalse(hi.graph_json(quiet=True))

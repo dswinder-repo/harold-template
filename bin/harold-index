@@ -99,7 +99,9 @@ def iter_md():
         base = os.path.join(ROOT, d)
         if not os.path.isdir(base): continue
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [x for x in dirnames if x not in SKIP_DIRS]
+            # A folder with its own .git is a separate repository (a code project checked out inside a project
+            # folder), not notes of this workspace.
+            dirnames[:] = [x for x in dirnames if x not in SKIP_DIRS and not os.path.exists(os.path.join(dirpath, x, '.git'))]
             for f in filenames:
                 if f.endswith('.md') and f not in SKIP_FILES:
                     rel = os.path.relpath(os.path.join(dirpath, f), ROOT)
