@@ -7,9 +7,20 @@
 import type { HaroldRepo } from "./github.js";
 
 export const GRAPH_PATH = "harold/graph.json";
-const EVENT_TYPES = new Set(["daily", "meeting"]);          // dated records, never flagged stale
+const EVENT_TYPES = new Set(["daily", "meeting", "archive"]); // dated records and archives, never flagged stale
 const ENTITY_TYPES = new Set(["person", "company", "project", "decision", "intel"]);
-const HUB_DEGREE = 40;                                       // shared links go through non-hub notes only
+
+/** Archived notes (an archive/ folder, or a file named *-archive.md) stay searchable and are never stale, as in bin/harold-index. */
+export function isArchived(p: string): boolean {
+  const parts = p.split("/");
+  return parts.slice(0, -1).includes("archive") || p.endsWith("-archive.md");
+}
+
+/** HAROLD_HUB_DEGREE (default 40): a note with more links than this is a hub, and no longer makes its neighbours related. */
+export function hubDegree(): number {
+  const n = Number.parseInt((process.env.HAROLD_HUB_DEGREE || "").trim(), 10);
+  return Number.isFinite(n) && n >= 0 ? n : 40;
+}
 
 export interface GNode { path: string; title: string; type: string; last_updated: string }
 type Relation = "both" | "outgoing" | "backlink" | "shared" | "via";
@@ -39,7 +50,7 @@ export class Graph {
   }
   isStale(n: GNode): boolean {
     const a = this.ageDays(n.last_updated);
-    return !EVENT_TYPES.has(n.type) && a !== null && a > this.staleDays;
+    return !EVENT_TYPES.has(n.type) && !isArchived(n.path) && a !== null && a > this.staleDays;
   }
 }
 
@@ -147,8 +158,9 @@ export function related(g: Graph, starts: string[], depth = 1, limit = 15, showA
   const startNbrs = new Set<string>();
   for (const s of starts) for (const n of g.nbrs(s)) if (!S.has(n)) startNbrs.add(n);
   const shared = new Map<string, Set<string>>();
+  const hub = hubDegree();
   for (const c of startNbrs) {
-    if (g.degree(c) > HUB_DEGREE) continue;
+    if (g.degree(c) > hub) continue;
     for (const x of g.nbrs(c)) {
       if (S.has(x) || x === c) continue;
       if (!shared.has(x)) shared.set(x, new Set());
