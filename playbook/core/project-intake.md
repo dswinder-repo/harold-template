@@ -80,12 +80,13 @@ Watch every message for a body of work that will produce files and needs a home:
    - keywords: investor, term sheet, data room
    - people: [[Jane Doe]], [[Sam Lee]]
    - card: vault/projects/seed-round.md
+   - next_step: Send the deck to the first five investors
    ```
    - `status`: `active` | `paused` | `archived`
    - `type`: `employer` | `client` | `venture` | `workstream` | `personal` | `tool`
    - `aliases`: what the operator actually said first, then other names they're likely to use
    - `keywords`: names, organizations, products and places that will signal this project in conversation
-   - Optional lines: `routes` (subfolder → purpose), `competitors` (read by the analyst playbook), `notes` (parent, isolation rule, binding lessons)
+   - Optional lines: `routes` (subfolder → purpose), `competitors` (read by the analyst playbook), `next_step` (the one thing that moves it forward; `bin/harold pulse` shows it and flags its absence), `notes` (parent, isolation rule, binding lessons)
    - **Verify:** `bin/harold where "<name>"` resolves to the new entry. If it doesn't, fix the entry before moving on.
 
 3. **Create the vault card** `vault/projects/<slug>.md` (from `vault/templates/project.md` if you have one; otherwise this shape):

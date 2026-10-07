@@ -14,7 +14,11 @@ project:     # name from harold/projects.md
 <!-- What matters most -->
 
 ## Action Items
-<!-- What happens next, who owns it, by when (each becomes a task) -->
+<!-- One line per commitment, each with its task ID once the task exists (created automatically, never on request):
+- [ ] Send the revised deck to Jane Doe, due 2026-10-10 (ABC-123)
+- [ ] Follow up: Jane Doe owes the signed NDA, due 2026-10-14 (ABC-124)
+- [ ] Think about a new logo (no task: an idea, not a commitment)
+A task URL works in place of the ID. bin/harold close blocks on an item here with neither. -->
 
 ## Notes
 <!-- Detail, if needed -->

@@ -2,7 +2,7 @@
 
 > **This file is the canonical entry point for every harness (any AI tool that can read this file and run a command, with any model), a terminal or a scheduled job.** `CLAUDE.md` at the repo root is a one-line include of this file (`@AGENTS.md`). All working memory, context and system files live in this workspace, versioned in a private git repository ([YOUR GITHUB USER]/[YOUR REPO]).
 >
-> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ`, e.g. America/Chicago: in `~/.harold/env` for sessions, and as a repository variable for the scheduled jobs, which never read that file). Everywhere this file says "the operator", it means you.
+> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ`, e.g. America/Chicago, in `harold/settings.env`: committed, so every session and scheduled job reads it). Everywhere this file says "the operator", it means you.
 
 ## FIRST INSTRUCTION — run `bin/harold boot`
 
@@ -26,7 +26,7 @@ Harold is platform-, model- and harness-agnostic: it works the same in any AI to
 | Qwen Code | `.qwen/settings.json` | `SessionStart` | `Stop` | `SessionEnd` |
 | GitHub Copilot CLI | `.github/copilot/settings.json` | `sessionStart` | `agentStop` | `sessionEnd` |
 | Grok Build | `.grok/hooks/harold.json` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
-| Kimi Code CLI | `tools/harness-hooks/kimi-config.toml`, copied into `~/.kimi/config.toml` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| Kimi Code CLI | `tools/harness-hooks/kimi-config.toml`, copied into `~/.kimi-code/config.toml` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
 | goose | `.agents/plugins/harold/` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
 | Hermes Agent | `tools/harness-hooks/hermes-config.yaml`, merged into `~/.hermes/config.yaml` | first `pre_llm_call` | `pre_verify` + `on_session_end` | `on_session_finalize` |
 | Cline | `.clinerules/hooks/` | `TaskStart` | `TaskComplete` (cannot block: the next `TaskStart` lists what is unfiled) | `SessionShutdown` |
@@ -143,6 +143,8 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 > 4. always state staleness and gaps: `related` ends with a `gaps:` line (stale after `HAROLD_STALE_DAYS`, default 30 days; broken links; orphans; no meeting notes). Say them in the answer.
 >
 > `bin/harold backlinks "<note>"` lists everything pointing at a note. Links are `[[wikilinks]]` (by filename, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related` and similar). The graph lives in `harold/search.db` (gitignored, rebuilt by boot, search and close whenever a file changed); `harold/graph.json` is its committed copy (paths, titles, types, dates and links, no note text), rewritten by close, so a surface without the workspace follows the same links through the connector's `harold_related`, which reads that file. Archived notes (`archive/` folders, `*-archive.md`) are indexed and searchable, and never flagged stale. Resolve any project to its folder with `bin/harold where <topic>`.
+>
+> **Which projects have gone quiet:** `bin/harold pulse` lists each active project's newest activity (what it was and its date), its next step, and a quiet flag after `HAROLD_PULSE_DAYS` (default 14) days without any; boot prints the quiet ones. A project with no next step recorded is a gap: say it, and record the step as `next_step:` in its `harold/projects.md` entry once the operator names it. The connector's `harold_pulse` gives the same answer.
 
 ---
 
@@ -206,6 +208,8 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 | **Offline CRM queue** | `harold/crm-queue.jsonl` (`bin/harold file crm`; applied by boot/close, or `bin/harold replay`) |
 | **Morning brief drafts** | `harold/briefs/` (`bin/harold brief status`; schedule: `HAROLD_TZ`, `HAROLD_BRIEF_TIME`) |
 | **Cloud housekeeping** | `harold/housekeeping.json` (the switch), `harold/housekeeping-prompt.md`, notes in `harold/briefs/housekeeping-notes.md` (`bin/harold housekeeping status`) |
+| **Settings (non-secret)** | `harold/settings.env` (committed; `HAROLD_*` only; the environment and `~/.harold/env` override it) |
+| **Starter updates** | `bin/harold update [--dry-run]`: Harold's machinery (`harold/update-manifest.txt`) from the starter (`harold/upstream.json`); never your content; your edits come back as `<file>.upstream` to merge by hand |
 | **Dashboard State** | `harold/active-sessions/` (one JSON per live session) |
 | **Knowledge Vault** | `vault/` (people, companies, projects, intel, decisions, meetings, daily; plain markdown, Obsidian optional) |
 | **Raw Source Inbox** | `raw/` (unprocessed sources, compiled into the vault by `playbook/core/compile.md`) |
@@ -222,7 +226,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
-- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ`, `HAROLD_BRIEF_TIME` and `HAROLD_NO_LOG_TYPES`. `bin/harold close` refuses to commit anything that looks like a key.
+- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`). Non-secret settings such as `HAROLD_TZ`, `HAROLD_BRIEF_TIME` and `HAROLD_NO_LOG_TYPES` go in the committed `harold/settings.env`, so every machine and scheduled job has them (`~/.harold/env` or the environment overrides it on one machine). `bin/harold close` refuses to commit anything that looks like a key.
 - **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with ready-made presets for Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI, Grok Build, Kimi Code and Qwen Code, a custom command for any other CLI, and the agent's subscription used first wherever there is one; or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
@@ -244,7 +248,7 @@ bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","applied":"
 
 That is the normal way to work with the connector and no local credentials. The queue below is only for when the CRM cannot be reached at all.
 
-**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `~/.harold/env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions; for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: the CRM tools (`crm_log_interaction`, `harold_log_interaction`), `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
+**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `harold/settings.env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions (a contact matches by its type or any of its labels; a hosted connector reads it from its own environment); for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: the CRM tools (`crm_log_interaction`, `harold_log_interaction`), `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
 
 If the CRM is unreachable (no CRM tool works, and no connector), queue the work instead of dropping it, and say that you did:
 
@@ -329,9 +333,9 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 ### /debrief — Meeting Debrief
 
-**Triggers:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", "/debrief"
+**Triggers:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted call notes or a forwarded email with commitments in it, "/debrief"
 
-**Follow `playbook/core/meeting-debrief.md` exactly.** Key steps: process the input → log the interaction in the CRM → create tasks for action items → update contact warmth, status and pipeline stage → extract atomic facts to `harold/facts.md` → write the meeting note in `vault/meetings/` → draft a follow-up if needed.
+**Follow `playbook/core/meeting-debrief.md` exactly.** Key steps: process the input → log the interaction in the CRM → create a task for every commitment automatically, without being asked (the operator's to-dos and what others owe them), and write each task ID into the meeting note's `## Action items` (`bin/harold close` blocks until every item has one) → update contact warmth, status and pipeline stage → extract atomic facts to `harold/facts.md` → write the meeting note in `vault/meetings/` → draft a follow-up if needed.
 
 ### /status — Dashboard Summary
 
@@ -339,7 +343,8 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 1. Read `dashboard/status.md`, `harold/alerts.md` and `harold/blockers.md`
 2. Check for stale relationships with the CRM tool: `crm_stale` on the connector, `harold_cadence_check` on harold-mcp (the same rule)
-3. Present a concise summary: project status, flags, stale relationships, upcoming deadlines
+3. Check which projects have gone quiet: `bin/harold pulse` (`harold_pulse` on the connector, the same answer)
+4. Present a concise summary: project status, quiet projects with their next step, flags, stale relationships, upcoming deadlines
 
 ### /intake — Contact Intake
 
@@ -355,4 +360,4 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 ---
 
-*Harold 2.1 starter. Fill in the bracketed placeholders, then delete this line.*
+*Harold 2.0 starter. Fill in the bracketed placeholders, then delete this line.*

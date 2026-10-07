@@ -85,6 +85,23 @@ describe("OAuth flow (mocked GitHub)", () => {
     expect(prm.resource).toBe(`${BASE}/mcp`);
     expect(metadata.code_challenge_methods_supported).toEqual(["S256"]);
     expect(metadata.registration_endpoint).toBe(`${BASE}/register`);
+    expect((metadata as Record<string, unknown>).authorization_response_iss_parameter_supported).toBe(true);
+  });
+
+  it("browser clients: preflight answered before the token check, and responses readable cross-origin", async () => {
+    for (const path of ["/mcp", "/mcp/", "/token", "/register", "/.well-known/oauth-protected-resource/mcp"]) {
+      const pre = await appFetch(`${BASE}${path}`, { method: "OPTIONS", headers: { origin: "https://inspector.example", "access-control-request-method": "POST", "access-control-request-headers": "authorization, content-type" } });
+      expect(pre.status, path).toBe(204);
+      expect(pre.headers.get("access-control-allow-headers"), path).toContain("Authorization");
+    }
+    const r = await appFetch(`${BASE}/mcp`, { method: "POST", headers: { origin: "https://inspector.example", "content-type": "application/json" }, body: "{}" });
+    expect(r.status).toBe(401);
+    expect(r.headers.get("access-control-allow-origin")).toBe("*");
+    expect(r.headers.get("access-control-expose-headers")).toContain("WWW-Authenticate");
+    const t = await appFetch(`${BASE}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "grant_type=nope" });
+    expect(t.headers.get("access-control-allow-origin")).toBe("*");
+    const slash = await appFetch(`${BASE}/mcp/`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(slash.status).toBe(401); // same endpoint, not a 404
   });
 
   it("authorize → callback → token → MCP → refresh (owner)", async () => {
@@ -92,6 +109,7 @@ describe("OAuth flow (mocked GitHub)", () => {
     const { back, codeVerifier } = await signIn(as, metadata, clientInformation, "gh-code-owner");
     expect(back.origin + back.pathname).toBe(REDIRECT);
     expect(back.searchParams.get("state")).toBe("claude-state-123");
+    expect(back.searchParams.get("iss")).toBe(BASE); // RFC 9207 (Gemini CLI requires it)
     const code = back.searchParams.get("code")!;
     expect(code).toBeTruthy();
 

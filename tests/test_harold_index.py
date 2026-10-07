@@ -288,6 +288,15 @@ class IndexTest(unittest.TestCase):
     def test_project_map_folders_are_indexed(self):
         self.assertIn(('projects/side/notes.md', 'vault/people/Bob Smith.md', 'wikilink'), self.edges())
 
+    def test_nested_repository_is_not_indexed(self):
+        write(self.root, 'projects/side/app/README.md', '# App\n\nSee [[Bob Smith]].\n')
+        os.makedirs(os.path.join(self.root, 'projects/side/app/.git'))
+        write(self.root, 'projects/side/more.md', '# More\n\nSee [[Bob Smith]].\n')
+        self.build()
+        srcs = {s for s, d, k in self.edges()}
+        self.assertIn('projects/side/more.md', srcs)
+        self.assertNotIn('projects/side/app/README.md', srcs)
+
     def test_graph_json_written_only_when_changed_and_has_no_text(self):
         self.assertTrue(hi.graph_json(quiet=True))
         self.assertFalse(hi.graph_json(quiet=True))
@@ -300,6 +309,112 @@ class IndexTest(unittest.TestCase):
         self.assertNotIn('CEO of', raw)
         write(self.root, 'vault/people/Dan.md', '# Dan\n')
         self.assertTrue(hi.graph_json(quiet=True))  # refreshes the index first, then rewrites
+
+
+# ───────────────────────── project pulse ─────────────────────────
+# tools/harold-connector/test/unit/pulse-fixture.json is shared with the connector's pulse.test.ts: the same files and
+# commits must give bin/harold pulse and harold_pulse the same graph.json and the same text.
+FIXTURE = os.path.join(HERE, '..', 'tools', 'harold-connector', 'test', 'unit', 'pulse-fixture.json')
+
+
+@unittest.skipUnless(os.path.exists(FIXTURE), 'needs tools/harold-connector (a workspace that deploys its connector from another repository runs these through tests/index.test.js, on the starter fixture)')
+class PulseTest(unittest.TestCase):
+    def setUp(self):
+        with open(FIXTURE, encoding='utf-8') as fh: self.fx = json.load(fh)
+        self.root = tempfile.mkdtemp(prefix='harold-pulse-test-')
+        self.env = {k: os.environ.get(k) for k in ('HAROLD_TODAY', 'HAROLD_STALE_DAYS', 'HAROLD_PULSE_DAYS', 'HAROLD_TZ')}
+        os.environ.update(HAROLD_TODAY=self.fx['today'], HAROLD_TZ=self.fx['tz'])
+        os.environ.pop('HAROLD_STALE_DAYS', None); os.environ.pop('HAROLD_PULSE_DAYS', None)
+        for rel, text in self.fx['files'].items(): self.put(rel, text)
+        self.git('init', '-q'); self.git('add', '-A'); self.git('commit', '-qm', 'init', date=self.fx['initial_commit'])
+        for c in self.fx['commits']:
+            for rel, text in c['files'].items(): self.put(rel, text)
+            self.git('add', '-A'); self.git('commit', '-qm', c['message'], date=c['date'])
+        hi.set_root(self.root)
+        hi.build(quiet=True)
+
+    def tearDown(self):
+        for k, v in self.env.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+        shutil.rmtree(self.root)
+
+    def put(self, rel, text):
+        p = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, 'w', encoding='utf-8') as fh: fh.write(text)
+        st = os.stat(p); os.utime(p, (st.st_atime, st.st_mtime + 2))
+
+    def git(self, *a, date=None):
+        env = dict(os.environ, **({'GIT_AUTHOR_DATE': date, 'GIT_COMMITTER_DATE': date} if date else {}))
+        import subprocess
+        subprocess.run(['git', '-C', self.root, '-c', 'user.email=t@example.com', '-c', 'user.name=T', '-c', 'commit.gpgsign=false', *a],
+                       check=True, env=env, capture_output=True)
+
+    def test_same_graph_json_and_text_as_the_connector(self):
+        hi.graph_json(quiet=True)
+        with open(hi.GRAPH_JSON, encoding='utf-8') as fh: self.assertEqual(fh.read(), self.fx['graph_json'])
+        self.assertEqual(hi.pulse_text(hi.pulse_data()), self.fx['expected']['text'])
+        self.assertEqual(hi.pulse_text(hi.pulse_data(include_inactive=True), True), self.fx['expected']['text_all'])
+        self.assertEqual(hi.pulse_boot(hi.pulse_data()), self.fx['expected']['boot'])
+
+    def test_activity_sources_and_next_step_sources(self):
+        d = {p['name']: p for p in hi.pulse_data(include_inactive=True)['projects']}
+        self.assertEqual(d['Pilot Program']['last']['path'], 'vault/meetings/2026-09-18-acme-kickoff.md')  # not the 2026-10-20 meeting
+        self.assertEqual(d['Pilot Program']['next_step_source'], 'vault/projects/pilot.md (frontmatter)')
+        self.assertEqual((d['Beta Launch']['last']['kind'], d['Beta Launch']['last']['date']), ('commit', '2026-10-03'))
+        self.assertEqual(d['Beta Launch']['next_step_source'], 'projects/beta/README.md')  # the card's next_step is a placeholder comment
+        self.assertEqual((d['Gamma Research']['card'], d['Gamma Research']['last']['via']), ('vault/projects/gamma-research.md', 'mention'))
+        self.assertEqual(d['Gamma Research']['next_step_source'], 'harold/projects.md')
+        self.assertEqual((d['Echo']['last']['via'], d['Echo']['next_step']), ('folder', 'call Bob'))
+        self.assertIsNone(d['Delta']['last'])
+        self.assertTrue(d['Delta']['quiet'])
+        self.assertIsNone(d['Old Thing']['quiet'])  # paused: not judged
+
+    def test_threshold_setting(self):
+        os.environ['HAROLD_PULSE_DAYS'] = '40'
+        data = hi.pulse_data()
+        self.assertEqual([p['name'] for p in data['projects'] if p['quiet']], ['Delta'])
+        self.assertEqual(data['pulse_days'], 40)
+        hi.graph_json(quiet=True)
+        with open(hi.GRAPH_JSON, encoding='utf-8') as fh: self.assertIn('"pulse_days":40,', fh.readline())
+
+    def test_without_git_commits_are_not_counted_and_it_says_so(self):
+        shutil.rmtree(os.path.join(self.root, '.git'))
+        data = hi.pulse_data()
+        self.assertEqual(data['git'], 'not a git repository')
+        text = hi.pulse_text(data)
+        self.assertIn('- Beta Launch — quiet 67 days (last: project card 2026-08-01); next step: Book the venue', text)
+        self.assertIn('Git history not used here (not a git repository): commits were not counted.', text)
+
+    def test_mentions_whole_words_and_short_aliases_by_case(self):
+        self.put('harold/projects.md', self.fx['files']['harold/projects.md'] + '\n## Zed\n- folder: projects/zed\n- status: active\n- aliases: ZD\n')
+        self.put('vault/daily/2026-10-01-a.md', '# A\n\nThe ZD numbers came in. Pilots everywhere.\n')
+        self.put('vault/daily/2026-10-02-b.md', '# B\n\nzd lowercase is not the project.\n')
+        hi.build(quiet=True)
+        m = set(hi.graph_rows()['mentions'])
+        self.assertIn(('vault/daily/2026-10-01-a.md', 'Zed'), m)
+        self.assertNotIn(('vault/daily/2026-10-02-b.md', 'Zed'), m)
+        self.assertNotIn(('vault/daily/2026-10-01-a.md', 'Pilot Program'), m)  # "Pilots" is not "the pilot"
+
+    def test_a_roll_up_note_is_not_activity_for_every_project_it_names(self):
+        self.put('vault/daily/2026-10-05-month-end.md', '# Month-end review\n\nPilot Program, Beta Launch, Delta and Echo: all reviewed.\n')
+        self.put('vault/daily/2026-10-05-delta.md', '# Delta: first call\n\nAlso touched on Pilot Program, Beta Launch and Echo.\n')
+        hi.build(quiet=True)
+        m = set(hi.graph_rows()['mentions'])
+        self.assertFalse({x for x in m if x[0] == 'vault/daily/2026-10-05-month-end.md'})   # four projects, none in a heading
+        self.assertEqual({p for s, p in m if s == 'vault/daily/2026-10-05-delta.md'}, {'Delta'})  # named in the title
+
+    def test_next_step_parsing(self):
+        self.assertEqual(hi.fm_next_step('---\nnext_step: "call Jane"\n---\n# X\n'), 'call Jane')
+        self.assertEqual(hi.fm_next_step('---\nnext_step:   # one line\n---\n'), '')
+        self.assertEqual(hi.body_next_step('# X\n\n**Next step:** send the deck\n'), 'send the deck')
+        self.assertEqual(hi.body_next_step('# X\n- Next steps: book it\n'), 'book it')
+        self.assertEqual(hi.body_next_step('# X\n\n## Next step\n\n1. [x] sign the NDA\n'), 'sign the NDA')
+        self.assertEqual(hi.body_next_step('# X\n<!-- Next step: hidden -->\n```\nNext step: code\n```\n'), '')
+        self.assertEqual(hi.body_next_step('# X\nNext steps need an API key.\n'), '')
+        self.assertEqual(hi.clean_step('{{what happens next}}'), '')
+        self.assertEqual(len(hi.clean_step('x' * 250)), 200)
 
 
 if __name__ == '__main__':

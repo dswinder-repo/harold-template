@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SRC = path.resolve(__dirname, '..');
+const { SRC } = require('./fixture'); // this repository, or in a workspace the starter's content with its machinery (tests/fixture.js)
 const SKIP = new Set(['.git', 'node_modules', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.last-boot']);
 
 function workspace() {

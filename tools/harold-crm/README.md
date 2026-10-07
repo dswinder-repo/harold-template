@@ -32,7 +32,7 @@ Realtime, Storage).
 
 ## Try it in demo mode
 
-Running it on your own computer needs Node 20 or later and
+Running it on your own computer needs Node 22 or later and
 [pnpm](https://pnpm.io/installation). (A host such as Vercel brings its own.)
 
 ```bash

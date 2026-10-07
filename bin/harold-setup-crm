@@ -93,7 +93,11 @@ else
   echo "✗ Connection failed (HTTP $CODE)."
   [ "$CODE" = "401" ] && echo "  A 401 usually means that was the anon/publishable key, not the service_role one."
   [ "$CODE" = "404" ] && echo "  A 404 usually means the schema has not been applied yet: run tools/harold-mcp/schema.sql in the SQL editor."
-  echo "  Go back to the dashboard page above and copy the key labelled service_role, then run this again."
+  if [ "$CODE" = "000" ]; then
+    echo "  No answer at all: check the project URL and this computer's internet connection, then run this again."
+  else
+    echo "  Go back to the dashboard page above and copy the key labelled service_role, then run this again."
+  fi
   rm -f /tmp/harold-crm-test.json
   exit 1
 fi

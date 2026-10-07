@@ -1,0 +1,39 @@
+{
+ "_comment": "Shared by tests/test_harold_index.py (bin/harold pulse) and test/unit/pulse.test.ts (harold_pulse): the same repository must give the same answer. graph_json is what bin/harold-index writes for these files.",
+ "today": "2026-10-07",
+ "tz": "UTC",
+ "initial_commit": "2026-01-01T12:00:00Z",
+ "files": {
+  "harold/projects.md": "# Project map\n\n## Pilot Program\n- folder: projects/pilot\n- status: active\n- aliases: the pilot\n- card: vault/projects/pilot.md\n\n## Beta Launch\n- folder: projects/beta\n- status: active\n- card: vault/projects/beta.md\n\n## Gamma Research\n- folder: projects/gamma\n- status: active\n- next_step: draft the summary\n\n## Delta\n- folder: projects/delta\n- status: active\n\n## Echo\n- folder: projects/echo\n- status: active\n\n## Old Thing\n- folder: projects/old\n- status: paused\n- card: vault/projects/old.md\n",
+  "vault/projects/pilot.md": "---\ntags: [project]\nlast_updated: 2026-09-10\nnext_step: \"waiting on a reply from Jane\"\n---\n# Pilot Program\n\nA pilot with [[Acme]].\n",
+  "vault/projects/beta.md": "---\ntags: [project]\nlast_updated: 2026-08-01\nnext_step:   # one line: what happens next\n---\n# Beta Launch\n\n<!-- Next step: not this one, it is a comment -->\n",
+  "vault/projects/gamma-research.md": "---\ntags: [project]\nlast_updated: 2026-08-20\n---\n# Gamma Research\n",
+  "vault/projects/old.md": "---\ntags: [project]\nlast_updated: 2026-01-15\n---\n# Old Thing\n",
+  "vault/companies/Acme.md": "---\nlast_updated: 2026-07-01\n---\n# Acme\n",
+  "vault/meetings/2026-09-18-acme-kickoff.md": "---\ndate: 2026-09-18\nproject: Pilot Program\n---\n# Acme kickoff\n\nWith [[Acme]].\n",
+  "vault/meetings/2026-10-20-pilot-review.md": "---\ndate: 2026-10-20\n---\n# Pilot review\n\nPlanned review of [[Pilot Program]].\n",
+  "vault/daily/2026-09-05-work.md": "# Work log\n\nTalked about the pilot over lunch.\n",
+  "vault/daily/2026-10-06-work.md": "# Work log\n\nRead two papers for Gamma Research.\n",
+  "projects/pilot/README.md": "# Pilot\n\nWorking files.\n",
+  "projects/beta/README.md": "# Beta Launch\n\n## Next steps\n\n- [ ] Book the venue\n- [ ] Send invites\n",
+  "projects/beta/plan.txt": "draft\n",
+  "projects/gamma/README.md": "# Gamma\n",
+  "projects/echo/README.md": "# Echo\n\n**Next step:** call Bob\n",
+  "projects/echo/notes/2026-09-01-notes.md": "# Echo notes\n\nStarted.\n"
+ },
+ "commits": [
+  {
+   "date": "2026-10-03T12:00:00Z",
+   "message": "feat: venue shortlist\n\nThree venues.",
+   "files": {
+    "projects/beta/plan.txt": "three venues\n"
+   }
+  }
+ ],
+ "graph_json": "{\"version\":1,\"generated_by\":\"bin/harold-index graph-json\",\"stale_days\":30,\"pulse_days\":14,\n\"node_fields\":[\"path\",\"title\",\"type\",\"last_updated\"],\n\"nodes\":[\n[\"harold/projects.md\",\"Project map\",\"harold\",\"\"],\n[\"projects/beta/README.md\",\"Beta Launch\",\"projects\",\"\"],\n[\"projects/echo/README.md\",\"Echo\",\"projects\",\"\"],\n[\"projects/echo/notes/2026-09-01-notes.md\",\"Echo notes\",\"projects\",\"2026-09-01\"],\n[\"projects/gamma/README.md\",\"Gamma\",\"projects\",\"\"],\n[\"projects/pilot/README.md\",\"Pilot\",\"projects\",\"\"],\n[\"vault/companies/Acme.md\",\"Acme\",\"company\",\"2026-07-01\"],\n[\"vault/daily/2026-09-05-work.md\",\"Work log\",\"daily\",\"2026-09-05\"],\n[\"vault/daily/2026-10-06-work.md\",\"Work log\",\"daily\",\"2026-10-06\"],\n[\"vault/meetings/2026-09-18-acme-kickoff.md\",\"Acme kickoff\",\"meeting\",\"2026-09-18\"],\n[\"vault/meetings/2026-10-20-pilot-review.md\",\"Pilot review\",\"meeting\",\"2026-10-20\"],\n[\"vault/projects/beta.md\",\"Beta Launch\",\"project\",\"2026-08-01\"],\n[\"vault/projects/gamma-research.md\",\"Gamma Research\",\"project\",\"2026-08-20\"],\n[\"vault/projects/old.md\",\"Old Thing\",\"project\",\"2026-01-15\"],\n[\"vault/projects/pilot.md\",\"Pilot Program\",\"project\",\"2026-09-10\"]\n],\n\"edge_fields\":[\"src\",\"dst\",\"kind\"],\n\"edges\":[\n[\"vault/meetings/2026-09-18-acme-kickoff.md\",\"vault/companies/Acme.md\",\"wikilink\"],\n[\"vault/meetings/2026-09-18-acme-kickoff.md\",\"vault/projects/pilot.md\",\"frontmatter:project\"],\n[\"vault/meetings/2026-10-20-pilot-review.md\",\"vault/projects/pilot.md\",\"wikilink\"],\n[\"vault/projects/pilot.md\",\"vault/companies/Acme.md\",\"wikilink\"]\n],\n\"broken_fields\":[\"src\",\"target\",\"kind\"],\n\"broken\":[\n\n],\n\"mention_fields\":[\"src\",\"project\"],\n\"mentions\":[\n[\"vault/daily/2026-09-05-work.md\",\"Pilot Program\"],\n[\"vault/daily/2026-10-06-work.md\",\"Gamma Research\"],\n[\"vault/meetings/2026-10-20-pilot-review.md\",\"Pilot Program\"]\n]}\n",
+ "expected": {
+  "text": "# Project pulse, 2026-10-07: 3 of 5 active projects quiet (no activity in more than 14 days)\n\nQuiet:\n- Delta — quiet, no dated activity found; next step: no next step recorded\n- Echo — quiet 36 days (last: note 2026-09-01, \"Echo notes\"); next step: call Bob\n- Pilot Program — quiet 19 days (last: meeting note 2026-09-18, \"Acme kickoff\"); next step: waiting on a reply from Jane\n\nActive:\n- Beta Launch — active 4 days ago (last: commit 2026-10-03, \"feat: venue shortlist\")\n- Gamma Research — active 1 day ago (last: daily note 2026-10-06, \"Work log\")\n\nActivity: notes linked to the project card, files in its folder, daily and meeting notes that name it (dates written in the notes), and git commits touching its folder. Quiet after HAROLD_PULSE_DAYS (14) days without any. Record a next step as next_step: in the project's harold/projects.md entry or its card's frontmatter.",
+  "text_all": "# Project pulse, 2026-10-07: 3 of 5 active projects quiet (no activity in more than 14 days)\n\nQuiet:\n- Delta — quiet, no dated activity found; next step: no next step recorded\n- Echo — quiet 36 days (last: note 2026-09-01, \"Echo notes\"); next step: call Bob\n- Pilot Program — quiet 19 days (last: meeting note 2026-09-18, \"Acme kickoff\"); next step: waiting on a reply from Jane\n\nActive:\n- Beta Launch — active 4 days ago (last: commit 2026-10-03, \"feat: venue shortlist\"); next step: Book the venue\n- Gamma Research — active 1 day ago (last: daily note 2026-10-06, \"Work log\"); next step: draft the summary\n\nNot judged (not active):\n- Old Thing [paused]\n\nActivity: notes linked to the project card, files in its folder, daily and meeting notes that name it (dates written in the notes), and git commits touching its folder. Quiet after HAROLD_PULSE_DAYS (14) days without any. Record a next step as next_step: in the project's harold/projects.md entry or its card's frontmatter.",
+  "boot": "## Project pulse: 3 of 5 active projects quiet, no activity in more than 14 days (bin/harold pulse for all)\n- Delta — quiet, no dated activity found; next step: no next step recorded\n- Echo — quiet 36 days (last: note 2026-09-01, \"Echo notes\"); next step: call Bob\n- Pilot Program — quiet 19 days (last: meeting note 2026-09-18, \"Acme kickoff\"); next step: waiting on a reply from Jane"
+ }
+}

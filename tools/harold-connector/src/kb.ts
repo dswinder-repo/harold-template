@@ -6,6 +6,7 @@ import { HaroldRepo, GithubError, cleanPath } from "./github.js";
 import { appendLearning, CATEGORIES, SEVERITIES } from "./learnings.js";
 import { criticalLessons, housekeepingNew, morningStep0 } from "./morning.js";
 import { formatWhere, parseProjects } from "./projects.js";
+import { pulseData, pulseTodaySection } from "./pulse.js";
 import { appendUnderHeading, frontmatter, localParts, slugify, truncate, updateFrontmatter } from "./text.js";
 
 export interface ToolText { text: string; isError?: boolean }
@@ -28,12 +29,13 @@ function firstLine(text: string): string {
 export async function today(repo: HaroldRepo, now = new Date()): Promise<ToolText> {
   const zone = tzInfo();
   const t = localParts(now, zone.tz);
-  const [brief, alerts, tree, lessons, hk] = await Promise.all([
+  const [brief, alerts, tree, lessons, hk, pulse] = await Promise.all([
     repo.getText(`harold/briefs/${t.iso}.md`).catch(() => null),
     repo.getText("harold/alerts.md").catch(() => null),
     repo.tree(),
     repo.getText("harold/learnings.jsonl").catch(() => null),
     repo.getText("harold/briefs/housekeeping-notes.md").catch(() => null),
+    pulseData(repo, t.iso, zone.tz).then(pulseTodaySection, e => `Project pulse unavailable: ${e instanceof Error ? e.message : String(e)}`),
   ]);
   const hkNew = hk ? housekeepingNew(hk.text) : "";
   const dailies = tree.map(f => f.path).filter(p => /^vault\/daily\/\d{4}-\d{2}-\d{2}[^/]*\.md$/.test(p)).sort().reverse().slice(0, 5);
@@ -54,6 +56,9 @@ export async function today(repo: HaroldRepo, now = new Date()): Promise<ToolTex
     "",
     "## Housekeeping notes",
     hkNew ? `From harold/briefs/housekeeping-notes.md (under "## New"):\n${hkNew}` : "None waiting.",
+    "",
+    "## Quiet projects",
+    pulse,
     "",
     "## Most recent daily notes",
     ...(dailies.length ? dailies.map((p, i) => `- ${p}${firsts[i] ? ` — ${firsts[i]}` : ""}`) : ["(none)"]),

@@ -20,7 +20,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SRC = path.resolve(__dirname, '..');
+const { SRC } = require('./fixture'); // this repository, or in a workspace the starter's content with its machinery (tests/fixture.js)
 const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '.last-boot']);
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
@@ -240,4 +240,31 @@ test('The hook commands resolve the workspace from a subfolder, with and without
     assert.strictEqual(r.status, 0, `${c}\n${r.stderr}`);
     assert.match(r.stdout, /HAROLD BOOTED|additional_context/, c);
   });
+});
+
+test('Close saves the work on a machine with no git identity (neutral identity, never a silent loss)', () => {
+  const w = workspace();
+  spawnSync('git', ['config', '--unset', 'user.email'], { cwd: w.ws });
+  spawnSync('git', ['config', '--unset', 'user.name'], { cwd: w.ws });
+  const env = { GIT_CONFIG_NOSYSTEM: '1' };
+  assert.strictEqual(run(w, ['boot', '--via=claude'], claude('SessionStart', 'id-1', { source: 'startup' }), env).code, 0);
+  dirty(w); daily(w);
+  const c = run(w, ['close'], undefined, env);
+  assert.strictEqual(c.code, 0, c.out + c.err);
+  assert.doesNotMatch(c.out, /FAILED/);
+  const author = spawnSync('git', ['log', '-1', '--format=%an <%ae>'], { cwd: w.ws, encoding: 'utf8' }).stdout.trim();
+  assert.strictEqual(author, 'Harold (close) <harold-close@users.noreply.github.com>');
+});
+
+test('A scheduled job never applies the CRM queue; a session does', () => {
+  const w = workspace();
+  const q = run(w, ['file', 'crm', '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro"}}']);
+  assert.strictEqual(q.code, 0, q.out + q.err);
+  const job = run(w, ['replay'], undefined, { HAROLD_JOB: '1' });
+  assert.doesNotMatch(job.out, /scheduled jobs never apply it/, 'bin/harold replay, typed by you, is never held back');
+  const boot = run(w, ['boot'], undefined, { HAROLD_JOB: '1', HAROLD_SESSION_ID: 'job-test-1' });
+  assert.match(boot.out, /scheduled jobs never apply it/);
+  const session = run(w, ['boot'], undefined, { HAROLD_SESSION_ID: 'session-test-2' });
+  assert.doesNotMatch(session.out, /scheduled jobs never apply it/);
+  assert.match(session.out, /1 queued CRM write/);
 });

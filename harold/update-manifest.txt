@@ -1,0 +1,66 @@
+# Harold-owned machinery: the files `bin/harold update` keeps in step with the starter.
+#
+# Everything else in the workspace is the operator's and is never touched: the vault (except its templates),
+# memory/, dashboard/, raw/, projects/, and Harold's data files (learnings, blockers, alerts, events, facts,
+# projects.md, the CRM queue, the trigger log, briefs, session files, settings.env, upstream.json). AGENTS.md is
+# the operator's own too: when the starter's changes, update writes AGENTS.md.upstream beside it to merge by hand.
+#
+# A machinery file edited in the workspace is never overwritten: the starter's copy is written next to it as
+# <file>.upstream and listed, for a session to merge. To keep a path out of updates in one workspace, list it in
+# "skip" in harold/upstream.json (e.g. "skip": ["tools/harold-crm/"]).
+#
+# Syntax: one path per line; a trailing / means everything under that directory; * and ** are globs.
+#   seed <path>    added when missing, then the operator's (never updated)
+#   ! <pattern>    excluded
+# This file updates itself first: the starter's copy decides what the starter owns.
+
+harold/update-manifest.txt
+
+# The deterministic floor and its helpers
+bin/
+tests/
+
+# Harold's own software
+tools/harold-mcp/
+tools/harold-plugin/
+tools/harold-connector/
+tools/harold-crm/
+tools/harness-hooks/
+tools/openclaw-plugin/
+tools/visualizer/
+
+# Hook and plugin wiring, one per harness
+.claude/settings.json
+.codex/
+.cursor/
+.gemini/
+.qwen/
+.grok/
+.clinerules/
+.opencode/
+.amp/
+.agents/plugins/
+.github/copilot/
+.mcp.example.json
+
+# Scheduled jobs
+.github/workflows/morning-brief.yml
+.github/workflows/housekeeping.yml
+.github/workflows/brief-notify.yml
+.github/actions/
+harold/brief-prompt.md
+harold/housekeeping-prompt.md
+harold/briefs/README.md
+
+# Procedures and templates
+playbook/README.md
+playbook/core/
+vault/templates/
+
+.gitignore
+
+# Created when missing, then yours
+seed harold/housekeeping.json
+seed harold/settings.env
+seed harold/events.md
+seed harold/sync-map.md

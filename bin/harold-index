@@ -14,6 +14,8 @@ dependency: one file, harold/search.db, gitignored and rebuilt from the markdown
                                        follow the links: neighbours, how they link, gaps
   harold-index backlinks <note> [--json]   every note that links to <note>
   harold-index graph-json              write harold/graph.json (compact graph, no bodies) if it changed
+  harold-index pulse [--json] [--all] [--boot]
+                                       each active project's last activity and next step; quiet ones first
   harold-index stat                    what is indexed
 
 Indexed unit: one row per markdown section (split at headings), with path, title (file H1 or
@@ -29,13 +31,17 @@ Link graph (same database, same incremental pass):
   links(src, target, kind, line)    raw links per file, reused for unchanged files
   edges(src, dst, kind, line)       links resolved to notes: kind is wikilink | mdlink | frontmatter:<field>
   broken(src, target, kind, line)   links that resolve to nothing
+  mentions(src, project)            daily and meeting notes that name a project of harold/projects.md
+                                    (its name or an alias, whole words; in the title or a heading, or in
+                                    the text of a note naming at most 3 projects), recomputed on every build
 [[targets]] resolve by filename, then title, then frontmatter aliases (exact case first, then any case);
 a target with a slash ([[projects/example-project]]) resolves by path suffix. Resolution runs over every link on
 every build, so a new note fixes old broken links in files that did not change.
 
 Settings (environment; bin/harold passes them through from ~/.harold/env): HAROLD_STALE_DAYS (default 30)
 is when a maintained note counts as stale; HAROLD_HUB_DEGREE (default 40) is the link count above which a
-note is a hub and no longer makes its neighbours related; HAROLD_TODAY or HAROLD_TZ set "today".
+note is a hub and no longer makes its neighbours related; HAROLD_PULSE_DAYS (default 14) is when an active
+project with no activity counts as quiet; HAROLD_TODAY or HAROLD_TZ set "today".
 
 Called by `bin/harold search|related|backlinks|index` and by boot and close. Python 3.8+, stdlib only.
 """
@@ -54,7 +60,7 @@ STANDARD_DIRS = ['vault', 'harold', 'memory', 'dashboard', 'playbook', 'raw']
 # archive/ is indexed on purpose: archived notes stay searchable. Code and build output are not notes.
 SKIP_DIRS = {'node_modules', '.git', '.claude', '.obsidian', 'worktrees', '.next', '.vercel', 'dist', 'coverage'}
 SKIP_FILES = {'search.db'}
-GRAPH_VERSION = '1'
+GRAPH_VERSION = '2'  # 2: the mentions table (project names in daily and meeting notes)
 
 def project_dirs():
     """Every `- folder:` in harold/projects.md, so a newly mapped project is searchable without editing this file."""
@@ -93,7 +99,9 @@ def iter_md():
         base = os.path.join(ROOT, d)
         if not os.path.isdir(base): continue
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [x for x in dirnames if x not in SKIP_DIRS]
+            # A folder with its own .git is a separate repository (a code project checked out inside a project
+            # folder), not notes of this workspace.
+            dirnames[:] = [x for x in dirnames if x not in SKIP_DIRS and not os.path.exists(os.path.join(dirpath, x, '.git'))]
             for f in filenames:
                 if f.endswith('.md') and f not in SKIP_FILES:
                     rel = os.path.relpath(os.path.join(dirpath, f), ROOT)
@@ -321,6 +329,65 @@ def resolve_all(con):
         seen.add((src, dst, kind))
         con.execute('INSERT INTO edges VALUES (?,?,?,?)', (src, dst, kind, line))
 
+# ───────────────────────── project map + mentions ─────────────────────────
+def load_projects():
+    """harold/projects.md, read as bin/harold loadProjects reads it: one `## ` heading per project, `- key: value` fields."""
+    try:
+        with open(os.path.join(ROOT, 'harold', 'projects.md'), encoding='utf-8', errors='replace') as fh: text = fh.read()
+    except OSError:
+        return []
+    out, cur = [], None
+    for line in text.split('\n'):
+        h = re.match(r'^##\s+(.+?)\s*$', line)
+        if h:
+            cur = {'name': h.group(1).strip()}; out.append(cur); continue
+        kv = re.match(r'^-\s+([a-z_]+):\s*(.*)$', line) if cur is not None else None
+        if kv: cur[kv.group(1)] = kv.group(2).strip()
+    return out
+
+def project_names(p):
+    """The project's name and its aliases: what a daily or meeting note says when it means this project."""
+    aliases = re.sub(r'—\s*ALIASES:\s*TODO', '', p.get('aliases', ''), flags=re.I)
+    names = [p['name']] + [a.strip() for a in aliases.split(',')]
+    seen, out = set(), []
+    for n in names:
+        n = ' '.join(n.split())
+        if n and n.lower() not in seen: seen.add(n.lower()); out.append(n)
+    return out
+
+def mention_matcher(names):
+    """Whole words; case-insensitive from three characters, exact case below that (so 'EQ' is not 'eq')."""
+    long_ = [re.escape(n) for n in names if len(n) >= 3]
+    short = [re.escape(n) for n in names if len(n) < 3]
+    pats = []
+    if long_: pats.append(re.compile(r'(?<!\w)(?:' + '|'.join(sorted(long_, key=len, reverse=True)) + r')(?!\w)', re.I))
+    if short: pats.append(re.compile(r'(?<!\w)(?:' + '|'.join(short) + r')(?!\w)'))
+    return lambda text: any(p.search(text) for p in pats)
+
+MENTION_ROLLUP = 3  # a note naming more projects than this in its text is a roll-up (a review, an audit, a release note)
+
+def compute_mentions(con):
+    """mentions(src, project): daily and meeting notes that name a project of harold/projects.md (its name or an
+    alias, whole words), as activity for that project. A name in the note's title or a heading always counts; a name
+    only in the text counts when the note names at most MENTION_ROLLUP projects, so a month-end review that walks
+    through every project is not activity for all of them. Rebuilt from the stored sections on every build, so a
+    new alias reaches old notes too."""
+    con.execute('DELETE FROM mentions')
+    matchers = [(p['name'], mention_matcher(project_names(p))) for p in load_projects()]
+    if not matchers: return
+    strong, body = {}, {}
+    for path, title, heading, text in con.execute(
+            "SELECT s.path, s.title, s.heading, s.body FROM sections s JOIN nodes n ON n.path = s.path WHERE n.type IN ('daily','meeting')"):
+        st, bd = strong.setdefault(path, set()), body.setdefault(path, set())
+        for name, hit in matchers:
+            if hit(title or '') or hit(heading or ''): st.add(name)
+            elif hit(text or ''): bd.add(name)
+    rows = set()
+    for path, st in strong.items():
+        rows |= {(path, n) for n in st}
+        if len(st | body[path]) <= MENTION_ROLLUP: rows |= {(path, n) for n in body[path]}
+    con.executemany('INSERT INTO mentions VALUES (?,?)', sorted(rows))
+
 # ───────────────────────── build ─────────────────────────
 # Incremental: a file whose mtime and size match the previous index reuses its rows (text, node, raw
 # links); only new and changed files are read. Link resolution always runs over everything.
@@ -380,6 +447,7 @@ def build(full=False, quiet=False):
       CREATE TABLE links(src TEXT, target TEXT, kind TEXT, line TEXT);
       CREATE TABLE edges(src TEXT, dst TEXT, kind TEXT, line TEXT);
       CREATE TABLE broken(src TEXT, target TEXT, kind TEXT, line TEXT);
+      CREATE TABLE mentions(src TEXT, project TEXT);
       CREATE TEMP TABLE reuse(path TEXT PRIMARY KEY);
     ''')
     nread = 0
@@ -420,6 +488,7 @@ def build(full=False, quiet=False):
         con.execute('INSERT INTO links SELECT * FROM old.links WHERE src IN (SELECT path FROM temp.reuse) ORDER BY rowid')
         con.commit(); con.execute('DETACH DATABASE old')
     resolve_all(con)
+    compute_mentions(con)
     con.executescript('''
       CREATE INDEX edges_src ON edges(src); CREATE INDEX edges_dst ON edges(dst);
       CREATE INDEX broken_src ON broken(src); CREATE INDEX links_src ON links(src);
@@ -737,27 +806,40 @@ def repo_paths():
     except (OSError, subprocess.SubprocessError):
         return None
 
-def graph_json(quiet=False):
-    """harold/graph.json: nodes [path, title, type, last_updated], edges [src, dst, kind] and broken
-    [src, target, kind], one per line and sorted, so a new note or link is a one-line diff. No text, no
-    context lines. Files git ignores (nested repos) are left out. last_updated is '' when the note carries
-    no date of its own. Written only when it changed, so the same repo gives the same file on any machine."""
+def graph_rows():
+    """What harold/graph.json holds, from the current index: nodes [path, title, type, last_updated], edges
+    [src, dst, kind], broken [src, target, kind] and mentions [src, project], sorted. bin/harold pulse reads the
+    same rows, so the workspace and the connector (which reads graph.json) give the same answer for the same repo."""
     refresh()
     con = sqlite3.connect(DB)
-    keep = repo_paths()
-    # Only dates written in the notes themselves (frontmatter, or a dated filename): git and mtime dates differ
-    # between a full clone, a shallow cloud checkout and a synced copy, and would rewrite the file on every machine.
-    nodes = [r for r in con.execute("SELECT path, title, type, CASE WHEN date_src IN ('frontmatter','filename') THEN last_updated ELSE '' END "
-                                    'FROM nodes ORDER BY path') if keep is None or r[0] in keep]
-    ok = {r[0] for r in nodes}
-    edges = sorted({(s, d, k) for s, d, k in con.execute('SELECT src, dst, kind FROM edges') if s in ok and d in ok})
-    broken = sorted({(s, t, k) for s, t, k in con.execute('SELECT src, target, kind FROM broken') if s in ok})
-    con.close()
+    try:
+        keep = repo_paths()
+        # Only dates written in the notes themselves (frontmatter, or a dated filename): git and mtime dates differ
+        # between a full clone, a shallow cloud checkout and a synced copy, and would rewrite the file on every machine.
+        nodes = [r for r in con.execute("SELECT path, title, type, CASE WHEN date_src IN ('frontmatter','filename') THEN last_updated ELSE '' END "
+                                        'FROM nodes ORDER BY path') if keep is None or r[0] in keep]
+        ok = {r[0] for r in nodes}
+        edges = sorted({(s, d, k) for s, d, k in con.execute('SELECT src, dst, kind FROM edges') if s in ok and d in ok})
+        broken = sorted({(s, t, k) for s, t, k in con.execute('SELECT src, target, kind FROM broken') if s in ok})
+        mentions = sorted({(s, p) for s, p in con.execute('SELECT src, project FROM mentions') if s in ok})
+    finally:
+        con.close()
+    return {'nodes': nodes, 'edges': edges, 'broken': broken, 'mentions': mentions}
+
+def graph_json(quiet=False):
+    """harold/graph.json: nodes [path, title, type, last_updated], edges [src, dst, kind], broken
+    [src, target, kind] and mentions [src, project] (daily and meeting notes that name a project in
+    harold/projects.md), one per line and sorted, so a new note or link is a one-line diff. No text, no
+    context lines. Files git ignores (nested repos) are left out. last_updated is '' when the note carries
+    no date of its own. Written only when it changed, so the same repo gives the same file on any machine."""
+    rows = graph_rows()
+    nodes, edges, broken, mentions = rows['nodes'], rows['edges'], rows['broken'], rows['mentions']
     j = lambda x: json.dumps(list(x), ensure_ascii=False, separators=(',', ':'))
-    text = ('{"version":1,"generated_by":"bin/harold-index graph-json","stale_days":%d,\n' % stale_days()
+    text = ('{"version":1,"generated_by":"bin/harold-index graph-json","stale_days":%d,"pulse_days":%d,\n' % (stale_days(), pulse_days())
             + '"node_fields":["path","title","type","last_updated"],\n"nodes":[\n' + ',\n'.join(map(j, nodes))
             + '\n],\n"edge_fields":["src","dst","kind"],\n"edges":[\n' + ',\n'.join(map(j, edges))
-            + '\n],\n"broken_fields":["src","target","kind"],\n"broken":[\n' + ',\n'.join(map(j, broken)) + '\n]}\n')
+            + '\n],\n"broken_fields":["src","target","kind"],\n"broken":[\n' + ',\n'.join(map(j, broken))
+            + '\n],\n"mention_fields":["src","project"],\n"mentions":[\n' + ',\n'.join(map(j, mentions)) + '\n]}\n')
     try:
         with open(GRAPH_JSON, encoding='utf-8') as fh: cur = fh.read()
     except OSError: cur = None
@@ -769,6 +851,242 @@ def graph_json(quiet=False):
     os.replace(tmp, GRAPH_JSON)
     if not quiet: print(f'graph.json written ({len(text.encode()) // 1024} KB, {len(nodes)} nodes, {len(edges)} edges, {len(broken)} broken)')
     return True
+
+# ───────────────────────── project pulse ─────────────────────────
+# For each active project in harold/projects.md: its newest activity, its next step, and whether it has gone
+# quiet. Deterministic, from graph_rows() (the rows graph.json holds), the project map, the card and the folder
+# README, and git. tools/harold-connector/src/pulse.ts is the same procedure over graph.json and the GitHub API:
+# change one, change the other, and keep the shared expectations in both test suites equal.
+PULSE_LABEL = {'meeting': 'meeting note', 'daily': 'daily note', 'decision': 'decision', 'intel': 'intel note',
+               'person': 'person card', 'company': 'company card', 'project': 'project card'}
+PULSE_OUT_TYPES = {'meeting', 'daily', 'decision'}  # what a project card links to that counts as its activity
+ISO_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+PULSE_VIA_RANK = {'card': 0, 'folder': 1, 'link': 2, 'mention': 3}  # same date: the project's own notes first
+NEXT_LINE_RE = re.compile(r'^\s*(?:[-*+]\s+)?(?:\*\*|__)?next[ _-]?steps?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.*)$', re.I)
+NEXT_HEAD_RE = re.compile(r'^#{1,6}\s+next[ _-]?steps?\s*:?\s*$', re.I)
+FM_BLOCK_RE = re.compile(r'^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)')
+
+def pulse_days():
+    """HAROLD_PULSE_DAYS (default 14): an active project with no activity for more than this many days is quiet."""
+    try:
+        n = int(os.environ.get('HAROLD_PULSE_DAYS', '').strip() or '14')
+        return n if n >= 0 else 14
+    except ValueError: return 14
+
+def clean_step(v):
+    v = (v or '').strip()
+    if v.startswith('#'): return ''
+    v = re.sub(r'\s+#\s.*$', '', v).strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'': v = v[1:-1]
+    v = re.sub(r'^(?:\*\*|__)+|(?:\*\*|__)+$', '', v).strip()
+    v = ' '.join(v.split())
+    if '{{' in v: return ''
+    return v if len(v) <= 200 else v[:199] + '…'
+
+def fm_next_step(text):
+    m = FM_BLOCK_RE.match(text or '')
+    if not m: return ''
+    for line in m.group(0).split('\n'):
+        k = re.match(r'^next_step:\s*(.*)$', line.rstrip('\r'))
+        if k: return clean_step(k.group(1))
+    return ''
+
+def body_next_step(text):
+    """A 'Next step: ...' line (bold or a list item is fine), or the first line under a 'Next step(s)' heading."""
+    body = FM_BLOCK_RE.sub('', text or '', count=1)
+    body = re.sub(r'<!--[\s\S]*?-->', '', body)
+    lines = [l.rstrip('\r') for l in body.split('\n')]
+    fence = False
+    for i, line in enumerate(lines):
+        if re.match(r'^\s*(```|~~~)', line): fence = not fence; continue
+        if fence: continue
+        m = NEXT_LINE_RE.match(line)
+        if m:
+            v = clean_step(m.group(1))
+            if v: return v
+            continue
+        if NEXT_HEAD_RE.match(line):
+            for nxt in lines[i + 1:]:
+                if re.match(r'^#{1,6}\s', nxt): break
+                v = clean_step(re.sub(r'^\s*(?:[-*+]|\d+\.)\s+(?:\[[ xX]\]\s+)?', '', nxt))
+                if v: return v
+    return ''
+
+def read_rel(rel):
+    if not rel or rel.startswith('/') or '..' in rel.split('/'): return None
+    try:
+        with open(os.path.join(ROOT, rel), encoding='utf-8', errors='replace') as fh: return fh.read()
+    except OSError: return None
+
+def next_step(p, card, folder):
+    """→ (text, source). The map entry's next_step, then the card's frontmatter next_step, then a 'Next step' line
+    in the card, then in the folder's README.md. ('', '') when none is recorded."""
+    v = clean_step(p.get('next_step', ''))
+    if v: return v, 'harold/projects.md'
+    ct = read_rel(card) if card else None
+    if ct is not None:
+        v = fm_next_step(ct)
+        if v: return v, f'{card} (frontmatter)'
+        v = body_next_step(ct)
+        if v: return v, card
+    if folder:
+        rel = f'{folder}/README.md'
+        rt = read_rel(rel)
+        if rt is not None:
+            v = body_next_step(rt)
+            if v: return v, rel
+    return '', ''
+
+def norm_folder(f):
+    f = (f or '').strip().strip('`').strip()
+    f = re.sub(r'^\./+', '', f).rstrip('/')
+    return '' if f in ('', '.') or f.startswith('/') or '..' in f.split('/') else f
+
+def find_card(p, nodes):
+    c = re.sub(r'^\./+', '', (p.get('card') or '').strip().strip('`').strip())
+    if c: return c
+    name = p['name'].lower()
+    hits = sorted(path for path, n in nodes.items() if n['type'] == 'project'
+                  and (n['title'].lower() == name or os.path.splitext(os.path.basename(path))[0].lower() == name))
+    return hits[0] if hits else ''
+
+def git_state():
+    """'' when git history can be used for commit dates here; otherwise why not."""
+    try:
+        r = subprocess.run(['git', '-C', ROOT, 'rev-parse', '--is-shallow-repository'], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return 'git is not available'
+    if r.returncode != 0: return 'not a git repository'
+    if r.stdout.strip() == 'true': return 'shallow clone'
+    return ''
+
+def local_date(epoch):
+    tz = os.environ.get('HAROLD_TZ')
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return (datetime.fromtimestamp(epoch, ZoneInfo(tz)) if tz else datetime.fromtimestamp(epoch)).strftime('%Y-%m-%d')
+    except Exception:
+        return time.strftime('%Y-%m-%d', time.localtime(epoch))
+
+def last_commit(folder):
+    """{'date', 'subject'} of the newest commit touching the folder, or None."""
+    try:
+        r = subprocess.run(['git', '-C', ROOT, 'log', '-1', '--format=%ct%x00%B', '--', folder + '/'], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0 or '\x00' not in r.stdout: return None
+    ct, msg = r.stdout.split('\x00', 1)
+    try: epoch = int(ct.strip())
+    except ValueError: return None
+    subject = (msg.strip().split('\n') or [''])[0].strip()
+    return {'date': local_date(epoch), 'subject': subject if len(subject) <= 72 else subject[:71] + '…'}
+
+def pulse_activity(p, g, mentions, card, folder, today_iso, commit):
+    """The newest dated activity of one project: a note (dates written in the note) or a commit. None when nothing."""
+    nodes, out, inn = g['nodes'], g['out'], g['inn']
+    cands, seen = [], set()
+    def add(path, via):
+        n = nodes.get(path)
+        if path in seen or not n or n['type'] == 'template': return
+        d = n['last_updated']
+        if not ISO_RE.match(d or '') or d > today_iso: return
+        seen.add(path)
+        cands.append({'kind': 'note', 'date': d, 'path': path, 'title': n['title'], 'via': via,
+                      'label': 'project card' if path == card else PULSE_LABEL.get(n['type'], 'note')})
+    if card in nodes: add(card, 'card')
+    for s in sorted(inn.get(card, ())): add(s, 'link')
+    for d in sorted(out.get(card, ())):
+        if nodes.get(d, {}).get('type') in PULSE_OUT_TYPES: add(d, 'link')
+    if folder:
+        for path in sorted(nodes):
+            if path.startswith(folder + '/'): add(path, 'folder')
+    for s in sorted(mentions.get(p['name'], ())):
+        if nodes.get(s, {}).get('type') in ('daily', 'meeting'): add(s, 'mention')
+    cands.sort(key=lambda c: (-int(c['date'].replace('-', '')), PULSE_VIA_RANK[c['via']], c['path']))
+    best = cands[0] if cands else None
+    if commit and ISO_RE.match(commit['date']) and commit['date'] <= today_iso and (not best or commit['date'] > best['date']):
+        best = {'kind': 'commit', 'date': commit['date'], 'path': folder + '/', 'title': commit['subject'], 'via': 'git', 'label': 'commit'}
+    return best
+
+def pulse_data(include_inactive=False):
+    rows = graph_rows()
+    today_iso = today()
+    nodes = {r[0]: {'title': r[1], 'type': r[2], 'last_updated': r[3]} for r in rows['nodes']}
+    out, inn = {}, {}
+    for s, d, _ in rows['edges']:
+        out.setdefault(s, set()).add(d); inn.setdefault(d, set()).add(s)
+    mentions = {}
+    for s, name in rows['mentions']: mentions.setdefault(name, set()).add(s)
+    g = {'nodes': nodes, 'out': out, 'inn': inn}
+    gs = git_state()
+    days_limit = pulse_days()
+    res = []
+    for p in load_projects():
+        status = (p.get('status') or '').strip().lower()
+        if status != 'active' and not include_inactive: continue
+        folder, card = norm_folder(p.get('folder')), find_card(p, nodes)
+        item = {'name': p['name'], 'status': status, 'folder': folder, 'card': card}
+        if status == 'active':
+            commit = last_commit(folder) if folder and not gs else None
+            last = pulse_activity(p, g, mentions, card, folder, today_iso, commit)
+            days = age_days(last['date']) if last else None
+            item.update({'quiet': last is None or days > days_limit, 'days': days, 'last': last})
+        else:
+            item.update({'quiet': None, 'days': None, 'last': None})
+        item['next_step'], item['next_step_source'] = next_step(p, card, folder)
+        res.append(item)
+    act = [x for x in res if x['status'] == 'active']
+    act.sort(key=lambda x: (0 if x['quiet'] else 1, -(x['days'] if x['days'] is not None else 10 ** 9), x['name']))
+    rest = sorted((x for x in res if x['status'] != 'active'), key=lambda x: x['name'])
+    return {'today': today_iso, 'pulse_days': days_limit, 'git': gs or 'ok', 'active': len(act),
+            'quiet': sum(1 for x in act if x['quiet']), 'projects': act + rest}
+
+def pulse_line(x, full):
+    last = x['last']
+    if last is None: act = 'quiet, no dated activity found'
+    else:
+        lab = f"{last['label']} {last['date']}"
+        if last['kind'] == 'commit' or last['label'] != 'project card': lab += f', "{last["title"]}"'
+        d = x['days']
+        when = 'today' if d == 0 else '1 day ago' if d == 1 else f'{d} days ago'
+        act = (f'quiet {d} days' if x['quiet'] else f'active {when}') + f' (last: {lab})'
+    s = f"- {x['name']} — {act}"
+    if full: s += '; next step: ' + (x['next_step'] or 'no next step recorded')
+    return s
+
+def pulse_text(data, show_all=False):
+    act = [x for x in data['projects'] if x['status'] == 'active']
+    n, q, days = data['active'], data['quiet'], data['pulse_days']
+    if not n: L = [f"# Project pulse, {data['today']}: no active projects in harold/projects.md"]
+    else:
+        L = [f"# Project pulse, {data['today']}: {q} of {n} active project{'s' if n != 1 else ''} quiet (no activity in more than {days} days)"]
+        quiet = [x for x in act if x['quiet']]
+        live = [x for x in act if not x['quiet']]
+        if quiet: L += ['', 'Quiet:'] + [pulse_line(x, True) for x in quiet]
+        if live: L += ['', 'Active:'] + [pulse_line(x, show_all) for x in live]
+    other = [x for x in data['projects'] if x['status'] != 'active']
+    if show_all and other: L += ['', 'Not judged (not active):'] + [f"- {x['name']} [{x['status'] or 'no status'}]" for x in other]
+    L += ['', 'Activity: notes linked to the project card, files in its folder, daily and meeting notes that name it (dates written in the notes), '
+              f'and git commits touching its folder. Quiet after HAROLD_PULSE_DAYS ({days}) days without any. '
+              'Record a next step as next_step: in the project\'s harold/projects.md entry or its card\'s frontmatter.']
+    if data['git'] != 'ok': L.append(f"Git history not used here ({data['git']}): commits were not counted.")
+    return '\n'.join(L)
+
+def pulse_boot(data):
+    """The short PROJECT PULSE section of bin/harold boot: only the quiet projects, or one line."""
+    n, q, days = data['active'], data['quiet'], data['pulse_days']
+    if not n: return '## Project pulse: no active projects in harold/projects.md'
+    if not q: return f"## Project pulse: all {n} active project{'s' if n != 1 else ''} active within {days} days (bin/harold pulse)"
+    L = [f"## Project pulse: {q} of {n} active project{'s' if n != 1 else ''} quiet, no activity in more than {days} days (bin/harold pulse for all)"]
+    L += [pulse_line(x, True) for x in data['projects'] if x['status'] == 'active' and x['quiet']]
+    return '\n'.join(L)
+
+def cmd_pulse(argv):
+    data = pulse_data(include_inactive='--all' in argv)
+    if '--json' in argv: print(json.dumps(data, indent=1, ensure_ascii=False)); return 0
+    if '--boot' in argv: print(pulse_boot(data)); return 0
+    print(pulse_text(data, show_all='--all' in argv)); return 0
 
 def stat():
     if not os.path.exists(DB): print('no index'); return 1
@@ -816,6 +1134,7 @@ def main(argv):
             if not q: print('usage: harold backlinks <note path or title> [--json]', file=sys.stderr); return 2
             return cmd_backlinks(q, as_json='--json' in rest)
         if cmd == 'graph-json': graph_json(); return 0
+        if cmd == 'pulse': return cmd_pulse(rest)
         if cmd == 'stat': return stat()
     except BrokenPipeError:
         return 0

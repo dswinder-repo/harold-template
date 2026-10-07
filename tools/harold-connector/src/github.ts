@@ -137,6 +137,18 @@ export class HaroldRepo {
     return { ok: false, reason: "Gave up after 3 retries: the file kept changing underneath" };
   }
 
+  /** The newest commit on the branch that touches `path` (a file or a folder), or null when there is none. */
+  async lastCommit(path: string): Promise<{ date: string; message: string } | null> {
+    const p = cleanPath(path);
+    const r = await this.api("GET", `/repos/${this.repo}/commits?sha=${encodeURIComponent(this.branch)}&path=${encodeURIComponent(p)}&per_page=1`);
+    if (r.status === 404 || r.status === 409) return null; // 409: an empty repository
+    if (!r.ok) await this.fail(r, `list commits for ${p}`);
+    const j = (await r.json()) as { commit?: { committer?: { date?: string }; message?: string } }[];
+    const c = Array.isArray(j) ? j[0] : undefined;
+    const date = c?.commit?.committer?.date;
+    return date ? { date, message: c?.commit?.message || "" } : null;
+  }
+
   // ── used by the write tests (throwaway branches only) ──
   async branchSha(branch: string): Promise<string> {
     const r = await this.api("GET", `/repos/${this.repo}/git/ref/heads/${encodeURIComponent(branch)}`);

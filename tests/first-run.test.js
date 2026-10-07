@@ -16,7 +16,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SRC = path.resolve(__dirname, '..');
+const { SRC } = require('./fixture'); // this repository, or in a workspace the starter's content with its machinery (tests/fixture.js)
 const dirs = [];
 // These tests are about the starter as published. In a workspace that has already booted (its trigger log records
 // harold-start), the copy below is no longer a fresh install, so they skip themselves (review X-05).

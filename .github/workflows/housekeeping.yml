@@ -18,7 +18,8 @@ name: Harold housekeeping
 # so it is usually done before your morning brief. When two jobs fall on one day (a Friday that is the 1st,
 # or the last business day), they run on two consecutive wake-ups. Repository variables (Settings →
 # Secrets and variables → Actions → Variables):
-#   HAROLD_TZ   your IANA time zone, e.g. America/Chicago (unset = UTC here, and every run warns)
+#   HAROLD_TZ   your IANA time zone, e.g. America/Chicago (unset = UTC here, and every run warns);
+#               or set it once in the committed harold/settings.env, which bin/harold reads too
 # If a run fails (a missing secret, a model error), the next wake-up tries again, for the rest of that day.
 #
 # WHICH AI TOOL DOES IT, AND HOW IT SIGNS IN. Repository variable HAROLD_AGENT picks the agent (unset = claude):
@@ -51,7 +52,7 @@ name: Harold housekeeping
 #
 # To enable:
 #   1. The model secret for your agent (above). If the morning brief already runs, it is already there.
-#   2. The variable HAROLD_TZ (and HAROLD_AGENT if you are not using Claude Code).
+#   2. HAROLD_TZ (the variable, or harold/settings.env), and the variable HAROLD_AGENT if you are not using Claude Code.
 #   3. Set "cloud": true in harold/housekeeping.json, commit and push.
 #   4. Try it: Actions → "Harold housekeeping" → Run workflow, with job=weekly-scan, force=true and
 #      dry_run=true first (gate and context only), then without dry_run.

@@ -20,7 +20,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 
-const SRC = path.resolve(__dirname, '..');
+const { SRC } = require('./fixture'); // this repository, or in a workspace the starter's content with its machinery (tests/fixture.js)
 const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '.last-boot']);
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
@@ -356,7 +356,7 @@ test('Every shipped hook file parses and points each event at bin/harold with th
   assert.ok(g.hooks.SessionStart[0].hooks[0].timeout >= 1000, 'Gemini timeouts are milliseconds');
   for (const [ev, tail] of [['sessionStart', 'boot --via=copilot'], ['agentStop', 'close --via=copilot'], ['sessionEnd', 'close --final --via=copilot --detach']]) assert.ok(cp[ev][0].bash.endsWith(`/bin/harold" ${tail}`), ev);
   assert.strictEqual(read('.agents/plugins/harold/plugin.json').name, 'harold');
-  for (const [f, tail] of [['TaskStart', 'boot --via=cline'], ['TaskComplete', 'close --via=cline --detach'], ['TaskCancel', 'close --via=cline --detach'], ['SessionShutdown', 'close --final --via=cline --detach']]) {
+  for (const [f, tail] of [['TaskStart', 'boot --via=cline'], ['TaskComplete', 'close --via=cline --detach'], ['TaskCancel', 'close --via=cline --detach'], ['TaskError', 'close --via=cline --detach'], ['SessionShutdown', 'close --final --via=cline --detach']]) {
     const p = path.join(SRC, '.clinerules/hooks', f);
     assert.ok(fs.statSync(p).mode & 0o111, `${f} is executable`);
     assert.match(fs.readFileSync(p, 'utf8'), new RegExp(`^#!/bin/sh[\\s\\S]*bin/harold" ${tail}\\n$`));

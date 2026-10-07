@@ -58,7 +58,7 @@
 ## How Harold Uses This File
 
 1. At session start, `bin/harold boot` prints Current Alerts and says whether this file is stale.
-2. If it is stale, rebuild Current Alerts from source: `harold/blockers.md`, `harold/events.md`, the task manager, and, when a CRM tool is available, stale relationships under WATCH (`crm_stale` on the connector, `harold_cadence_check` or `harold_alerts_sync` on harold-mcp). Then update the footer date and record it: `bin/harold file trigger alerts-rebuild ran "<what you rebuilt from>"`.
+2. If it is stale, rebuild Current Alerts from source: `harold/blockers.md`, `harold/events.md`, the task manager, the quiet projects under WATCH (`bin/harold pulse`), and, when a CRM tool is available, stale relationships under WATCH (`crm_stale` on the connector, `harold_cadence_check` or `harold_alerts_sync` on harold-mcp). Then update the footer date and record it: `bin/harold file trigger alerts-rebuild ran "<what you rebuilt from>"`.
 3. Surface every URGENT and WARNING item unprompted, in the morning brief's flags section.
 4. Move resolved alerts to Alert History.
 
