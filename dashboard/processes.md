@@ -76,7 +76,7 @@ Runs on the last business day of the month (trigger id `month-end`).
 As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it is read-only: it writes the review (step 6's file) and turns every change it would make (a project status, a pipeline entry, `memory/CLAUDE.md`) into a note for the next brief.
 
 1. **Goals:** read `dashboard/status.md` Goals / KPIs; mark each on track, at risk, or missed, with one line of evidence.
-2. **Projects:** for each active entry in `harold/projects.md`, one line: what moved this month, what didn't. Set `status: paused` or `archived` where that is now true.
+2. **Projects:** for each active entry in `harold/projects.md`, one line: what moved this month, what didn't (`bin/harold pulse --all` gives each one's last activity and next step). Set `status: paused` or `archived` where that is now true.
 3. **Relationships:** run `harold_cadence_check` on harold-mcp (on the connector, `crm_stale`); list who went stale and decide re-engage or re-rate warmth.
 4. **Pipeline:** `crm_pipeline` / `harold_pipeline` with action `list`; close entries that are really dead (`Dormant` with an outcome).
 5. **Blockers:** anything open more than 30 days gets a decision: resolve, re-scope, or accept.
