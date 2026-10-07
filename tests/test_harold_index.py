@@ -317,6 +317,7 @@ class IndexTest(unittest.TestCase):
 FIXTURE = os.path.join(HERE, '..', 'tools', 'harold-connector', 'test', 'unit', 'pulse-fixture.json')
 
 
+@unittest.skipUnless(os.path.exists(FIXTURE), 'needs tools/harold-connector (a workspace that deploys its connector from another repository runs these through tests/index.test.js, on the starter fixture)')
 class PulseTest(unittest.TestCase):
     def setUp(self):
         with open(FIXTURE, encoding='utf-8') as fh: self.fx = json.load(fh)

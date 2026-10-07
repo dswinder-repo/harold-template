@@ -15,7 +15,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const ROOT = path.resolve(__dirname, '..');
+const { SRC: ROOT } = require('./fixture');
 const ACTION = fs.readFileSync(path.join(ROOT, '.github/actions/harold-agent/action.yml'), 'utf8');
 
 // The `run: |` block of the step with this name (no YAML library needed: block scalars are indentation).
