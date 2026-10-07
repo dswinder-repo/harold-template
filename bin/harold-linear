@@ -18,7 +18,15 @@
 const fs = require('fs'); const path = require('path'); const os = require('os');
 const ROOT = path.dirname(path.dirname(fs.realpathSync(__filename)));
 const SNAP = path.join(ROOT, 'harold/linear-snapshot.md');
-const TZ = process.env.HAROLD_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+// HAROLD_TZ: the environment, then ~/.harold/env, then the committed harold/settings.env.
+function settingTz() {
+  if (process.env.HAROLD_TZ) return process.env.HAROLD_TZ;
+  for (const f of [path.join(os.homedir(), '.harold/env'), path.join(ROOT, 'harold/settings.env')]) {
+    try { const m = fs.readFileSync(f, 'utf8').match(/^\s*(?:export\s+)?HAROLD_TZ\s*=\s*["']?([^"'\s#]+)/m); if (m) return m[1]; } catch (_) {}
+  }
+  return null;
+}
+const TZ = settingTz() || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 function loadVar(name) {
   if (process.env[name]) return process.env[name];
