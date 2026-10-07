@@ -18,11 +18,14 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    git clone https://github.com/<you>/<your-repo>.git my-harold
    cd my-harold
    ```
-   If you cloned the starter itself instead, `origin` still points at the public starter, where your pushes would fail (boot warns about it). Create an empty private repository on GitHub and point `origin` at it before your first session:
+   Or by hand: create an empty **private** repository on GitHub (no README, no license), clone the starter, point `origin` at your repository and push:
    ```bash
+   git clone https://github.com/dswinder-repo/harold-template.git my-harold
+   cd my-harold
    git remote set-url origin https://github.com/<you>/<your-repo>.git
    git push -u origin main
    ```
+   Until `origin` points at your own repository, boot warns that it still points at the public starter.
    Requirements: git, Node 18+ and Python 3.8+ (standard library only, for search and the link graph). Each optional component has its own: the CRM web app needs Node 20+ and pnpm, the hosted connector Node 22+ (both only where you build or host them). Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
 
 2. **Check it works as-is.**
@@ -307,7 +310,7 @@ For example, Antigravity CLI (`agy`) runs headless with `-p` and accepts `GEMINI
 
 **Local open-weight models** (Ollama, LM Studio) work through any harness that supports them, via the custom command, with no API key or subscription; the model server must be reachable from where the job runs, which usually means your own runner rather than GitHub's.
 
-GitHub Actions is the starter's way to schedule. Any other scheduler that can run a headless agent on your repository works the same way with the same prompt files, for example a Claude Code routine (see the end of each section).
+GitHub Actions is the starter's way to schedule. Any other scheduler that can run a headless agent on your repository works the same way with the same prompt files, for example a Claude Code routine (see the end of each section) or cron on your own computer or server. Wherever a job runs, `bin/harold close` checks the job, not session filing, while the job runs (its marker, such as `harold/.brief-job.json`, shows it started and not finished). A scheduler that runs only Harold's jobs can also set `HAROLD_JOB=1` in the job's environment, as GitHub Actions and routines are already taken to.
 
 ### Morning brief: your time zone, your time
 
