@@ -2,7 +2,7 @@
 
 > **This file is the canonical entry point for every harness (any AI tool that can read this file and run a command, with any model), a terminal or a scheduled job.** `CLAUDE.md` at the repo root is a one-line include of this file (`@AGENTS.md`). All working memory, context and system files live in this workspace, versioned in a private git repository ([YOUR GITHUB USER]/[YOUR REPO]).
 >
-> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ` in `~/.harold/env`, e.g. America/Chicago). Everywhere this file says "the operator", it means you.
+> **Operator:** [YOUR NAME], [YOUR ROLE]. **Time zone:** [YOUR TIMEZONE] (set it as `HAROLD_TZ`, e.g. America/Chicago: in `~/.harold/env` for sessions, and as a repository variable for the scheduled jobs, which never read that file). Everywhere this file says "the operator", it means you.
 
 ## FIRST INSTRUCTION — run `bin/harold boot`
 
@@ -217,7 +217,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ## System Rules
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
-- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the optional hosted MCP server that reaches the knowledge base and CRM from any MCP client; boot and close do not run there), `harold-plugin` (Cowork plugin), `openclaw-plugin` (OpenClaw plugin), `harness-hooks` (user-level hook snippets for Kimi Code and Hermes Agent), `visualizer` (Expedition HQ, local-only).
+- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the hosted MCP server you deploy once, which reaches the knowledge base and CRM from any MCP client: a chat app on your phone, a coding agent, a scheduled job; boot and close do not run there), `harold-plugin` (Cowork plugin), `openclaw-plugin` (OpenClaw plugin), `harness-hooks` (user-level hook snippets for Kimi Code and Hermes Agent), `visualizer` (Expedition HQ, local-only).
 - **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
@@ -232,19 +232,27 @@ For every contact touched, all three happen together. No exceptions. No "I'll do
 
 *The CRM is the operator's own, spanning their whole working life, not an employer's. Each contact has exactly one type, from the operator's own short list (for example: investor, partner, founder, team, other), any number of labels, and a warmth (Hot, Warm, Lukewarm, Cold, or unset). There is one pipeline; every entry in it states its purpose and sits at one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. Nothing is placed in the pipeline automatically.*
 
-1. `harold_log_interaction` — log the touchpoint
-2. `harold_upsert_contact` — update warmth, status, notes on the contact record
-3. Vault people profile — update warmth, `last_updated`, context
+1. **Log the interaction** with the CRM tool: `crm_log_interaction` on the connector, `harold_log_interaction` on harold-mcp
+2. **Update the contact record** (warmth, status, notes): `crm_upsert_contact` on the connector, `harold_upsert_contact` on harold-mcp
+3. **Vault people profile**: update warmth, `last_updated`, context
 
-**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `~/.harold/env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions; for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: `harold_log_interaction`, `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
+Use whichever of the two your harness has; they write the same database. **A write made through the connector:** `bin/harold close` can see CRM writes only when this computer holds the CRM credentials (`~/.harold/env`). Without them, record each connector write so close counts the contact as filed (it is never replayed):
 
-If the CRM is unreachable, queue the work instead of dropping it, and say that you did:
+```bash
+bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","applied":"connector"}'
+```
+
+That is the normal way to work with the connector and no local credentials. The queue below is only for when the CRM cannot be reached at all.
+
+**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `~/.harold/env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions; for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: the CRM tools (`crm_log_interaction`, `harold_log_interaction`), `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
+
+If the CRM is unreachable (no CRM tool works, and no connector), queue the work instead of dropping it, and say that you did:
 
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro call"}}'
 ```
 
-The queue is a fallback, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run with the CRM reachable (wherever that is: any computer, or a cloud job with the credentials), skipping anything already applied and never logging an interaction for a type listed in `HAROLD_NO_LOG_TYPES`. `bin/harold replay --dry-run` shows what would happen.
+The queue is a fallback for outages, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run on a computer that holds the CRM credentials and can reach it (the starter's scheduled jobs, which hold no CRM credentials, and the connector never replay it), skipping anything already applied and never logging an interaction for a type listed in `HAROLD_NO_LOG_TYPES`. `bin/harold replay --dry-run` shows what would happen.
 
 When corrections are made (warmth change, name fix, any contact detail), the CRM contact record is the most important update. Never correct the vault or the task manager and skip the CRM.
 
@@ -312,7 +320,7 @@ These trigger on natural language; no slash prefix needed. They work the same in
 1. **Session Summary** — 3-5 bullets of what was accomplished.
 2. **CRM Sweep** — for EVERY contact mentioned or touched this session:
    - If `HAROLD_NO_LOG_TYPES` is set and the contact's `type` is in it, keep the record current and log no interaction.
-   - For every other contact: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. CRM down → `bin/harold file crm`.
+   - For every other contact: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. Written through the connector with no local credentials → `bin/harold file crm '{…,"applied":"connector"}'`; CRM down → `bin/harold file crm` (queued).
 3. **Vault Daily Note** — create or append to `vault/daily/YYYY-MM-DD-<session-slug>.md` (template: `vault/templates/daily.md`): what was done, contacts touched, files created or modified, CRM actions, pending items for next session.
 4. **Task Check** — update the task manager for anything discussed; create tasks for new action items (every task gets a due date and a project).
 5. **Record scheduled work** — every DUE item from boot: `bin/harold file trigger <id> ran|skipped "<reason>"`.
@@ -330,7 +338,7 @@ These trigger on natural language; no slash prefix needed. They work the same in
 **Triggers:** "status", "what's happening", "where are we", "dashboard", "/status"
 
 1. Read `dashboard/status.md`, `harold/alerts.md` and `harold/blockers.md`
-2. Run `harold_cadence_check` for stale relationships
+2. Check for stale relationships with the CRM tool (`harold_cadence_check` on harold-mcp; on the connector, search contacts and compare their last contact dates)
 3. Present a concise summary: project status, flags, stale relationships, upcoming deadlines
 
 ### /intake — Contact Intake
@@ -347,4 +355,4 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 ---
 
-*Harold 2.0 starter. Fill in the bracketed placeholders, then delete this line.*
+*Harold 2.1 starter. Fill in the bracketed placeholders, then delete this line.*

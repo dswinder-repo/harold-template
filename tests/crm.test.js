@@ -109,7 +109,7 @@ test('Focus Area is gone: only migration 007 (and its test) names it, to drop it
   const files = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: SRC, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
   const self = path.relative(SRC, __filename);
   const hits = files.filter(f => f !== self && f !== 'tools/harold-crm/supabase/migrations/007_drop_focus_area.sql' && f !== 'tools/harold-crm/scripts/test-migrations.mjs' && fs.existsSync(path.join(SRC, f)) && fs.statSync(path.join(SRC, f)).isFile())
-    .filter(f => /focus[ _]?area/i.test(fs.readFileSync(path.join(SRC, f), 'utf8')));
+    .filter(f => /focus[ _]?area/i.test(fs.readFileSync(path.join(SRC, f), 'utf8').replace(/007_drop_focus_area\.sql/g, '')));  // the migration's file name may be listed
   assert.deepStrictEqual(hits, []);
   assert.match(fs.readFileSync(path.join(SRC, 'tools/harold-crm/supabase/migrations/007_drop_focus_area.sql'), 'utf8'), /drop column if exists focus_area/);
 });
@@ -120,4 +120,26 @@ test('CRM migrations apply, re-run, and upgrade an older database', { skip: !fs.
   const r = spawnSync(process.execPath, [path.join(SRC, 'tools/harold-crm/scripts/test-migrations.mjs')], { cwd: path.join(SRC, 'tools/harold-crm'), encoding: 'utf8', timeout: 180000 });
   assert.strictEqual(r.status, 0, (r.stdout || '').split('\n').filter(l => /FAIL/.test(l)).join('\n') + (r.stderr || '').slice(-2000));
   assert.match(r.stdout, /All checks passed/);
+});
+
+// The connector writes the CRM directly; a computer without CRM credentials cannot see that write, so the
+// session records it. That counts as filed at close, and is never replayed.
+test('a write made through the connector: file crm "applied":"connector" satisfies close and is never replayed', () => {
+  const w = workspace();
+  assert.strictEqual(run(w, ['boot', '--via=claude'], start('crm-conn')).code, 0);
+  fs.writeFileSync(path.join(w.ws, 'vault/people', 'Ana Ruiz.md'), `---\ntags: [person]\ntype: partner\nlabels: []\ncompany: Example Co\nwarmth: Warm\nstatus: active\nlast_updated: ${w.today}\n---\n\n# Ana Ruiz\n\nIntro call about a pilot.\n`);
+  fs.writeFileSync(path.join(w.ws, `vault/daily/${w.today}-crm-conn.md`), `# ${w.today}\n\nCall with Ana Ruiz.\n`);
+  const blocked = JSON.parse(run(w, ['close', '--via=claude'], stop('crm-conn')).out);
+  assert.strictEqual(blocked.decision, 'block');
+  assert.match(blocked.reason, /"applied":"connector"/, 'the block says how to record a connector write');
+  const rec = run(w, ['file', 'crm', JSON.stringify({ contact: 'Ana Ruiz', action: 'log_interaction', applied: 'connector' })]);
+  assert.strictEqual(rec.code, 0, rec.err);
+  assert.match(rec.out, /not replayed/);
+  const q = fs.readFileSync(path.join(w.ws, 'harold/crm-queue.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.strictEqual(q[q.length - 1].replayed, true);
+  assert.match(run(w, ['replay', '--dry-run']).out, /nothing|0 of 0|no queued/i);
+  const ok = run(w, ['close', '--via=claude'], stop('crm-conn'));
+  assert.strictEqual(ok.code, 0);
+  assert.ok(!/"decision":"block"/.test(ok.out), ok.out);
+  assert.strictEqual(run(w, ['file', 'crm', JSON.stringify({ contact: 'Ana Ruiz', action: 'upsert_contact', applied: 'yes' })]).code, 2);
 });

@@ -1226,7 +1226,7 @@ function closeOnce(root, today, opts, hook) {
     if ((fm.crm || '').toLowerCase() === 'none') { notes.push(`${name}: crm: none — this card is deliberately out of the CRM`); continue; }
     const filed = crmWritten.has(name.toLowerCase()) || queue.some(q => (q.contact || '').toLowerCase() === name.toLowerCase());
     const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
-    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: use harold_upsert_contact (or harold_log_interaction for a conversation). If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
+    if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: write it with the CRM tool (crm_upsert_contact on the connector or harold_upsert_contact on harold-mcp; the log_interaction tool for a conversation). Written through the connector and this computer has no CRM credentials? Record it: ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","applied":"connector"}'. If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
   }
 
   // 4. scheduled work recorded
