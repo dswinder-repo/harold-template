@@ -41,7 +41,7 @@ function freshInstall() {
   g(ws, 'remote', 'add', 'origin', remote); g(ws, 'push', '-q', '-u', 'origin', 'main');
   return { dir, ws, home, remote, git: (...a) => g(ws, ...a).stdout.trim(), remoteLog: () => g(dir, '--git-dir', remote, 'log', '--oneline').stdout.trim() };
 }
-const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'HAROLD_TZ', 'HAROLD_TODAY'];
+const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'HAROLD_TZ', 'HAROLD_TODAY', 'HAROLD_AGENT'];
 function run(w, args, env = {}) {
   const clean = { ...process.env };
   STRIP.forEach(k => delete clean[k]);
@@ -74,6 +74,9 @@ for (const now of ['2026-10-12T09:00:00', '2026-10-30T09:00:00', '2026-12-01T09:
     const c = run(w, ['close'], env);
     assert.strictEqual(c.code, 0, c.out + c.err);
     assert.match(c.out, /git: pushed 1 commit/);
+    const msg = w.git('log', '-1', '--format=%B');
+    assert.match(msg, /Recorded-By: bin\/harold/, 'a terminal close names no AI tool');
+    assert.doesNotMatch(msg, /Co-Authored-By: Claude/);
     const f = run(w, ['close', '--final'], env);
     assert.strictEqual(f.code, 0, f.out + f.err);
     assert.match(w.remoteLog(), /chore\(session\)/);

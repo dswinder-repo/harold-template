@@ -799,9 +799,11 @@ function cmdBoot(root, today, opts, hook) {
 // Commit trailers name the agent that did the work. Scheduled jobs say which one in HAROLD_AGENT; a hook says
 // it through its harness. Claude (and an unknown runner: a terminal, another harness) keeps the long-standing
 // Co-Authored-By line; Codex and Cursor get a neutral Harold-Agent line rather than an address we cannot vouch for.
+// Name the agent that did the work, and only when it is known: a terminal or an unwired harness gets no line.
 function agentTrailer(harness) {
-  const a = String(process.env.HAROLD_AGENT || harness || '').trim().toLowerCase();
-  return a && a !== 'claude' ? `Harold-Agent: ${a.replace(/[^a-z0-9._-]/g, '')}` : 'Co-Authored-By: Claude <noreply@anthropic.com>';
+  const a = String(process.env.HAROLD_AGENT || harness || (process.env.CLAUDE_CODE_REMOTE ? 'claude' : '')).trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  if (!a || a === 'terminal') return 'Recorded-By: bin/harold';
+  return a === 'claude' ? 'Co-Authored-By: Claude <noreply@anthropic.com>' : `Harold-Agent: ${a}`;
 }
 const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/,
   // OpenAI keys, Cursor keys, and a pasted Codex/OAuth sign-in file (any agent the scheduled jobs can run).

@@ -87,7 +87,7 @@ if [ "$CODE" = "200" ]; then
   python3 -c "import json;[print('   -',c['name'],'·',c['org'] or 'no org','·',c['category']) for c in json.load(open('/tmp/harold-crm-test.json'))]" 2>/dev/null
   rm -f /tmp/harold-crm-test.json
   echo
-  echo "Done. Restart Claude Code (or your Cowork session) so Harold picks up the new key."
+  echo "Done. Restart your AI tool's session (or its MCP servers) so harold-mcp picks up the new key."
 else
   echo
   echo "✗ Connection failed (HTTP $CODE)."
