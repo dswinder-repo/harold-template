@@ -357,7 +357,7 @@ function loadAlerts(root, today) {
   const m = r.text.match(/Last updated:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
   const updated = m ? parseLooseDate(m[1], today) : null;
   const cur = r.text.match(/##\s*Current Alerts[\s\S]*?(?=\n##\s|\n---|$)/i);
-  return { ok: r.ok, updated, age: updated ? daysBetween(updated, today.iso) : null, current: cur ? cur[0].trim() : '' };
+  return { ok: r.ok, updated, never: !updated && /Last updated:\s*never/i.test(r.text), age: updated ? daysBetween(updated, today.iso) : null, current: cur ? cur[0].trim() : '' };
 }
 
 function loadBlockers(root, today) {
@@ -444,26 +444,43 @@ function rawUncompiled(root) {
 function triggerLog(root) { return readJsonl(path.join(root, 'harold/trigger-log.jsonl')).rows; }
 function lastRun(log, id, fromIso) { return log.filter(e => e.id === id && e.status === 'ran' && (!fromIso || e.date >= fromIso)).map(e => e.date).sort().pop() || null; }
 function loggedToday(log, id, today) { return log.filter(e => e.id === id && e.date === today.iso); }
+// The day Harold started in this workspace: the "harold-start" row the first boot writes into an empty
+// trigger log. Scheduled work whose day came before it was never missed (Harold was not running yet), and
+// alerts that predate it count from it. Without the row (an existing install), nothing changes.
+const START_ID = 'harold-start';
+function workspaceStart(log) { const r = log.find(e => e.id === START_ID); return r && /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') ? r.date : null; }
+function markWorkspaceStart(root, today) {
+  const f = path.join(root, 'harold/trigger-log.jsonl');
+  let text = ''; try { text = readFull(f); } catch (_) {}
+  if (text.trim()) return false;
+  appendLine(f, { id: START_ID, status: 'ran', reason: 'first boot: scheduled work counts from today', date: today.iso, ts: new Date().toISOString() });
+  return true;
+}
 
 function computeTriggers(root, today, ctx) {
   const log = triggerLog(root);
   const due = [], overdue = [], info = [];
   const t = today.iso;
+  const start = workspaceStart(log);
+  const after = d => !start || d > start;  // a day before (or the day of) the first boot was never missed
   const dow = dateOf(t).getUTCDay();
   const lastFriday = addDays(t, -((dow + 2) % 7));
   const weeklyRan = lastRun(log, 'weekly-scan');
-  if (dow === 5) due.push({ id: 'weekly-scan', what: 'Weekly summary + quick KB scan', where: 'playbook/core/knowledge-base-health.md (Quick Scan) → harold/weekly-summary.md' });
-  else if (!weeklyRan || weeklyRan < lastFriday) {
+  if (!after(t)) info.push(`Harold started in this workspace today (${start}): the weekly scan, full audit and month-end review count from tomorrow.`);
+  if (dow === 5) { if (after(t)) due.push({ id: 'weekly-scan', what: 'Weekly summary + quick KB scan', where: 'playbook/core/knowledge-base-health.md (Quick Scan) → harold/weekly-summary.md' }); }
+  else if ((!weeklyRan || weeklyRan < lastFriday) && after(lastFriday)) {
     const missed = weeklyRan ? Math.floor(daysBetween(weeklyRan, t) / 7) : null;
     overdue.push({ id: 'weekly-scan', what: `Friday weekly scan missed for ${lastFriday}` + (missed ? ` (${missed} cycles since last run ${weeklyRan})` : ' (no run ever recorded)'), where: 'playbook/core/knowledge-base-health.md (Quick Scan)' });
   }
   const firstOfMonth = `${t.slice(0, 7)}-01`;
-  if (today.d === 1) due.push({ id: 'full-audit', what: 'Full KB health audit', where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
-  else if (!lastRun(log, 'full-audit', firstOfMonth)) overdue.push({ id: 'full-audit', what: `Monthly full audit not run since ${firstOfMonth}`, where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
+  if (today.d === 1) { if (after(t)) due.push({ id: 'full-audit', what: 'Full KB health audit', where: 'playbook/core/knowledge-base-health.md (Full Audit)' }); }
+  else if (!lastRun(log, 'full-audit', firstOfMonth) && after(firstOfMonth)) overdue.push({ id: 'full-audit', what: `Monthly full audit not run since ${firstOfMonth}`, where: 'playbook/core/knowledge-base-health.md (Full Audit)' });
   const lbd = lastBusinessDayOfMonth(today.y, today.m);
-  if (t === lbd) due.push({ id: 'month-end', what: 'Month-end review', where: 'dashboard/processes.md (Time Triggers)' });
-  else if (t > lbd && !lastRun(log, 'month-end', lbd)) overdue.push({ id: 'month-end', what: `Month-end review for ${lbd} not run`, where: 'dashboard/processes.md' });
-  if (ctx.alerts.age === null || ctx.alerts.age > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Linear`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
+  if (t === lbd) { if (after(t)) due.push({ id: 'month-end', what: 'Month-end review', where: 'dashboard/processes.md (Time Triggers)' }); }
+  else if (t > lbd && !lastRun(log, 'month-end', lbd) && after(lbd)) overdue.push({ id: 'month-end', what: `Month-end review for ${lbd} not run`, where: 'dashboard/processes.md' });
+  // Alerts shipped with the workspace (or rebuilt before Harold started) count as rebuilt on the first boot.
+  const alertsAge = start && (!ctx.alerts.updated || ctx.alerts.updated < start) ? daysBetween(start, t) : ctx.alerts.age;
+  if (alertsAge === null || alertsAge > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Linear`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
   for (const b of ctx.blockers.rows) {
     if (b.age !== null && b.age > 7) {
       const id = `blocker-escalation:${b.id}`;
@@ -560,7 +577,7 @@ function runCheck(root, today) {
   const pj = loadProjects(root);
   if (!pj.ok) failures.push(`project map unreadable: harold/projects.md (${pj.err})`);
   else { const noFolder = pj.projects.filter(p => p.folder && !fs.existsSync(path.join(root, p.folder))); if (noFolder.length) warnings.push(`project map folders missing on disk: ${noFolder.map(p => p.name + ' → ' + p.folder).join('; ')}`); }
-  const al = loadAlerts(root, today); if (!al.updated) warnings.push('alerts.md has no parseable "Last updated" line');
+  const al = loadAlerts(root, today); if (!al.updated && !al.never) warnings.push('alerts.md has no parseable "Last updated" line');
   const bl = loadBlockers(root, today); if (!bl.rows.length) warnings.push('no active blockers parsed from blockers.md');
   const ev = loadEvents(root, today);
   const ctx = { alerts: al, blockers: bl, events: ev, daily: latestDaily(root), raw: rawUncompiled(root) };
@@ -663,6 +680,9 @@ function cmdBoot(root, today, opts, hook) {
   // first so this session reads their latest files; never merge, never block boot on it.
   const up = git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
   const pull = up.code === 0 ? git(root, ['pull', '--ff-only', '-q'], { timeout: 20000 }) : null;
+  // A fresh install (empty trigger log): scheduled work counts from today, not from the template's dates. A
+  // scheduled job never marks it: its own gate has already decided what is due.
+  if (!inHousekeepingJob(root, today) && !(isCloudRunner() && loadJob(root))) { try { markWorkspaceStart(root, today); } catch (_) {} }
   const c = runCheck(root, today);
   if (pull && pull.code !== 0) c.warnings.push(`git pull --ff-only did not complete (${(pull.err || 'timeout').split('\n')[0].slice(0, 140)}); files from other writers may be stale`);
   if (c.failures.length) {
@@ -1645,7 +1665,9 @@ function housekeepingGate({ nowMs, tz = TZ, job = null, cloud = false, log = [],
   if (force) return job ? { ...g, job, due: true, reason: 'forced with --force' } : { ...g, due: false, error: true, reason: `--force needs a job name: ${HK_JOBS.join(', ')}` };
   if (!cloud) return { ...g, due: false, reason: `cloud housekeeping is off (${HK_FILE} does not say "cloud": true), so sessions run these jobs when boot lists them` };
   const reasons = [];
+  const start = workspaceStart(log);
   for (const id of job ? [job] : HK_ORDER) {
+    if (start && t.iso <= start) { reasons.push(`${id}: Harold started in this workspace on ${start}; housekeeping counts from the day after`); continue; }
     const notDay = hkDayCheck(id, t);
     if (notDay) { reasons.push(`${id}: ${notDay}`); continue; }
     const done = log.filter(e => e.id === id && e.date === t.iso && (e.status === 'ran' || e.status === 'skipped')).pop();

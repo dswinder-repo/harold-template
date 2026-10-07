@@ -1,0 +1,101 @@
+#!/usr/bin/env node
+/*
+ * A fresh install: the starter copied as-is into a new private repository, first boot, first close.
+ *
+ *   node --test tests/first-run.test.js
+ *
+ * The example content (Jane Doe, Acme Corp, blocker B001, the example event, the example alerts and
+ * lesson) must not block the first close, whatever date it runs on. The first boot writes a
+ * "harold-start" row into the empty trigger log; scheduled work counts from the day after.
+ */
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const SRC = path.resolve(__dirname, '..');
+const dirs = [];
+test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
+
+// Exactly what git would publish: tracked files plus new ones that are not ignored.
+function freshInstall() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harold-first-run-'));
+  dirs.push(dir);
+  const ws = path.join(dir, 'ws'), home = path.join(dir, 'home'), remote = path.join(dir, 'remote.git');
+  fs.mkdirSync(home);
+  const files = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: SRC, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
+  for (const f of files) {
+    const from = path.join(SRC, f);
+    if (!fs.existsSync(from) || fs.statSync(from).isDirectory()) continue;
+    fs.mkdirSync(path.dirname(path.join(ws, f)), { recursive: true });
+    fs.copyFileSync(from, path.join(ws, f));
+    fs.chmodSync(path.join(ws, f), fs.statSync(from).mode);
+  }
+  const g = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
+  g(dir, 'init', '-q', '--bare', '-b', 'main', remote);
+  g(ws, 'init', '-q', '-b', 'main'); g(ws, 'config', 'user.email', 'test@example.com'); g(ws, 'config', 'user.name', 'Test');
+  g(ws, 'add', '-A'); g(ws, 'commit', '-qm', 'Initial commit');
+  g(ws, 'remote', 'add', 'origin', remote); g(ws, 'push', '-q', '-u', 'origin', 'main');
+  return { dir, ws, home, remote, git: (...a) => g(ws, ...a).stdout.trim(), remoteLog: () => g(dir, '--git-dir', remote, 'log', '--oneline').stdout.trim() };
+}
+const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'HAROLD_TZ', 'HAROLD_TODAY'];
+function run(w, args, env = {}) {
+  const clean = { ...process.env };
+  STRIP.forEach(k => delete clean[k]);
+  const r = spawnSync(process.execPath, [path.join(w.ws, 'bin/harold'), ...args], {
+    cwd: w.ws, encoding: 'utf8', timeout: 120000, input: '',
+    env: { ...clean, HOME: w.home, HAROLD_ENV_FILE: path.join(w.home, 'none'), HAROLD_TZ: 'America/Chicago', HAROLD_SESSION_ID: 'first-run', ...env },
+  });
+  return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
+
+test('the starter ships an empty trigger log and undated example rows', () => {
+  assert.strictEqual(fs.readFileSync(path.join(SRC, 'harold/trigger-log.jsonl'), 'utf8').trim(), '');
+  const blockers = fs.readFileSync(path.join(SRC, 'harold/blockers.md'), 'utf8');
+  assert.match(blockers, /\| B001 \|[^\n]*\(example: no date\)/);
+  assert.match(fs.readFileSync(path.join(SRC, 'harold/alerts.md'), 'utf8'), /Last updated: never/);
+});
+
+// A Monday, a Friday that is the last business day, the 1st, and a Friday that is the 1st.
+for (const now of ['2026-10-12T09:00:00', '2026-10-30T09:00:00', '2026-12-01T09:00:00', '2027-01-01T09:00:00']) {
+  test(`first boot and first close pass on a fresh install (${now.slice(0, 10)})`, () => {
+    const w = freshInstall();
+    const env = { HAROLD_NOW: now };
+    const b = run(w, ['boot'], env);
+    assert.strictEqual(b.code, 0, b.out + b.err);
+    assert.match(b.out, /nothing due, nothing overdue/);
+    assert.match(b.out, /Harold started in this workspace today/);
+    const log = fs.readFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepStrictEqual(log.map(e => [e.id, e.date]), [['harold-start', now.slice(0, 10)]]);
+    const c = run(w, ['close'], env);
+    assert.strictEqual(c.code, 0, c.out + c.err);
+    assert.match(c.out, /git: pushed 1 commit/);
+    const f = run(w, ['close', '--final'], env);
+    assert.strictEqual(f.code, 0, f.out + f.err);
+    assert.match(w.remoteLog(), /chore\(session\)/);
+  });
+}
+
+test('after the first day, scheduled work counts as usual', () => {
+  const w = freshInstall();
+  assert.strictEqual(run(w, ['boot'], { HAROLD_NOW: '2026-10-07T09:00:00' }).code, 0);  // a Wednesday
+  const ids = now => { const c = JSON.parse(run(w, ['check', '--json'], { HAROLD_NOW: now }).out); return { due: c.triggers.due.map(d => d.id), overdue: c.triggers.overdue.map(d => d.id) }; };
+  assert.deepStrictEqual(ids('2026-10-08T09:00:00'), { due: [], overdue: [] });
+  assert.ok(ids('2026-10-09T09:00:00').due.includes('weekly-scan'), 'the first Friday after install');
+  assert.ok(ids('2026-10-09T09:00:00').due.includes('alerts-rebuild'), 'alerts count from the first boot: two days on, they are due');
+  assert.ok(ids('2026-10-12T09:00:00').overdue.includes('weekly-scan'), 'missed that Friday');
+  assert.ok(ids('2026-11-02T09:00:00').overdue.includes('full-audit'), 'the first 1st after install');
+  assert.ok(!ids('2026-10-12T09:00:00').overdue.includes('full-audit'), 'October 1st was before install');
+});
+
+test('an existing install (a trigger log without the start row) is unchanged', () => {
+  const w = freshInstall();
+  fs.writeFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), JSON.stringify({ id: 'weekly-scan', status: 'ran', date: '2026-09-25' }) + '\n');
+  const c = JSON.parse(run(w, ['check', '--json'], { HAROLD_NOW: '2026-10-07T09:00:00' }).out);
+  assert.ok(c.triggers.overdue.some(d => d.id === 'weekly-scan'));
+  run(w, ['boot'], { HAROLD_NOW: '2026-10-07T09:00:00' });
+  assert.ok(!fs.readFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), 'utf8').includes('harold-start'), 'boot marks only an empty log');
+});

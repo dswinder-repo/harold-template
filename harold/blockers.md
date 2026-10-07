@@ -10,7 +10,7 @@
 
 | ID | Project | Blocker | Waiting On | Raised | Last Update |
 |----|---------|---------|------------|--------|-------------|
-| B001 | Example Project | Example (delete this row): mutual NDA not yet signed | Jane Doe (Acme Corp) | Sep 26, 2026 | Starter example row. Replace with your own blockers. |
+| B001 | Example Project | Example (delete this row): mutual NDA not yet signed | Jane Doe (Acme Corp) | (example: no date) | Starter example row, undated so it never ages. Replace with your own blockers; a real row needs a Raised date. |
 
 ---
 

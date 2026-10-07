@@ -21,7 +21,7 @@
 
 | Event | Dates | Project | Task | Prep Status | Debrief Due | Debrief Status |
 |-------|-------|---------|------|-------------|-------------|----------------|
-| **Example: Acme Corp partner summit (delete this row)** | Mar 12, 2027 | Example Project | — | Not Started | Mar 14, 2027 | — |
+| **Example: Acme Corp partner summit (delete this row)** | (example: no date) | Example Project | — | Not Started | — | — |
 
 ---
 

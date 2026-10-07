@@ -64,4 +64,4 @@
 
 ---
 
-*Last updated: September 26, 2026 (starter template: example content only)*
+*Last updated: never (starter template: example content only; the first rebuild writes the date here, as Month D, YYYY)*
