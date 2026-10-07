@@ -177,8 +177,11 @@ chat shows up in the app, live, and the other way round.
 - The service role key bypasses row-level security. Keep it server-side only:
   in that env file or a server's secret store, never in this app, a
   `NEXT_PUBLIC_` variable, or a repository.
-- Writes Harold makes appear in the audit trail with no user attached, and
-  logging an interaction from Harold updates `last_contacted_at` like the app does.
+- The audit trail records each change with the contact's `updated_by`, which is
+  whoever last edited that contact in the app. Harold's tool writes are not
+  attributed: a change Harold makes appears under the last app editor (or under
+  no one, for a contact never edited in the app). Logging an interaction from
+  Harold updates `last_contacted_at` like the app does.
 - Optional: if you never log conversations with some contact types (some people
   choose this for their own team), list them in `HAROLD_NO_LOG_TYPES` for Harold
   (see "CRM Filing Protocol" in the workspace's `AGENTS.md`) and in
