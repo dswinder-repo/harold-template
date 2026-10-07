@@ -633,7 +633,8 @@ function linearSummary(root) {
   const r = spawnSync('node', [path.join(root, 'bin/harold-linear'), 'tasks', '--json'], { cwd: root, encoding: 'utf8', timeout: 25000 });
   if (r.status === 0) { try { const j = JSON.parse(r.stdout); return { live: true, ...j }; } catch (_) {} }
   const snap = path.join(root, 'harold/linear-snapshot.md');
-  if (fs.existsSync(snap)) return { live: false, ageH: Math.round((Date.now() - fs.statSync(snap).mtimeMs) / 3600000), text: readFull(snap) };
+  // Age from the "Pulled <ISO time>" line the snapshot carries: a fresh checkout gives every file a new mtime.
+  if (fs.existsSync(snap)) { const text = readFull(snap); const m = text.match(/Pulled (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/); const t = m ? Date.parse(m[1]) : fs.statSync(snap).mtimeMs; return { live: false, ageH: Math.round((nowDate().getTime() - t) / 3600000), text }; }
   return { live: false, none: true, err: (r.stderr || '').trim().slice(0, 160) };
 }
 

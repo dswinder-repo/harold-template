@@ -112,3 +112,10 @@ test('a clone still pointing at the public starter is warned about at boot (revi
   const c = JSON.parse(run(w, ['check', '--json']).out);
   assert.ok(c.warnings.some(x => /looks like the public Harold starter.*PRIVATE repository.*remote set-url origin/.test(x)), JSON.stringify(c.warnings));
 });
+
+test('a committed Linear snapshot is dated by its "Pulled" line, not by checkout time (review C-16)', () => {
+  const w = freshInstall();
+  fs.writeFileSync(path.join(w.ws, 'harold/linear-snapshot.md'), '# Linear snapshot — team X\n\n*Pulled 2026-10-01T10:00:00.000Z (2026-10-01 06:00 America/New_York). 0 open issues.*\n');
+  const b = run(w, ['boot'], { HAROLD_NOW: '2026-10-03T10:00:00Z', LINEAR_API_KEY: '' });
+  assert.match(b.out, /committed snapshot 48h old/);
+});
