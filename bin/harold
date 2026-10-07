@@ -1682,7 +1682,8 @@ function warnTz() {
 function cmdBrief(root, today, argv, now) {
   const sub = argv[0];
   const force = !!flag(argv, 'force');
-  const ignoreTime = !!flag(argv, 'ignore-time');
+  // --target=HH:MM is what scheduled routines written for earlier versions pass: their own schedule is the clock.
+  const ignoreTime = !!flag(argv, 'ignore-time') || flag(argv, 'target') !== undefined;
   const t = flag(argv, 'time');
   if (t !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t))) { console.error('--time must be HH:MM (24-hour)'); return 2; }
   const time = t || BRIEF_TIME.hm;
