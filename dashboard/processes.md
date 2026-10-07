@@ -19,6 +19,7 @@
 | A **new name with business context** (organization, title, deal, meeting, intro) | `playbook/core/contact-intake.md`: duplicate check, vault card, CRM record, pipeline entry only if a purpose was established |
 | A **project, client, engagement or workstream** that `bin/harold where` cannot resolve | `playbook/core/project-intake.md`: folder, `harold/projects.md` entry, vault card, cross-links. You never announce a new project; you just start working on it |
 | A **task signal** ("done", "started", "blocked", a new to-do) | Update the task manager now; add to `harold/blockers.md` if blocked |
+| **Commitments in pasted call notes, a transcript or a forwarded email** (something the operator said they would do, or something someone owes the operator) | Tasks, automatically, without asking: check the open tasks first (no duplicates), then one task per commitment in the task manager (`bin/harold-linear create`, `task_create` on the connector, or the task manager's own tool), with a due date when stated or implied and the project from `bin/harold where`; `crm_task` as well when it is tied to a contact. Things owed to the operator read "Follow up: <who> owes <what>". Each task ID goes on its line under `## Action items` in the meeting note; `bin/harold close` blocks until it does. Harold never reads email on its own: it acts on what is pasted or forwarded |
 | **New intel** (news, market data, notes, a strategic insight) | `playbook/core/analyst.md`: apply it across the knowledge base, don't just mention it |
 | A **correction** from you (wrong name, wrong title, skipped step) | Record it first: `bin/harold file learning '{...}'`, then fix the error |
 | **Substantive synthesis** (3+ sources, or analysis worth keeping) | File it to `vault/intel/` or `vault/decisions/` so it compounds |
@@ -28,7 +29,7 @@
 | You say something like... | Playbook |
 |---------------------------|----------|
 | A start-of-day opener at any hour: "good morning", "gm", "morning", "let's get started", "let's go", "start the day", "daily brief" (a first message that is a project request is NOT one) | `playbook/core/morning-brief.md` (Step 0 first: show today's scheduled draft if boot says READY; otherwise 3 steps, two pauses, follow exactly) |
-| "just got off a call with...", "we met with...", pasting notes or a transcript | `playbook/core/meeting-debrief.md`, then `playbook/core/analyst.md` |
+| "just got off a call with...", "we met with...", pasting notes or a transcript, forwarding an email | `playbook/core/meeting-debrief.md` (its commitments become tasks automatically), then `playbook/core/analyst.md` |
 | "met someone new", "intro to...", "add X to the CRM" | `playbook/core/contact-intake.md` |
 | "I'm starting work on...", talking about a client or workstream the map doesn't know | `playbook/core/project-intake.md` |
 | "prep me for...", an event in the next 10 days | `playbook/core/event-prep.md` |

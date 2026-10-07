@@ -57,7 +57,7 @@ describe("tool surface (SDK v2 client)", () => {
     const { tools } = await client.listTools();
     expect(tools.map(t => t.name).sort()).toEqual([...TOOL_NAMES].sort());
     for (const t of tools) {
-      const write = /capture|note|update|learning|log_interaction|upsert|pipeline|crm_task/.test(t.name);
+      const write = /capture|note|update|learning|log_interaction|upsert|pipeline|crm_task|task_create/.test(t.name);
       expect(t.annotations?.readOnlyHint, t.name).toBe(!write);
       expect(t.annotations?.destructiveHint, t.name).toBe(false);
       expect(t.name).not.toMatch(/delete|remove/);

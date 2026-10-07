@@ -329,9 +329,9 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 ### /debrief — Meeting Debrief
 
-**Triggers:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", "/debrief"
+**Triggers:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted call notes or a forwarded email with commitments in it, "/debrief"
 
-**Follow `playbook/core/meeting-debrief.md` exactly.** Key steps: process the input → log the interaction in the CRM → create tasks for action items → update contact warmth, status and pipeline stage → extract atomic facts to `harold/facts.md` → write the meeting note in `vault/meetings/` → draft a follow-up if needed.
+**Follow `playbook/core/meeting-debrief.md` exactly.** Key steps: process the input → log the interaction in the CRM → create a task for every commitment automatically, without being asked (the operator's to-dos and what others owe them), and write each task ID into the meeting note's `## Action items` (`bin/harold close` blocks until every item has one) → update contact warmth, status and pipeline stage → extract atomic facts to `harold/facts.md` → write the meeting note in `vault/meetings/` → draft a follow-up if needed.
 
 ### /status — Dashboard Summary
 

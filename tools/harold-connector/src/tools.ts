@@ -10,12 +10,18 @@ import * as graph from "./graph.js";
 import * as kb from "./kb.js";
 import { CATEGORIES, SEVERITIES } from "./learnings.js";
 import * as stale from "./stale.js";
+import * as tasks from "./tasks.js";
+import type { FetchLike } from "./identity.js";
 import { localParts, truncate } from "./text.js";
 
 export interface ToolDeps {
   repoFor: (ctx: ServerContext) => HaroldRepo;
   supabase: () => crm.Sb | null;
   now?: () => Date;
+  /** The task manager (Linear); default: LINEAR_API_KEY + LINEAR_TEAM_KEY from the environment. */
+  linear?: () => tasks.LinearConfig | null;
+  /** fetch for the task manager's API; injected in tests. */
+  linearFetch?: FetchLike;
 }
 
 export function githubTokenFrom(ctx: ServerContext): string {
@@ -31,6 +37,9 @@ export const defaultDeps: ToolDeps = {
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
+// The task tools reach a third-party service (the owner's task manager), not only the owner's Harold.
+const TASK_READ = { ...READ, openWorldHint: true } as const;
+const TASK_WRITE = { ...WRITE, openWorldHint: true } as const;
 
 const out = (text: string, isError = false): CallToolResult => ({ content: [{ type: "text", text: truncate(text, MAX_RESULT_CHARS - 500, "result truncated") }], ...(isError ? { isError: true } : {}) });
 
@@ -41,6 +50,8 @@ async function guard(fn: () => Promise<{ text: string; isError?: boolean }>): Pr
 
 export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
   const now = () => (deps.now ? deps.now() : new Date());
+  const linear = () => (deps.linear || tasks.linearFromEnv)();
+  const linearFetch: FetchLike = deps.linearFetch || ((i, init) => fetch(i, init));
   const withSb = async (fn: (sb: crm.Sb) => Promise<crm.CrmResult>) => { const sb = deps.supabase(); return sb ? fn(sb) : crm.NOT_CONFIGURED; };
 
   // After a CRM write about a person: freshen their vault card (Harold's filing rule, CRM + vault together).
@@ -304,7 +315,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("crm_task", {
     title: "CRM: follow-up task",
-    description: "Create, update, complete, cancel or list contact-specific follow-up tasks (e.g. 'Send the deck to Jane Doe'). Project work that lives in a separate task manager belongs there instead.",
+    description: "Create, update, complete, cancel or list contact-specific follow-up tasks (e.g. 'Send the deck to Jane Doe'). Use it alongside task_create when a follow-up is tied to a contact; project work without a contact goes to task_create only.",
     inputSchema: z.object({
       action: z.enum(["create", "update", "complete", "cancel", "list"]),
       task_id: z.string().optional().describe("Required for update/complete/cancel"),
@@ -322,9 +333,35 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     const r = await crm.crmTask(sb, args);
     return args.action === "create" ? vaultFollowUp(ctx, r) : r;
   })));
+
+  // ───────────── the task manager ─────────────
+
+  server.registerTool("task_list", {
+    title: "Tasks: list open",
+    description: "List the open tasks (not completed or canceled) in the owner's task manager (Linear, team LINEAR_TEAM_KEY), most recently updated first, each with its ID, title, project, state, due date, priority and URL. Optional text filter on title and description. Call it before task_create so nothing is created twice. Says plainly when no task manager is configured.",
+    inputSchema: z.object({
+      query: z.string().max(200).optional().describe("Only tasks whose title or description contains this text, e.g. 'deck' or a person's name"),
+      limit: z.number().int().min(1).max(100).optional().describe("Maximum tasks (default 50)"),
+    }),
+    annotations: TASK_READ,
+  }, async (args) => guard(() => tasks.listTasks(linearFetch, linear(), args)));
+
+  server.registerTool("task_create", {
+    title: "Tasks: create",
+    description: "Create one task in the owner's task manager (Linear, team LINEAR_TEAM_KEY): one per commitment in shared meeting notes, a transcript or an email, without being asked. The owner's own to-dos as plain actions ('Send the revised deck to Jane Doe'); things owed to the owner as 'Follow up: <who> owes <what>'. due_date when stated or clearly implied; project by name (from harold_where; matched against the team's projects). An open task with the same title is returned instead of a duplicate. Returns the task ID and URL: write the ID into the meeting note's Action items. Refuses secrets. Says plainly when no task manager is configured (use crm_task for a contact follow-up then).",
+    inputSchema: z.object({
+      title: z.string().min(1).max(250).describe("The action, starting with a verb, or 'Follow up: <who> owes <what>'"),
+      description: z.string().max(10_000).optional().describe("Context: where it came from (meeting, date), who is involved, the exact commitment"),
+      due_date: z.string().optional().describe("YYYY-MM-DD, when stated or clearly implied"),
+      project: z.string().max(120).optional().describe("Project name in the task manager (harold_where gives the owner's project)"),
+      priority: z.enum(tasks.PRIORITIES).optional().describe("urgent | high | medium (default) | low"),
+    }),
+    annotations: TASK_WRITE,
+  }, async (args) => guard(() => tasks.createTask(linearFetch, linear(), args)));
 }
 
 export const TOOL_NAMES = [
   "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
   "harold_capture", "harold_note", "harold_update", "harold_learning", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
+  "task_list", "task_create",
 ];
