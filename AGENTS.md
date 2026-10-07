@@ -38,7 +38,7 @@ Harold is platform-, model- and harness-agnostic: it works the same in any AI to
 
 Checked at the source and found without session or turn hooks: Zed's agent, and Continue CLI (its hook code does not fire session or stop events yet). Not verifiable from a public source, so not wired: Windsurf, Kiro, Antigravity CLI. In those, the fallback below applies.
 
-If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again. To wire a harness not listed here, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
+If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Each command can run in its own shell: boot records the session in `harold/.last-boot` (gitignored), and a close with no session id uses that latest boot as its baseline, so only what changed since the boot counts. Read what close prints: if it lists problems, fix them and run it again. To wire a harness not listed here, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
@@ -338,7 +338,7 @@ These trigger on natural language; no slash prefix needed. They work the same in
 **Triggers:** "status", "what's happening", "where are we", "dashboard", "/status"
 
 1. Read `dashboard/status.md`, `harold/alerts.md` and `harold/blockers.md`
-2. Check for stale relationships with the CRM tool (`harold_cadence_check` on harold-mcp; on the connector, search contacts and compare their last contact dates)
+2. Check for stale relationships with the CRM tool: `crm_stale` on the connector, `harold_cadence_check` on harold-mcp (the same rule)
 3. Present a concise summary: project status, flags, stale relationships, upcoming deadlines
 
 ### /intake — Contact Intake
