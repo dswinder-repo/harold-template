@@ -24,6 +24,9 @@ build/
 *.pem
 **/credentials.json
 **/service-account*.json
+# Agent sign-in files (scheduled jobs keep them in repository secrets, never here)
+**/auth.json
+**/oauth_creds.json
 # The env templates are meant to be committed: they hold no values.
 !.env.example
 

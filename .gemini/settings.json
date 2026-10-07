@@ -1,0 +1,46 @@
+{
+  "context": {
+    "fileName": ["AGENTS.md", "GEMINI.md"]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "harold-boot",
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" boot --via=gemini",
+            "timeout": 60000,
+            "description": "Harold: load the workspace context (bin/harold boot)"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "name": "harold-close",
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" close --via=gemini",
+            "timeout": 240000,
+            "description": "Harold: check filing at the end of every turn, commit and push"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "name": "harold-close-final",
+            "type": "command",
+            "command": "\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/bin/harold\" close --final --via=gemini --detach",
+            "timeout": 5000,
+            "description": "Harold: final close (runs detached: Gemini CLI does not wait for SessionEnd hooks)"
+          }
+        ]
+      }
+    ]
+  }
+}

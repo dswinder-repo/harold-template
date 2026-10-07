@@ -1,0 +1,4 @@
+#!/bin/sh
+# Cline SessionShutdown hook (Cline runs .clinerules/hooks/<HookName> with the event as JSON on stdin). Harold final close (Cline CLI; the VS Code extension has no such hook).
+# bin/harold resolves the workspace from its own path, so this works from any working directory.
+exec "$(dirname "$0")/../../bin/harold" close --final --via=cline --detach

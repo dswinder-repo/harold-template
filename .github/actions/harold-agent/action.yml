@@ -1,0 +1,268 @@
+name: Harold agent
+description: >-
+  Runs a scheduled job's prompt with the agent that repository variable HAROLD_AGENT names, on your
+  subscription when you have one and an API key only when you don't. Used by morning-brief.yml and
+  housekeeping.yml; README.md, "Scheduled jobs in the cloud", lists each agent and its one-time setup.
+
+# Every agent gets the same prompt, runs at the repository root, and may run only the shell commands in
+# `commands` (bin/harold and a few read-only helpers). Where a CLI cannot restrict its shell to a list, the
+# note says so. The agent's sandbox may block git and the network; the workflow's Finish step commits and
+# pushes outside the agent either way.
+#
+# Sign-in files (codex, gemini, grok on a subscription): restored from the secret, or from the renewed copy
+# an earlier run kept in the Actions cache, encrypted; a renewed copy is saved after the run
+# (bin/harold-agent-auth explains why and how).
+
+inputs:
+  agent: { description: "claude | codex | cursor | gemini | copilot | grok | kimi | qwen | custom", default: claude }
+  model: { description: "Optional model name for the agent (HAROLD_AGENT_MODEL)", default: "" }
+  base-url: { description: "Optional endpoint for kimi or qwen (HAROLD_AGENT_BASE_URL)", default: "" }
+  prompt-file: { description: "The prompt", required: true }
+  log-file: { description: "Where the agent's output goes", required: true }
+  max-turns: { description: "Turn limit, for the agents that take one (claude, grok)", default: "80" }
+  commands: { description: "Comma-separated shell command prefixes the agent may run", default: "bin/harold,cat,date" }
+  # Subscription credentials (preferred) and API keys. Pass the repository secrets; empty ones are ignored.
+  claude-code-oauth-token: { default: "" }
+  anthropic-api-key: { default: "" }
+  codex-auth-json: { default: "" }
+  openai-api-key: { default: "" }
+  cursor-api-key: { default: "" }
+  gemini-oauth-creds: { default: "" }
+  gemini-api-key: { default: "" }
+  copilot-github-token: { default: "" }
+  grok-auth-json: { default: "" }
+  xai-api-key: { default: "" }
+  kimi-api-key: { default: "" }
+  qwen-coding-plan-key: { default: "" }
+  # Claude Code with another model provider (an Anthropic-compatible endpoint, e.g. a coding plan)
+  anthropic-base-url: { default: "" }
+  anthropic-auth-token: { default: "" }
+  anthropic-model: { default: "" }
+  # agent: custom
+  custom-command: { description: "HAROLD_AGENT_CMD: reads the prompt on stdin (its path is also in $HAROLD_PROMPT_FILE)", default: "" }
+  custom-install: { description: "HAROLD_AGENT_INSTALL: optional command that installs the CLI", default: "" }
+  custom-secrets: { description: "HAROLD_AGENT_SECRETS: secret names to export, or NAME:~/path to write as a file", default: "" }
+  all-secrets: { description: "toJSON(secrets), passed only for a custom agent that names secrets", default: "" }
+
+runs:
+  using: composite
+  steps:
+    - name: Pick the credential (subscription first)
+      id: creds
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        CLAUDE_SUB: ${{ inputs.claude-code-oauth-token }}
+        CLAUDE_KEY: ${{ inputs.anthropic-api-key }}
+        CODEX_SUB: ${{ inputs.codex-auth-json }}
+        CODEX_KEY: ${{ inputs.openai-api-key }}
+        CURSOR_KEY: ${{ inputs.cursor-api-key }}
+        GEMINI_SUB: ${{ inputs.gemini-oauth-creds }}
+        GEMINI_KEY: ${{ inputs.gemini-api-key }}
+        COPILOT_SUB: ${{ inputs.copilot-github-token }}
+        GROK_SUB: ${{ inputs.grok-auth-json }}
+        GROK_KEY: ${{ inputs.xai-api-key }}
+        KIMI_KEY: ${{ inputs.kimi-api-key }}
+        QWEN_SUB: ${{ inputs.qwen-coding-plan-key }}
+        PROVIDER_URL: ${{ inputs.anthropic-base-url }}
+        PROVIDER_TOKEN: ${{ inputs.anthropic-auth-token }}
+        CUSTOM_CMD: ${{ inputs.custom-command }}
+      run: |
+        signin=""; file=""
+        if [ "$AGENT" = claude ] && [ -n "$PROVIDER_URL" ]; then
+          # Claude Code with another model provider: its coding plan or key is the credential.
+          if [ -z "$PROVIDER_TOKEN" ]; then echo "::error::ANTHROPIC_BASE_URL is set, so Claude Code talks to another provider; add that provider's key as repository secret ANTHROPIC_AUTH_TOKEN."; exit 1; fi
+          echo "auth=provider" >> "$GITHUB_OUTPUT"; echo "Agent: claude, with another model provider (ANTHROPIC_BASE_URL)"; exit 0
+        fi
+        case "$AGENT" in
+          claude)  sub="$CLAUDE_SUB"; key="$CLAUDE_KEY"
+                   how="With a Claude subscription (Pro, Max): run 'claude setup-token' and add the token as repository secret CLAUDE_CODE_OAUTH_TOKEN. Without one: add ANTHROPIC_API_KEY." ;;
+          codex)   sub="$CODEX_SUB"; key="$CODEX_KEY"; signin=codex; file="$HOME/.codex/auth.json"
+                   how="With a ChatGPT subscription: sign in once with 'codex login' into a separate folder and add that auth.json as repository secret CODEX_AUTH_JSON. Without one: add OPENAI_API_KEY." ;;
+          cursor)  sub="$CURSOR_KEY"; key=""
+                   how="Add repository secret CURSOR_API_KEY, a User API key from your Cursor account (cursor.com/dashboard/integrations)." ;;
+          gemini)  sub="$GEMINI_SUB"; key="$GEMINI_KEY"; signin=gemini; file="$HOME/.gemini/oauth_creds.json"
+                   how="With a Google AI subscription: sign in once with Gemini CLI ('Sign in with Google') and add ~/.gemini/oauth_creds.json as repository secret GEMINI_OAUTH_CREDS. Without one: add GEMINI_API_KEY." ;;
+          copilot) sub="$COPILOT_SUB"; key=""
+                   how="Add repository secret COPILOT_GITHUB_TOKEN, a fine-grained personal access token with the 'Copilot Requests' permission (Copilot CLI needs a Copilot plan)." ;;
+          grok)    sub="$GROK_SUB"; key="$GROK_KEY"; signin=grok; file="$HOME/.grok/auth.json"
+                   how="With SuperGrok: sign in once with 'grok login' into a separate GROK_HOME and add its auth.json as repository secret GROK_AUTH_JSON. Without one: add XAI_API_KEY." ;;
+          kimi)    sub="$KIMI_KEY"; key=""
+                   how="Add repository secret KIMI_API_KEY: a Kimi Code key (subscription), or a Moonshot platform key with HAROLD_AGENT_BASE_URL set to its endpoint." ;;
+          qwen)    sub="$QWEN_SUB"; key=""
+                   how="With an Alibaba Cloud Coding Plan: add its key (sk-sp-...) as repository secret QWEN_CODING_PLAN_KEY. Without one: use HAROLD_AGENT=custom with your provider's key." ;;
+          custom)  if [ -z "$CUSTOM_CMD" ]; then echo "::error::HAROLD_AGENT is custom but repository variable HAROLD_AGENT_CMD is empty. Set it to the command that reads the prompt on stdin (README.md, Any other agent CLI)."; exit 1; fi
+                   echo "auth=custom" >> "$GITHUB_OUTPUT"; echo "Agent: custom ($CUSTOM_CMD)"; exit 0 ;;
+          *) echo "::error::Repository variable HAROLD_AGENT is '$AGENT'. Use claude, codex, cursor, gemini, copilot, grok, kimi, qwen or custom (or delete it for claude)."; exit 1 ;;
+        esac
+        if [ -n "$sub" ]; then auth=subscription; elif [ -n "$key" ]; then auth=api-key
+        else echo "::error::No model credential for $AGENT. $how"; exit 1; fi
+        echo "auth=$auth" >> "$GITHUB_OUTPUT"
+        if [ "$auth" = subscription ] && [ -n "$signin" ]; then echo "signin=$signin" >> "$GITHUB_OUTPUT"; echo "signin-file=$file" >> "$GITHUB_OUTPUT"; fi
+        echo "Agent: $AGENT, signed in with $([ "$auth" = subscription ] && echo 'your subscription' || echo 'an API key')"
+
+    - uses: actions/setup-node@v4
+      with: { node-version: 22 }
+
+    - name: Restore a renewed sign-in (Actions cache)
+      if: ${{ steps.creds.outputs.signin != '' }}
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/harold-signin-${{ steps.creds.outputs.signin }}.enc
+        key: harold-signin-${{ steps.creds.outputs.signin }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: harold-signin-${{ steps.creds.outputs.signin }}-
+
+    - name: Restore the sign-in file
+      if: ${{ steps.creds.outputs.signin != '' }}
+      shell: bash
+      env:
+        HAROLD_SIGNIN_NAME: ${{ steps.creds.outputs.signin }}
+        HAROLD_SIGNIN_FILE: ${{ steps.creds.outputs.signin-file }}
+        HAROLD_SIGNIN_SECRET: ${{ steps.creds.outputs.signin == 'codex' && inputs.codex-auth-json || steps.creds.outputs.signin == 'gemini' && inputs.gemini-oauth-creds || inputs.grok-auth-json }}
+      run: bin/harold-agent-auth restore
+
+    - name: Run the agent
+      id: run
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        AUTH: ${{ steps.creds.outputs.auth }}
+        MODEL: ${{ inputs.model }}
+        BASE_URL: ${{ inputs.base-url }}
+        PROMPT_FILE: ${{ inputs.prompt-file }}
+        LOG: ${{ inputs.log-file }}
+        MAX_TURNS: ${{ inputs.max-turns }}
+        COMMANDS: ${{ inputs.commands }}
+        IN_CLAUDE_SUB: ${{ inputs.claude-code-oauth-token }}
+        IN_CLAUDE_KEY: ${{ inputs.anthropic-api-key }}
+        IN_CURSOR_KEY: ${{ inputs.cursor-api-key }}
+        IN_GEMINI_KEY: ${{ inputs.gemini-api-key }}
+        IN_COPILOT_SUB: ${{ inputs.copilot-github-token }}
+        IN_GROK_KEY: ${{ inputs.xai-api-key }}
+        IN_KIMI_KEY: ${{ inputs.kimi-api-key }}
+        IN_QWEN_SUB: ${{ inputs.qwen-coding-plan-key }}
+        IN_PROVIDER_URL: ${{ inputs.anthropic-base-url }}
+        IN_PROVIDER_TOKEN: ${{ inputs.anthropic-auth-token }}
+        IN_PROVIDER_MODEL: ${{ inputs.anthropic-model }}
+        IN_CUSTOM_CMD: ${{ inputs.custom-command }}
+        IN_CUSTOM_INSTALL: ${{ inputs.custom-install }}
+        HAROLD_AGENT_SECRETS: ${{ inputs.custom-secrets }}
+        HAROLD_ALL_SECRETS: ${{ inputs.all-secrets }}
+      run: |
+        # Each agent's process gets only its own credential: keep them in unexported shell variables, then
+        # export the one the chosen agent needs.
+        export -n IN_CLAUDE_SUB IN_CLAUDE_KEY IN_CURSOR_KEY IN_GEMINI_KEY IN_COPILOT_SUB IN_GROK_KEY IN_KIMI_KEY IN_QWEN_SUB \
+          IN_PROVIDER_URL IN_PROVIDER_TOKEN IN_PROVIDER_MODEL IN_CUSTOM_CMD IN_CUSTOM_INSTALL HAROLD_ALL_SECRETS
+        # The command allowlist, in each CLI's own rule syntax.
+        IFS=',' read -ra CMDS <<< "$COMMANDS"
+        allow_claude="Read,Glob,Grep,Write,Edit,WebSearch,WebFetch"; allow_gemini="web_fetch,google_web_search"; allow_qwen="web_fetch"; copilot_args=(); grok_args=()
+        for c in "${CMDS[@]}"; do c="$(echo "$c" | xargs)"; [ -n "$c" ] || continue
+          allow_claude+=",Bash($c *)"; allow_qwen+=",Bash($c *)"; allow_gemini+=",run_shell_command($c)"
+          copilot_args+=(--allow-tool "shell($c:*)"); grok_args+=(--allow "Bash($c *)")
+        done
+        fail() { tail -40 "$LOG"; echo "::error::the $AGENT run failed"; exit 1; }
+        case "$AGENT" in
+          claude)
+            # Claude Code uses ANTHROPIC_API_KEY ahead of the subscription token when both are set, so only one
+            # credential is ever exported. Another provider: its endpoint and key (sent as a bearer token).
+            if [ "$AUTH" = provider ]; then
+              export ANTHROPIC_BASE_URL="$IN_PROVIDER_URL" ANTHROPIC_AUTH_TOKEN="$IN_PROVIDER_TOKEN"
+              MODEL="${MODEL:-$IN_PROVIDER_MODEL}"; [ -z "$MODEL" ] || export ANTHROPIC_MODEL="$MODEL"
+            elif [ -n "$IN_CLAUDE_SUB" ]; then export CLAUDE_CODE_OAUTH_TOKEN="$IN_CLAUDE_SUB"; else export ANTHROPIC_API_KEY="$IN_CLAUDE_KEY"; fi
+            npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+            claude -p "$(cat "$PROMPT_FILE")" --output-format text --max-turns "$MAX_TURNS" ${MODEL:+--model "$MODEL"} \
+              --permission-mode acceptEdits --allowedTools "$allow_claude" \
+              --strict-mcp-config --mcp-config '{"mcpServers":{}}' > "$LOG" 2>&1 || fail ;;
+          codex)
+            [ "$AUTH" = subscription ] || { echo "API key: the next step runs openai/codex-action."; exit 0; }
+            npm install -g @openai/codex >/dev/null 2>&1
+            # Codex's Linux sandbox (bubblewrap) needs unprivileged user namespaces, which newer Ubuntu runner
+            # images restrict; the official openai/codex-action makes the same two settings.
+            [ "$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 1)" = 1 ] || sudo sysctl -w kernel.unprivileged_userns_clone=1
+            [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 0 ] || sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            # The workspace-write sandbox, not a command list, is what limits Codex here.
+            codex exec --skip-git-repo-check --sandbox workspace-write -c 'web_search="live"' ${MODEL:+--model "$MODEL"} - < "$PROMPT_FILE" > "$LOG" 2>&1 || fail ;;
+          cursor)
+            export CURSOR_API_KEY="$IN_CURSOR_KEY"
+            curl https://cursor.com/install -fsS | bash >/dev/null 2>&1
+            export PATH="$HOME/.cursor/bin:$HOME/.local/bin:$PATH"
+            # --force approves every command: Cursor's headless CLI has no per-command allowlist flag.
+            agent -p --force --trust --output-format text ${MODEL:+--model "$MODEL"} "$(cat "$PROMPT_FILE")" > "$LOG" 2>&1 || fail ;;
+          gemini)
+            if [ "$AUTH" = subscription ]; then export GOOGLE_GENAI_USE_GCA=true; else export GEMINI_API_KEY="$IN_GEMINI_KEY"; fi
+            npm install -g @google/gemini-cli >/dev/null 2>&1
+            gemini --approval-mode auto_edit --allowed-tools "$allow_gemini" ${MODEL:+--model "$MODEL"} -p "$(cat "$PROMPT_FILE")" > "$LOG" 2>&1 || fail ;;
+          copilot)
+            export COPILOT_GITHUB_TOKEN="$IN_COPILOT_SUB"
+            npm install -g @github/copilot >/dev/null 2>&1
+            copilot -p "$(cat "$PROMPT_FILE")" --allow-tool write "${copilot_args[@]}" --allow-all-urls ${MODEL:+--model "$MODEL"} > "$LOG" 2>&1 || fail ;;
+          grok)
+            [ "$AUTH" = subscription ] || export XAI_API_KEY="$IN_GROK_KEY"
+            curl -fsSL https://x.ai/cli/install.sh | bash >/dev/null 2>&1
+            export PATH="$HOME/.grok/bin:$HOME/.local/bin:$PATH"
+            grok -p "$(cat "$PROMPT_FILE")" --trust --no-auto-update --max-turns "$MAX_TURNS" ${MODEL:+--model "$MODEL"} \
+              --allow Read --allow Grep --allow Edit --allow Write --allow WebSearch --allow WebFetch "${grok_args[@]}" > "$LOG" 2>&1 || fail ;;
+          kimi)
+            # Kimi Code CLI reads its provider from ~/.kimi/config.toml; KIMI_API_KEY overrides the key there.
+            export KIMI_API_KEY="$IN_KIMI_KEY"
+            npm install -g @moonshot-ai/kimi-code >/dev/null 2>&1
+            mkdir -p ~/.kimi && cat > ~/.kimi/config.toml <<TOML
+        default_model = "harold"
+
+        [providers.harold]
+        type = "kimi"
+        base_url = "${BASE_URL:-https://api.kimi.com/coding/v1}"
+        api_key = ""
+
+        [models.harold]
+        provider = "harold"
+        model = "${MODEL:-kimi-for-coding}"
+        max_context_size = 262144
+        TOML
+            # --print approves every tool call (Kimi's AFK mode): Kimi has no per-command allowlist flag.
+            kimi --print --output-format text < "$PROMPT_FILE" > "$LOG" 2>&1 || fail ;;
+          qwen)
+            # Alibaba Cloud Coding Plan, configured as its docs show for CI (~/.qwen/settings.json + the key's env var).
+            export BAILIAN_CODING_PLAN_API_KEY="$IN_QWEN_SUB"
+            npm install -g @qwen-code/qwen-code@latest >/dev/null 2>&1
+            QM="${MODEL:-qwen3-coder-plus}"; QU="${BASE_URL:-https://coding-intl.dashscope.aliyuncs.com/v1}"
+            mkdir -p ~/.qwen && node -e 'const [m,u]=process.argv.slice(1);process.stdout.write(JSON.stringify({modelProviders:{openai:[{id:m,name:m+" (Coding Plan)",baseUrl:u,envKey:"BAILIAN_CODING_PLAN_API_KEY"}]},security:{auth:{selectedType:"openai"}},model:{name:m}},null,2))' "$QM" "$QU" > ~/.qwen/settings.json
+            qwen --approval-mode auto-edit --allowed-tools "$allow_qwen" --model "$QM" -p "$(cat "$PROMPT_FILE")" > "$LOG" 2>&1 || fail ;;
+          custom)
+            if [ -n "$HAROLD_AGENT_SECRETS" ]; then
+              exports="$(HAROLD_ALL_SECRETS="$HAROLD_ALL_SECRETS" bin/harold-agent-auth env)" || exit 1
+              eval "$exports"; unset exports
+            fi
+            unset HAROLD_ALL_SECRETS
+            if [ -n "$IN_CUSTOM_INSTALL" ]; then bash -c "$IN_CUSTOM_INSTALL" >/dev/null 2>&1 || { echo "::error::HAROLD_AGENT_INSTALL failed"; exit 1; }; fi
+            export PATH="$HOME/.local/bin:$PATH" HAROLD_PROMPT_FILE="$PROMPT_FILE" HAROLD_MODEL="$MODEL" HAROLD_COMMANDS="$COMMANDS"
+            bash -c "$IN_CUSTOM_CMD" < "$PROMPT_FILE" > "$LOG" 2>&1 || fail ;;
+        esac
+        tail -20 "$LOG"
+
+    - name: Run the agent (Codex with an API key, through the official action)
+      if: ${{ inputs.agent == 'codex' && steps.creds.outputs.auth == 'api-key' }}
+      uses: openai/codex-action@v1
+      with:
+        openai-api-key: ${{ inputs.openai-api-key }}
+        prompt-file: ${{ inputs.prompt-file }}
+        sandbox: workspace-write
+        model: ${{ inputs.model }}
+        codex-args: '["-c", "web_search=\"live\""]'
+
+    - name: Keep a renewed sign-in for the next run (encrypted)
+      id: save
+      if: ${{ always() && steps.creds.outputs.signin != '' }}
+      shell: bash
+      env:
+        HAROLD_SIGNIN_NAME: ${{ steps.creds.outputs.signin }}
+        HAROLD_SIGNIN_FILE: ${{ steps.creds.outputs.signin-file }}
+        HAROLD_SIGNIN_SECRET: ${{ steps.creds.outputs.signin == 'codex' && inputs.codex-auth-json || steps.creds.outputs.signin == 'gemini' && inputs.gemini-oauth-creds || inputs.grok-auth-json }}
+      run: bin/harold-agent-auth save
+
+    - name: Save the renewed sign-in to the cache
+      if: ${{ always() && steps.save.outputs.changed == 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/harold-signin-${{ steps.creds.outputs.signin }}.enc
+        key: harold-signin-${{ steps.creds.outputs.signin }}-${{ github.run_id }}-${{ github.run_attempt }}

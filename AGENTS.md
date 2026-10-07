@@ -14,16 +14,31 @@ bin/harold boot
 
 It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit, or output starting `⛔ HAROLD BOOT REFUSED`), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. The operator never types it.
 
-Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Where a harness has lifecycle hooks, boot and close run automatically. The workspace ships ready-made wiring for these, as examples:
+Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Every harness with lifecycle hooks is wired, so boot and close run on their own; these are the files (sources and setup: README, "Every harness with lifecycle hooks is wired"):
 
-| Tool | Hook file | Session start | End of every turn | Session end |
+| Harness | Wiring | Session start → boot | End of every turn → close | Session end → close --final |
 |------|-----------|---------------|-------------------|-------------|
-| Claude Code | `.claude/settings.json` | `SessionStart` → boot | `Stop` → close | `SessionEnd` → close --final |
-| Codex | `.codex/hooks.json` (trust it once with `/hooks`) | `SessionStart` → boot | `Stop` → close | `SessionEnd` → close --final |
-| Cursor | `.cursor/hooks.json` | `sessionStart` → boot | `stop` → close | `sessionEnd` → close --final |
-| Claude desktop app (Cowork) | the Harold plugin (`tools/harold-plugin/`) | `boot-harold` skill + hook | `Stop` → close | `SessionEnd` → close --final |
+| Claude Code | `.claude/settings.json` | `SessionStart` | `Stop` | `SessionEnd` |
+| Claude desktop app (Cowork) | plugin `tools/harold-plugin/` | `boot-harold` skill + `SessionStart` | `Stop` | `SessionEnd` |
+| Codex | `.codex/hooks.json` (trust once with `/hooks`) | `SessionStart` | `Stop` | `SessionEnd` |
+| Cursor | `.cursor/hooks.json` | `sessionStart` | `stop` | `sessionEnd` |
+| Gemini CLI | `.gemini/settings.json` | `SessionStart` | `AfterAgent` | `SessionEnd` |
+| Qwen Code | `.qwen/settings.json` | `SessionStart` | `Stop` | `SessionEnd` |
+| GitHub Copilot CLI | `.github/copilot/settings.json` | `sessionStart` | `agentStop` | `sessionEnd` |
+| Grok Build | `.grok/hooks/harold.json` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| Kimi Code CLI | `tools/harness-hooks/kimi-config.toml`, copied into `~/.kimi/config.toml` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| goose | `.agents/plugins/harold/` | `SessionStart` (registers only *) | `Stop` | `SessionEnd` |
+| Hermes Agent | `tools/harness-hooks/hermes-config.yaml`, merged into `~/.hermes/config.yaml` | first `pre_llm_call` | `pre_verify` + `on_session_end` | `on_session_finalize` |
+| Cline | `.clinerules/hooks/` | `TaskStart` | `TaskComplete` (cannot block: the next `TaskStart` lists what is unfiled) | `SessionShutdown` |
+| opencode | plugin `.opencode/plugins/harold.js` | first request of a session | `session.idle` | session deleted or opencode quits |
+| Amp | plugin `.amp/plugins/harold.ts` | first `agent.start` of a thread | `agent.end` | plugin stops |
+| OpenClaw | plugin `tools/openclaw-plugin/` | first `before_prompt_build` | `before_agent_finalize` + `agent_end` | `session_end` |
 
-If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again. To wire another harness's hooks, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
+\* Grok Build, Kimi Code and goose never show session-start hook output to the model. There the hook only registers the session: **run `bin/harold boot` yourself as your first action**. That run prints the context for the same session, and until it has run, close blocks the turn and tells you to.
+
+Checked at the source and found without session or turn hooks: Zed's agent, and Continue CLI (its hook code does not fire session or stop events yet). Not verifiable from a public source, so not wired: Windsurf, Kiro, Antigravity CLI. In those, the fallback below applies.
+
+If boot's output is already in your context, it ran: do not run it again. **In a tool without hooks, or where they did not fire, you run `bin/harold boot` yourself as your first action, and `bin/harold close` as your last action of every turn** (`bin/harold close --final` when the session ends). Read what close prints: if it lists problems, fix them and run it again. To wire a harness not listed here, run the same three commands from the workspace root with no `--via` flag (add `< /dev/null` if the hook passes input): boot exits 0 with the context to load, or 2 with `⛔ HAROLD BOOT REFUSED`; close exits 0 when filed and saved, 2 with the list of what is missing, 1 when only the push failed.
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
@@ -195,13 +210,13 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 ## System Rules
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
-- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the optional hosted MCP server that reaches the knowledge base and CRM from any chat app; boot and close do not run there), `harold-plugin` (Cowork plugin), `visualizer` (Expedition HQ, local-only).
+- **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the optional hosted MCP server that reaches the knowledge base and CRM from any chat app; boot and close do not run there), `harold-plugin` (Cowork plugin), `openclaw-plugin` (OpenClaw plugin), `harness-hooks` (user-level hook snippets for Kimi Code and Hermes Agent), `visualizer` (Expedition HQ, local-only).
 - **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
 - **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`), along with settings such as `HAROLD_TZ`, `HAROLD_BRIEF_TIME` and `HAROLD_NO_LOG_TYPES`. `bin/harold close` refuses to commit anything that looks like a key.
-- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with a ready-made switch for Claude Code, Codex and Cursor, or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
+- **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with ready-made presets for Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI, Grok Build, Kimi Code and Qwen Code, a custom command for any other CLI, and the agent's subscription used first wherever there is one; or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
 
 ## CRM Filing Protocol (MANDATORY — all three, every time)

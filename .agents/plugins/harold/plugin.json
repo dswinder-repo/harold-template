@@ -1,0 +1,5 @@
+{
+  "name": "harold",
+  "version": "1.0.0",
+  "description": "Harold: bin/harold boot at session start, close at the end of every turn (blocks the turn while filing is incomplete), close --final at session end"
+}

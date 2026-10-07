@@ -21,9 +21,28 @@ name: Harold housekeeping
 #   HAROLD_TZ   your IANA time zone, e.g. America/Chicago (unset = UTC here, and every run warns)
 # If a run fails (a missing secret, a model error), the next wake-up tries again, for the rest of that day.
 #
-# WHICH AI TOOL DOES IT. The same switch and secrets as morning-brief.yml: repository variable HAROLD_AGENT
-# (claude, the default | codex | cursor), secret CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (claude),
-# OPENAI_API_KEY (codex) or CURSOR_API_KEY (cursor); optional HAROLD_AGENT_MODEL for codex or cursor.
+# WHICH AI TOOL DOES IT, AND HOW IT SIGNS IN. Repository variable HAROLD_AGENT picks the agent (unset = claude):
+# claude, codex, cursor, gemini, copilot, grok, kimi, qwen, or custom (any other headless agent CLI, through
+# HAROLD_AGENT_CMD). Every agent runs on your subscription if you have one; an API key is only for when you
+# don't, and when both secrets are present the subscription is used. The secrets, per agent:
+#   claude   CLAUDE_CODE_OAUTH_TOKEN (Pro/Max, from `claude setup-token`) | ANTHROPIC_API_KEY
+#            or another provider's coding plan: ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (+ ANTHROPIC_MODEL)
+#   codex    CODEX_AUTH_JSON (ChatGPT plan: auth.json of a separate `codex login`) | OPENAI_API_KEY
+#   cursor   CURSOR_API_KEY (a User API key from your Cursor account)
+#   gemini   GEMINI_OAUTH_CREDS (Google sign-in: ~/.gemini/oauth_creds.json) | GEMINI_API_KEY
+#   copilot  COPILOT_GITHUB_TOKEN (fine-grained token with "Copilot Requests"; needs a Copilot plan)
+#   grok     GROK_AUTH_JSON (SuperGrok: auth.json of a separate `grok login`) | XAI_API_KEY
+#   kimi     KIMI_API_KEY (a Kimi Code key)        qwen  QWEN_CODING_PLAN_KEY (Alibaba Cloud Coding Plan)
+#   custom   HAROLD_AGENT_CMD, optional HAROLD_AGENT_INSTALL and HAROLD_AGENT_SECRETS (variables)
+# Optional variables: HAROLD_AGENT_MODEL (a model name, any agent), HAROLD_AGENT_BASE_URL (kimi, qwen).
+# README.md → "Scheduled jobs in the cloud" has the one-time commands and what is not yet tested.
+# .github/actions/harold-agent runs whichever you pick; the gate, the prompt
+# (harold/housekeeping-prompt.md) and the finish step are the same for all.
+#
+# ONE AT A TIME FOR SIGN-IN FILES. Codex, Gemini CLI and Grok keep a subscription sign-in in a file that the
+# agent renews by itself (a Codex renewal retires the previous token). The job keeps the renewed copy in the
+# Actions cache, encrypted (bin/harold-agent-auth), and with those agents this workflow and morning-brief.yml
+# share one concurrency group, so two runs never renew the same sign-in at once.
 #
 # THE CRM. The agent here gets no MCP servers and no CRM credentials, so the full audit's CRM consistency
 # step is skipped (the audit says so, and leaves you a note when vault people cards changed). To run that
@@ -62,7 +81,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: housekeeping
+  # Codex, Gemini CLI and Grok on a subscription: shared with morning-brief.yml (see above).
+  group: ${{ contains(fromJSON('["codex","gemini","grok"]'), vars.HAROLD_AGENT) && 'harold-agent-signin' || 'housekeeping' }}
   cancel-in-progress: false
 
 jobs:
@@ -93,80 +113,47 @@ jobs:
           if [ "$FORCE" = "true" ]; then set -- "$@" --force; fi
           bin/harold housekeeping "$@" < /dev/null
 
-      - name: Require model credentials (for the agent HAROLD_AGENT names)
+      - name: Prepare the prompt
         if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
-        env:
-          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          APIKEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI: ${{ secrets.OPENAI_API_KEY }}
-          CURSORKEY: ${{ secrets.CURSOR_API_KEY }}
-          DUE_JOB: ${{ steps.gate.outputs.job }}
-        run: |
-          case "$HAROLD_AGENT" in
-            claude)
-              if [ -z "$OAUTH" ] && [ -z "$APIKEY" ]; then
-                echo "::error::No model credential for claude. Add repository secret CLAUDE_CODE_OAUTH_TOKEN (from 'claude setup-token') or ANTHROPIC_API_KEY."; exit 1
-              fi ;;
-            codex)
-              if [ -z "$OPENAI" ]; then echo "::error::No model credential for codex. Add repository secret OPENAI_API_KEY."; exit 1; fi ;;
-            cursor)
-              if [ -z "$CURSORKEY" ]; then echo "::error::No model credential for cursor. Add repository secret CURSOR_API_KEY."; exit 1; fi ;;
-            *)
-              echo "::error::Repository variable HAROLD_AGENT is '$HAROLD_AGENT'. Use claude, codex or cursor (or delete it for claude)."; exit 1 ;;
-          esac
-          echo "Agent: $HAROLD_AGENT; job: $DUE_JOB"
-
-      - uses: actions/setup-node@v4
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
-        with: { node-version: 22 }
-
-      - name: Do the job with Claude Code
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT == 'claude' }}
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
-          claude -p "$(cat harold/housekeeping-prompt.md)" \
-            --output-format text \
-            --max-turns 200 \
-            --permission-mode acceptEdits \
-            --allowedTools "Read,Glob,Grep,Write,Edit,WebSearch,WebFetch,Bash(bin/harold *),Bash(cat *),Bash(date *),Bash(ls *),Bash(wc *),Bash(mkdir *),Bash(git log *),Bash(git status *),Bash(git diff *)" \
-            --strict-mcp-config --mcp-config '{"mcpServers":{}}' > /tmp/housekeeping-run.log 2>&1 || { tail -40 /tmp/housekeeping-run.log; echo "::error::housekeeping run failed"; exit 1; }
-          tail -20 /tmp/housekeeping-run.log
-
-      # Codex and Cursor: the same prompt, with one note in front. Their sandboxes may keep the agent away
-      # from git and the network, so the agent's own `housekeeping finish` can fail; the Finish step below
-      # runs it again outside the agent either way.
-      - name: Prepare the prompt (codex, cursor)
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT != 'claude' }}
         run: |
           {
-            echo "Note for this run: the workflow runs bin/harold housekeeping finish again after you, outside your sandbox. If housekeeping finish fails only because git or the network is not reachable from your sandbox, stop there: the recorded trigger, the daily note and your edits are what matter."
+            echo "Note for this run: the workflow runs bin/harold housekeeping finish again after you, outside any sandbox. If housekeeping finish fails only because git or the network is not reachable from where you run, stop there: the recorded trigger, the daily note and your edits are what matter."
             echo
             cat harold/housekeeping-prompt.md
           } > "$RUNNER_TEMP/housekeeping-prompt.md"
 
-      - name: Do the job with Codex
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT == 'codex' }}
-        uses: openai/codex-action@v1
+      - name: Do the job with the agent HAROLD_AGENT names
+        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' }}
+        uses: ./.github/actions/harold-agent
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: ${{ runner.temp }}/housekeeping-prompt.md
-          sandbox: workspace-write
+          agent: ${{ env.HAROLD_AGENT }}
           model: ${{ vars.HAROLD_AGENT_MODEL }}
-          codex-args: '["-c", "web_search=\"live\""]'
-
-      - name: Do the job with Cursor
-        if: ${{ steps.gate.outputs.due == 'true' && env.DRY_RUN != 'true' && env.HAROLD_AGENT == 'cursor' }}
-        env:
-          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          MODEL: ${{ vars.HAROLD_AGENT_MODEL }}
-        run: |
-          curl https://cursor.com/install -fsS | bash >/dev/null 2>&1
-          export PATH="$HOME/.cursor/bin:$HOME/.local/bin:$PATH"
-          agent -p --force --trust --output-format text ${MODEL:+--model "$MODEL"} "$(cat "$RUNNER_TEMP/housekeeping-prompt.md")" > /tmp/housekeeping-run.log 2>&1 || { tail -40 /tmp/housekeeping-run.log; echo "::error::housekeeping run failed"; exit 1; }
-          tail -20 /tmp/housekeeping-run.log
+          base-url: ${{ vars.HAROLD_AGENT_BASE_URL }}
+          prompt-file: ${{ runner.temp }}/housekeeping-prompt.md
+          log-file: /tmp/housekeeping-run.log
+          max-turns: 200
+          commands: "bin/harold,cat,date,ls,wc,mkdir,git log,git status,git diff"
+          # Subscription first; the API key is for when you have none (README.md, Scheduled jobs in the cloud).
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic-base-url: ${{ secrets.ANTHROPIC_BASE_URL }}
+          anthropic-auth-token: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          anthropic-model: ${{ secrets.ANTHROPIC_MODEL || vars.ANTHROPIC_MODEL }}
+          codex-auth-json: ${{ secrets.CODEX_AUTH_JSON }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          cursor-api-key: ${{ secrets.CURSOR_API_KEY }}
+          gemini-oauth-creds: ${{ secrets.GEMINI_OAUTH_CREDS }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          copilot-github-token: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          grok-auth-json: ${{ secrets.GROK_AUTH_JSON }}
+          xai-api-key: ${{ secrets.XAI_API_KEY }}
+          kimi-api-key: ${{ secrets.KIMI_API_KEY }}
+          qwen-coding-plan-key: ${{ secrets.QWEN_CODING_PLAN_KEY }}
+          custom-command: ${{ vars.HAROLD_AGENT_CMD }}
+          custom-install: ${{ vars.HAROLD_AGENT_INSTALL }}
+          custom-secrets: ${{ vars.HAROLD_AGENT_SECRETS }}
+          # Only a custom agent that names secrets gets them, and only the ones it names (bin/harold-agent-auth).
+          all-secrets: ${{ vars.HAROLD_AGENT == 'custom' && vars.HAROLD_AGENT_SECRETS != '' && toJSON(secrets) || '' }}
 
       # Saves what the job did even if it ended unfinished (the checkout is thrown away after this run):
       # the problems go to harold/briefs/housekeeping-notes.md for the next brief, the job is recorded as
