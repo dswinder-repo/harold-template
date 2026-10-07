@@ -244,7 +244,7 @@ export async function relatedText(repo: HaroldRepo, query: string, today: string
   if (!q) return { text: "Give a note path, a title or a topic.", isError: true };
   const f = await repo.getText(GRAPH_PATH);
   if (!f) {
-    return { text: `${GRAPH_PATH} is not in ${repo.repo} @ ${repo.branch}, so links cannot be followed from a chat yet. It is written by \`bin/harold close\` in Harold 2.1 and later: update the workspace and let one session close (or run \`bin/harold-index graph-json\` and commit the file). Until then, use harold_search and harold_read.`, isError: true };
+    return { text: `${GRAPH_PATH} is not in ${repo.repo} @ ${repo.branch}, so links cannot be followed from a chat yet. It is written by \`bin/harold close\` in current versions of Harold: update the workspace (`bin/harold update`) and let one session close (or run \`bin/harold-index graph-json\` and commit the file). Until then, use harold_search and harold_read.`, isError: true };
   }
   const g = parseGraph(f.text, today);
   const depth = opts.depth === 2 ? 2 : 1;
