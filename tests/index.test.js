@@ -19,7 +19,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SRC = path.resolve(__dirname, '..');
-const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', 'graph.json', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '__pycache__']);
+const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', 'graph.json', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '.last-boot', '__pycache__']);
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
