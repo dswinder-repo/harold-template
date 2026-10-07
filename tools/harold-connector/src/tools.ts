@@ -3,12 +3,13 @@
 
 import type { McpServer, ServerContext, CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { MAX_RESULT_CHARS, noLogTypes, repoConfig } from "./config.js";
+import { MAX_RESULT_CHARS, noLogTypes, repoConfig, tz } from "./config.js";
 import * as crm from "./crm.js";
 import { HaroldRepo } from "./github.js";
 import * as graph from "./graph.js";
 import * as kb from "./kb.js";
 import { CATEGORIES, SEVERITIES } from "./learnings.js";
+import * as pulse from "./pulse.js";
 import * as stale from "./stale.js";
 import * as tasks from "./tasks.js";
 import type { FetchLike } from "./identity.js";
@@ -66,7 +67,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("harold_today", {
     title: "Harold: today",
-    description: "Start here when the conversation is about the owner's work day. Returns today's date in the owner's time zone (HAROLD_TZ; UTC if unset), today's morning brief draft if one exists (harold/briefs/<date>.md), the Current Alerts section of harold/alerts.md, the critical lessons from harold/learnings.jsonl, the housekeeping notes waiting in harold/briefs/housekeeping-notes.md, the five most recent daily notes with their first lines, and how to start the day (show the draft, ask what came in overnight, then the day's priorities).",
+    description: "Start here when the conversation is about the owner's work day. Returns today's date in the owner's time zone (HAROLD_TZ; UTC if unset), today's morning brief draft if one exists (harold/briefs/<date>.md), the Current Alerts section of harold/alerts.md, the critical lessons from harold/learnings.jsonl, the housekeeping notes waiting in harold/briefs/housekeeping-notes.md, the active projects that have gone quiet (as harold_pulse), the five most recent daily notes with their first lines, and how to start the day (show the draft, ask what came in overnight, then the day's priorities).",
     inputSchema: z.object({}),
     annotations: READ,
   }, async (_args, ctx) => guard(() => kb.today(deps.repoFor(ctx), now())));
@@ -113,6 +114,15 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     }),
     annotations: READ,
   }, async ({ query, depth, limit, all }, ctx) => guard(() => graph.relatedText(deps.repoFor(ctx), query, localParts(now()).iso, { depth, limit, all })));
+
+  server.registerTool("harold_pulse", {
+    title: "Harold: project pulse",
+    description: "Which projects have gone quiet: for each active project in harold/projects.md, its newest activity (a note linked to its card, a file in its folder, a daily or meeting note that names it, or a commit touching its folder) with what it was and its date, its next step (next_step: in the map entry or the card, or a 'Next step:' line in the card or the folder README; 'no next step recorded' otherwise), and a quiet flag when nothing happened in more than HAROLD_PULSE_DAYS days (default 14). Quiet projects first, with their next step; paused and archived projects are not judged. The same answer as `bin/harold pulse`, from harold/graph.json (as of the last session close), the project map and the GitHub commit history. Use it for \"which projects am I dropping\", next to crm_stale for people.",
+    inputSchema: z.object({
+      all: z.boolean().optional().describe("true: the next step of every active project too, and the paused and archived projects listed"),
+    }),
+    annotations: READ,
+  }, async ({ all }, ctx) => guard(() => pulse.pulseTool(deps.repoFor(ctx), localParts(now()).iso, tz(), { all })));
 
   server.registerTool("harold_person", {
     title: "Harold: look up a person",
@@ -361,7 +371,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 }
 
 export const TOOL_NAMES = [
-  "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
+  "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
   "harold_capture", "harold_note", "harold_update", "harold_learning", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
   "task_list", "task_create",
 ];
