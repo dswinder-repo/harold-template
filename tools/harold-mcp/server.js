@@ -41,6 +41,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
+import { cadenceSkipTypes, staleFromRows } from "./cadence.js";
 
 // Harold workspace root — env, else the workspace this server lives in (tools/harold-mcp/ → ../..)
 const HAROLD_BASE = process.env.HAROLD_ROOT || process.env.HAROLD_BASE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -64,7 +65,7 @@ const typeList = v => (v || "").split(",").map(s => s.trim().toLowerCase()).filt
 const NO_LOG_TYPES = typeList(process.env.HAROLD_NO_LOG_TYPES);
 // Contact types that never get staleness alerts: HAROLD_NO_CADENCE_TYPES (default: other), plus the
 // no-log types, whose last-contact date would otherwise look stale forever.
-const NO_CADENCE_TYPES = [...new Set([...typeList(process.env.HAROLD_NO_CADENCE_TYPES ?? "other"), ...NO_LOG_TYPES])];
+const NO_CADENCE_TYPES = cadenceSkipTypes(process.env.HAROLD_NO_CADENCE_TYPES, NO_LOG_TYPES);
 
 let _supabase = null;
 function getSupabase() {
@@ -75,155 +76,39 @@ function getSupabase() {
 }
 
 /**
- * Query CRM for contacts whose relationship is going stale — contacts
- * we HAVE a relationship with but haven't engaged recently.
- * This is the universal "freshness" detector: works for ANY contact type.
- *
- * IMPORTANT — Warmth vs Freshness:
- *   Warmth = relationship closeness (cold/lukewarm/warm/hot). A STATE label.
- *     - Cold = no connection, don't know them
- *     - Lukewarm = some connection, kind of know them
- *     - Warm = established relationship, know them well
- *     - Hot = actively engaged, things moving forward
- *   Freshness = recency of last contact. A TIME metric.
- *
- * Staleness alerts only make sense for contacts we actually have a
- * relationship with (lukewarm+). Cold contacts need an outreach strategy,
- * not a "you haven't talked to them" nudge. And the warmer the relationship,
- * the MORE urgent it is to maintain freshness — hot contacts going quiet
- * is a bigger problem than lukewarm ones.
+ * Query the CRM for contacts whose relationship is going stale: contacts we HAVE a relationship with
+ * (warmth Lukewarm or warmer) but have not engaged recently. The rule itself lives in ./cadence.js and is
+ * the same as the hosted connector's crm_stale: open pipeline entries only (closed_at null) for the stage
+ * cadence, and the skip types (HAROLD_NO_CADENCE_TYPES, HAROLD_NO_LOG_TYPES) match the contact's ONE type,
+ * never its labels.
  *
  * @param {number} staleDays - Base threshold for freshness (default 14)
  * @param {number} hotDays   - Threshold for hot contacts (default 7, tighter)
- * @returns {Object} Stale contacts with category, warmth, last interaction info
+ * @param {string} [type]    - Only this contact type
+ * @returns {Object} Stale contacts with type, warmth, last interaction info
  */
-async function queryStaleCrmContacts(staleDays = 14, hotDays = 7) {
+async function queryStaleCrmContacts(staleDays = 14, hotDays = 7, type) {
   const supabase = getSupabase();
   if (!supabase) return { contacts: [], source: "crm_unavailable" };
 
   try {
-    // Load pipeline stage cadence thresholds (pipeline-aware freshness)
-    const cadenceMap = {}; // { "Reached Out": 7, "Committed": 14, ... } — keyed by stage name
-    const cadenceToDays = { weekly: 7, biweekly: 14, monthly: 30, quarterly: 90 };
-    const { data: stages } = await supabase
-      .from("pipeline_stages")
-      .select("stage_name, default_cadence");
-    if (stages) {
-      for (const s of stages) {
-        if (s.default_cadence && cadenceToDays[s.default_cadence]) {
-          cadenceMap[s.stage_name] = cadenceToDays[s.default_cadence];
-        }
-      }
+    const { data: stages, error: stErr } = await supabase.from("pipeline_stages").select("stage_name, default_cadence");
+    if (stErr) throw stErr;
+    const rows = [];
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("contacts")
+        .select("id, name, org, category, warmth, status, priority, contact_pipelines ( stage, purpose, project, closed_at ), interactions ( occurred_at, type, subject )")
+        .in("status", ["active", "pending"])
+        .order("name")
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < PAGE) break;
     }
-
-    // Get active contacts with their categories and latest interaction
-    const { data: contacts, error: contactsErr } = await supabase
-      .from("contacts")
-      .select(`
-        id, name, org, category, warmth, status, priority,
-        contact_categories ( category_name ),
-        contact_pipelines ( stage, purpose, project ),
-        interactions ( occurred_at, type, subject )
-      `)
-      .in("status", ["active", "pending"])
-      .order("name");
-
-    if (contactsErr) throw contactsErr;
-    if (!contacts || !contacts.length) return { contacts: [], source: "crm_empty" };
-
-    const now = new Date();
-    const staleContacts = [];
-
-    for (const contact of contacts) {
-      // Determine categories (from junction table + legacy field)
-      const categories = (contact.contact_categories || []).map(cc => cc.category_name);
-      if (contact.category && !categories.includes(contact.category)) {
-        categories.push(contact.category);
-      }
-
-      // Skip non-outreach types (HAROLD_NO_CADENCE_TYPES, default other, plus HAROLD_NO_LOG_TYPES)
-      if (categories.every(c => NO_CADENCE_TYPES.includes(String(c).toLowerCase()))) continue;
-
-      const warmth = (contact.warmth || "").toLowerCase();
-
-      // COLD contacts don't get freshness alerts — they need outreach strategy, not nudges.
-      // We only track freshness for contacts we have some relationship with (lukewarm+).
-      if (warmth === "cold" || warmth === "") continue;
-
-      // Find most recent interaction
-      const interactions = contact.interactions || [];
-      let lastInteraction = null;
-      let lastInteractionDate = null;
-      if (interactions.length > 0) {
-        interactions.sort((a, b) => new Date(b.occurred_at) - new Date(a.occurred_at));
-        lastInteraction = interactions[0];
-        lastInteractionDate = new Date(lastInteraction.occurred_at);
-      }
-
-      // Calculate days since last interaction
-      const daysSince = lastInteractionDate
-        ? Math.ceil((now - lastInteractionDate) / (1000 * 60 * 60 * 24))
-        : null; // null = never contacted (in CRM)
-
-      // Freshness thresholds — pipeline cadence takes priority, then warmth-based:
-      //   1. If contact has pipeline stages with default_cadence → use the tightest one
-      //   2. Otherwise fall back to warmth-based thresholds:
-      //      Hot → hotDays (default 7)
-      //      Warm → staleDays (default 14)
-      //      Lukewarm → staleDays * 2 (default 28)
-      let threshold;
-
-      // Check junction table pipelines first, then legacy column
-      const pipelines = (contact.contact_pipelines || []);
-      let tightestCadence = null;
-      for (const cp of pipelines) {
-        const key = cp.stage;
-        if (cadenceMap[key] && (tightestCadence === null || cadenceMap[key] < tightestCadence)) {
-          tightestCadence = cadenceMap[key];
-        }
-      }
-
-      if (tightestCadence !== null) {
-        threshold = tightestCadence;
-      } else if (warmth === "hot") {
-        threshold = hotDays;
-      } else if (warmth === "warm") {
-        threshold = staleDays;
-      } else {
-        threshold = staleDays * 2; // lukewarm
-      }
-
-      // Is this contact going stale?
-      // If daysSince is null (never contacted in CRM), flag hot/warm contacts
-      // because we have a relationship but no recorded interactions — likely a data gap.
-      const isStale = daysSince === null
-        ? (warmth === "hot" || warmth === "warm")
-        : daysSince >= threshold;
-
-      if (isStale) {
-        const pipelineEntries = pipelines.length > 0
-          ? pipelines.map(cp => ({ stage: cp.stage, purpose: cp.purpose, project: cp.project }))
-          : [];
-
-        staleContacts.push({
-          id: contact.id,
-          name: contact.name,
-          org: contact.org || "",
-          categories,
-          warmth: contact.warmth || "",
-          pipelines: pipelineEntries,
-          pipelineEntries: pipelines.map(cp => ({ stage: cp.stage, purpose: cp.purpose, project: cp.project })),
-          priority: contact.priority || "medium",
-          status: contact.status,
-          daysSinceContact: daysSince,
-          lastInteractionType: lastInteraction?.type || null,
-          lastInteractionSubject: lastInteraction?.subject || null,
-          threshold,
-        });
-      }
-    }
-
-    return { contacts: staleContacts, source: "crm" };
+    if (!rows.length) return { contacts: [], source: "crm_empty" };
+    return { contacts: staleFromRows(rows, stages, { staleDays, hotDays, skipTypes: NO_CADENCE_TYPES, type }), source: "crm" };
   } catch (err) {
     console.error("CRM query error:", err.message);
     return { contacts: [], source: "crm_error", error: err.message };
@@ -1013,7 +898,7 @@ server.tool(
         // Group stale contacts by category for cleaner output
         const byCategory = {};
         for (const c of crmResult.contacts) {
-          const cat = c.categories[0] || "uncategorized";
+          const cat = c.type || "other";
           if (!byCategory[cat]) byCategory[cat] = [];
           byCategory[cat].push(c);
         }
@@ -1126,7 +1011,7 @@ server.tool(
   "harold_cadence_check",
   "Quick cadence review — stale relationships, overdue CRM tasks, and contacts needing attention. Works across ALL contact types. Uses the CRM as primary source, with the optional Outreach Cadence table in alerts.md as a fallback.",
   {
-    category: z.string().optional().describe("Filter to one contact type or label from your own list (e.g. 'investor', 'partner', 'founder'). Omit for all."),
+    category: z.string().optional().describe("Filter to one contact type from your own list (e.g. 'investor', 'partner', 'founder'): the contact's one type, never its labels. Omit for all."),
     stale_days: z.number().default(14).describe("Base freshness threshold — days without contact before flagging warm contacts as stale (default 14)"),
     warm_days: z.number().default(7).describe("Freshness threshold for hot/actively-engaged contacts (default 7)"),
     reference_date: z.string().optional().describe("Override today (YYYY-MM-DD)"),
@@ -1143,20 +1028,20 @@ server.tool(
         source = "CRM";
         let contacts = crmResult.contacts;
 
-        // Filter by category if requested
+        // Filter by type if requested (the contact's one type, never its labels)
         if (category) {
-          contacts = contacts.filter(c => c.categories.includes(category));
+          contacts = contacts.filter(c => c.type === String(category).trim().toLowerCase());
         }
 
         if (!contacts.length) {
-          const catStr = category ? ` in category "${category}"` : "";
+          const catStr = category ? ` of type "${category}"` : "";
           return { content: [{ type: "text", text: `✅ No stale contacts${catStr}. All relationships within cadence thresholds. *(Source: CRM)*` }] };
         }
 
         // Group by category
         const byCategory = {};
         for (const c of contacts) {
-          const cat = c.categories[0] || "uncategorized";
+          const cat = c.type || "other";
           if (!byCategory[cat]) byCategory[cat] = [];
           byCategory[cat].push(c);
         }
