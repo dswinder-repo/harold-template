@@ -74,6 +74,14 @@ test('due: brief start writes the context and reports due=true', () => {
   fs.rmSync(path.join(w.ws, 'harold/.brief-context.md'));
 });
 
+test('--target=HH:MM (routines written for earlier versions) counts as --ignore-time', () => {
+  const early = harold(w, ['brief', 'start', '--target=06:30'], { HAROLD_TZ: 'America/Chicago', HAROLD_BRIEF_TIME: '07:00', HAROLD_NOW: '2026-10-05T06:29:00' });
+  assert.strictEqual(early.code, 0, early.out + early.err);
+  assert.match(early.out, /^START 2026-10-05/);
+  fs.rmSync(path.join(w.ws, 'harold/.brief-job.json'));
+  fs.rmSync(path.join(w.ws, 'harold/.brief-context.md'));
+});
+
 test('weekend: not due, even after the brief time', () => {
   const sat = harold(w, ['brief', 'start'], { HAROLD_TZ: 'America/Chicago', HAROLD_NOW: '2026-10-03T09:00:00' });
   assert.strictEqual(sat.code, 0);
