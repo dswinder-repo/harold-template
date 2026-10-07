@@ -60,7 +60,7 @@ test('update: unedited machinery is updated, new files added, removed ones remov
   // The starter moves on.
   write(U('bin/harold-linear'), read(U('bin/harold-linear')) + '\n// v2\n');
   write(U('tools/harness-hooks/new-harness.json'), '{"v":2}\n');
-  fs.rmSync(U('tools/visualizer'), { recursive: true });
+  fs.rmSync(U('tools/openclaw-plugin'), { recursive: true });
   const pb = 'playbook/core/' + fs.readdirSync(U('playbook/core')).filter(f => f.endsWith('.md') && f !== 'README.md')[0];
   write(U(pb), read(U(pb)) + '\nStarter v2 step.\n');
   write(U('AGENTS.md'), read(U('AGENTS.md')) + '\nStarter v2 rule.\n');
@@ -86,7 +86,7 @@ test('update: unedited machinery is updated, new files added, removed ones remov
   assert.strictEqual(read(P('bin/harold-linear')), read(U('bin/harold-linear')), 'unedited machinery is updated');
   assert.ok(fs.statSync(P('bin/harold-linear')).mode & 0o100, 'executable bit kept');
   assert.strictEqual(read(P('tools/harness-hooks/new-harness.json')), '{"v":2}\n', 'new machinery is added');
-  assert.ok(!fs.existsSync(P('tools/visualizer')) || !fs.readdirSync(P('tools/visualizer')).length, 'machinery the starter removed is removed');
+  assert.ok(!fs.existsSync(P('tools/openclaw-plugin')) || !fs.readdirSync(P('tools/openclaw-plugin')).length, 'machinery the starter removed is removed');
   assert.match(r.out, /removed \(the starter removed them; unedited here\)/);
   // Edited here and changed upstream: never overwritten; the starter's copy lands beside it.
   assert.match(read(P(pb)), /My own step\./);

@@ -107,7 +107,7 @@ test('close asks for a touched contact to be filed unless its type is in HAROLD_
 // drops the column from databases created before it was retired, and that migration's test.
 test('Focus Area is gone: only migration 007 (and its test) names it, to drop it', () => {
   const files = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: SRC, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
-  const self = path.relative(SRC, __filename);
+  const self = `tests/${path.basename(__filename)}`;
   const hits = files.filter(f => f !== self && f !== 'tools/harold-crm/supabase/migrations/007_drop_focus_area.sql' && f !== 'tools/harold-crm/scripts/test-migrations.mjs' && fs.existsSync(path.join(SRC, f)) && fs.statSync(path.join(SRC, f)).isFile())
     .filter(f => /focus[ _]?area/i.test(fs.readFileSync(path.join(SRC, f), 'utf8').replace(/007_drop_focus_area\.sql/g, '')));  // the migration's file name may be listed
   assert.deepStrictEqual(hits, []);
