@@ -29,6 +29,8 @@ build/
 **/oauth_creds.json
 # The env templates are meant to be committed: they hold no values.
 !.env.example
+# Harold's non-secret, committed settings (HAROLD_TZ, HAROLD_NO_LOG_TYPES, ...): read only for HAROLD_* names.
+!harold/settings.env
 
 # ── Harold runtime state (rebuilt or per-machine) ────────
 harold/search.db*

@@ -18,7 +18,15 @@
 const fs = require('fs'); const path = require('path'); const os = require('os');
 const ROOT = path.dirname(path.dirname(fs.realpathSync(__filename)));
 const SNAP = path.join(ROOT, 'harold/linear-snapshot.md');
-const TZ = process.env.HAROLD_TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+// HAROLD_TZ: the environment, then ~/.harold/env, then the committed harold/settings.env.
+function settingTz() {
+  if (process.env.HAROLD_TZ) return process.env.HAROLD_TZ;
+  for (const f of [path.join(os.homedir(), '.harold/env'), path.join(ROOT, 'harold/settings.env')]) {
+    try { const m = fs.readFileSync(f, 'utf8').match(/^\s*(?:export\s+)?HAROLD_TZ\s*=\s*["']?([^"'\s#]+)/m); if (m) return m[1]; } catch (_) {}
+  }
+  return null;
+}
+const TZ = settingTz() || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 function loadVar(name) {
   if (process.env[name]) return process.env[name];
@@ -28,7 +36,11 @@ function loadVar(name) {
   return null;
 }
 function loadKey() { return loadVar('LINEAR_API_KEY'); }
-const TEAM = loadVar('LINEAR_TEAM_KEY');
+// The team key is not a secret: it may also live in the committed harold/settings.env.
+function committedVar(name) {
+  try { const m = fs.readFileSync(path.join(ROOT, 'harold/settings.env'), 'utf8').match(new RegExp('^\\s*(?:export\\s+)?' + name + '\\s*=\\s*["\']?([^"\'\\s#]+)', 'm')); return m ? m[1] : null; } catch (_) { return null; }
+}
+const TEAM = loadVar('LINEAR_TEAM_KEY') || committedVar('LINEAR_TEAM_KEY');
 async function gql(key, query, variables = {}) {
   const r = await fetch('https://api.linear.app/graphql', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: key }, body: JSON.stringify({ query, variables }) });
   const j = await r.json();
@@ -83,7 +95,7 @@ async function comment(key, ident, text) { const issue = await issueId(key, iden
   const argv = process.argv.slice(2); const cmd = argv[0]; const opts = {}; const pos = [];
   for (let i = 1; i < argv.length; i++) { if (argv[i].startsWith('--')) { const k = argv[i].slice(2); if (k === 'json') opts.json = true; else opts[k] = argv[++i]; } else pos.push(argv[i]); }
   const key = loadKey();
-  if (key && !TEAM) { console.error('LINEAR_TEAM_KEY is not set (your team\'s issue prefix, e.g. ENG). Add it to ~/.harold/env.'); process.exit(2); }
+  if (key && !TEAM) { console.error('LINEAR_TEAM_KEY is not set (your team\'s issue prefix, e.g. ENG). Add it to harold/settings.env (it is not a secret) or ~/.harold/env.'); process.exit(2); }
   if (!key) {
     if (cmd === 'tasks' && fs.existsSync(SNAP)) { const snapText = fs.readFileSync(SNAP, 'utf8'); const pulled = snapText.match(/Pulled (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/); const age = Math.round((Date.now() - (pulled ? Date.parse(pulled[1]) : fs.statSync(SNAP).mtimeMs)) / 3600000); console.log(`(no LINEAR_API_KEY in this harness — showing committed snapshot, ${age}h old)\n`); console.log(fs.readFileSync(SNAP, 'utf8')); process.exit(3); }
     console.error('LINEAR_API_KEY not found (~/.harold/env, <root>/.env, or environment)'); process.exit(2);

@@ -62,10 +62,20 @@ if (CRM_MISSING.length) {
 // (for example, some people choose never to log conversations with their own team). Their records
 // are still kept current; harold_log_interaction refuses them.
 const typeList = v => (v || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-const NO_LOG_TYPES = typeList(process.env.HAROLD_NO_LOG_TYPES);
+// A setting from the environment, else the workspace's committed harold/settings.env (non-secret HAROLD_* only),
+// so a rule such as HAROLD_NO_LOG_TYPES holds however this server was launched.
+function haroldSetting(name) {
+  const v = (process.env[name] || "").trim();
+  if (v || !/^HAROLD_[A-Z0-9_]+$/.test(name) || /KEY|TOKEN|SECRET|PASSWORD|AUTH/.test(name)) return v;
+  try {
+    const m = fs.readFileSync(path.join(HAROLD_DIR, "settings.env"), "utf8").match(new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\s#\\n]*))`, "m"));
+    return m ? (m[1] ?? m[2] ?? m[3] ?? "").trim() : "";
+  } catch (_) { return ""; }
+}
+const NO_LOG_TYPES = typeList(haroldSetting("HAROLD_NO_LOG_TYPES"));
 // Contact types that never get staleness alerts: HAROLD_NO_CADENCE_TYPES (default: other), plus the
 // no-log types, whose last-contact date would otherwise look stale forever.
-const NO_CADENCE_TYPES = cadenceSkipTypes(process.env.HAROLD_NO_CADENCE_TYPES, NO_LOG_TYPES);
+const NO_CADENCE_TYPES = cadenceSkipTypes(haroldSetting("HAROLD_NO_CADENCE_TYPES"), NO_LOG_TYPES);
 
 let _supabase = null;
 function getSupabase() {
@@ -1145,8 +1155,11 @@ server.tool(
         const { data: who, error: whoErr } = await supabase.from("contacts").select("name, category").eq("id", resolvedId).single();
         if (whoErr) throw whoErr;
         const type = String(who?.category || "").toLowerCase();
-        if (NO_LOG_TYPES.includes(type)) {
-          return { content: [{ type: "text", text: `Not logged: ${who.name} is type "${type}", and HAROLD_NO_LOG_TYPES says conversations with that type are never logged. Keep their record current with harold_upsert_contact instead.` }], isError: true };
+        // A label counts too (a contact typed "partner" but labelled "team" is still team).
+        const { data: labels } = await supabase.from("contact_categories").select("category_name").eq("contact_id", resolvedId);
+        const label = (labels || []).map(l => String(l.category_name || "").toLowerCase()).find(l => NO_LOG_TYPES.includes(l));
+        if (NO_LOG_TYPES.includes(type) || label) {
+          return { content: [{ type: "text", text: `Not logged: ${who.name} is ${label ? `labelled "${label}"` : `type "${type}"`}, and HAROLD_NO_LOG_TYPES says conversations with that type are never logged. Keep their record current with harold_upsert_contact instead.` }], isError: true };
         }
       }
 

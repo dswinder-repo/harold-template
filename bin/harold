@@ -17,15 +17,18 @@
  *   harold replay  apply queued CRM writes now (boot and close also do it) [--dry-run]
  *   harold brief   the scheduled morning brief: start | finish | status | notify
  *   harold housekeeping  the scheduled weekly scan / full audit / month-end review: start | finish | status
+ *   harold update  bring Harold's own files (harold/update-manifest.txt) up to the starter [--dry-run] [--from] [--ref]
  *   harold where   resolve a topic or alias to a folder via harold/projects.md
  *   harold search | related | backlinks   full-text search and the link graph (bin/harold-index)
  *   harold pulse   each active project's last activity and next step; quiet ones first [--json] [--all]
  *
- * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path):
+ * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path), then from
+ * harold/settings.env (committed; non-secret HAROLD_* settings only, so every machine and scheduled job shares them):
  *   HAROLD_TZ          IANA time zone, e.g. America/Chicago. Default: the zone of the machine running this.
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
  *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
  *                      as CRM interactions (records are still kept current). Empty by default.
+ *   HAROLD_CHECKS      optional, comma-separated workspace scripts that check runs; a non-zero exit becomes a warning.
  *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
  *   HAROLD_PULSE_DAYS  days without activity after which an active project counts as quiet in pulse and boot. Default 14.
  *   HAROLD_JOB=1       set by a scheduler that runs only Harold's jobs (as GitHub Actions and Claude Code routines
@@ -59,17 +62,39 @@ function findRoot() {
 const CLI = root => path.join(root, 'bin', 'harold');
 
 // ───────────────────────── settings ─────────────────────────
-// The environment wins; ~/.harold/env (where credentials already live) is the fallback, so a setting
-// written there works in hooks and cron-like runners that never source a shell profile.
+// The environment wins; ~/.harold/env (where credentials already live) is next, so a setting written there
+// works in hooks and cron-like runners that never source a shell profile. Last comes harold/settings.env, a
+// COMMITTED file for the workspace's non-secret settings (HAROLD_TZ, HAROLD_NO_LOG_TYPES, ...): it travels with
+// the repository, so every machine, cloud session and scheduled job gets them with nothing to set up. Only
+// HAROLD_* names are read from it, never one that looks like a credential, and close's secret scan refuses
+// to commit a key there.
+const SETTINGS_FILE = 'harold/settings.env';
 function envFilePath() { return process.env.HAROLD_ENV_FILE || path.join(os.homedir(), '.harold/env'); }
+function settingFrom(text, name) {
+  const re = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\s#\\n]*))`, 'm');
+  const m = text.match(re);
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '').trim() : '';
+}
 let envFileCache = null;
 function envFileSetting(name) {
   if (envFileCache === null) { try { envFileCache = fs.readFileSync(envFilePath(), 'utf8'); } catch (_) { envFileCache = ''; } }
-  const re = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\s#\\n]*))`, 'm');
-  const m = envFileCache.match(re);
-  return m ? (m[1] ?? m[2] ?? m[3] ?? '').trim() : '';
+  return settingFrom(envFileCache, name);
 }
-function setting(name) { const v = process.env[name]; return v !== undefined && v.trim() !== '' ? v.trim() : envFileSetting(name); }
+const CREDENTIAL_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/i;
+// Non-secret names outside HAROLD_* that the committed file may also carry (read by their own tools).
+const COMMITTED_EXTRA = new Set(['LINEAR_TEAM_KEY']);
+function committedSettingAllowed(name) { return (/^HAROLD_[A-Z0-9_]+$/.test(name) && !CREDENTIAL_NAME.test(name)) || COMMITTED_EXTRA.has(name); }
+let committedCache = null;
+function committedSettingsText() {
+  if (committedCache === null) { committedCache = ''; try { const r = findRoot(); if (r) committedCache = fs.readFileSync(path.join(r, SETTINGS_FILE), 'utf8'); } catch (_) {} }
+  return committedCache;
+}
+function committedSetting(name) { return committedSettingAllowed(name) ? settingFrom(committedSettingsText(), name) : ''; }
+function setting(name) { const v = process.env[name]; if (v !== undefined && v.trim() !== '') return v.trim(); return envFileSetting(name) || committedSetting(name); }
+// Names in harold/settings.env that are never read (not HAROLD_*, or credential-like): check warns about them.
+function committedSettingsIgnored() {
+  return [...committedSettingsText().matchAll(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/gm)].map(m => m[1]).filter(n => !committedSettingAllowed(n));
+}
 function isCloudRunner() { return !!(process.env.CLAUDE_CODE_REMOTE || process.env.GITHUB_ACTIONS); }
 
 // Time zone: HAROLD_TZ (IANA name) wins; otherwise the zone of whatever machine runs this. A cloud
@@ -80,9 +105,9 @@ function resolveTz() {
   const raw = setting('HAROLD_TZ');
   if (raw && validTz(raw)) return { tz: raw, source: 'HAROLD_TZ' };
   if (raw) return { tz: sys, source: 'system', warning: `HAROLD_TZ "${raw}" is not an IANA time zone name (e.g. America/Chicago, Europe/London); using this machine's zone, ${sys}` };
-  if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set the repository variable HAROLD_TZ to your zone, e.g. America/Chicago (Settings → Secrets and variables → Actions → Variables)` };
-  if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ in the environment of the routine or cloud environment, e.g. America/Chicago` };
-  return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this machine's zone (${sys}). Set your own zone in ${envFilePath()}, e.g. export HAROLD_TZ="America/Chicago" (scheduled jobs take it as a repository variable)` };
+  if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set HAROLD_TZ="America/Chicago" (your zone) in harold/settings.env, or as the repository variable HAROLD_TZ (Settings → Secrets and variables → Actions → Variables)` };
+  if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ="America/Chicago" (your zone) in harold/settings.env, which every session and job reads` };
+  return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this machine's zone (${sys}). Set your own zone in harold/settings.env (committed, so every machine and scheduled job reads it), e.g. HAROLD_TZ="America/Chicago"` };
 }
 const TZ_INFO = resolveTz();
 const TZ = TZ_INFO.tz;
@@ -627,11 +652,39 @@ function runCheck(root, today) {
   if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
   if (TZ_INFO.warning) warnings.push(TZ_INFO.warning);
   if (BRIEF_TIME.warning) warnings.push(BRIEF_TIME.warning);
+  if (fs.existsSync(path.join(root, SETTINGS_FILE))) {
+    const ign = committedSettingsIgnored();
+    if (ign.length) warnings.push(`${SETTINGS_FILE} is committed, so only non-secret HAROLD_* settings are read from it; ignored: ${ign.join(', ')}. Credentials belong in ${envFilePath()}`);
+    const hits = secretScan(root, [SETTINGS_FILE]);
+    if (hits.length) warnings.push(`${SETTINGS_FILE} looks like it holds a credential (${hits[0]}): move it to ${envFilePath()}; close refuses to commit it`);
+    if (git(root, ['check-ignore', '-q', SETTINGS_FILE]).code === 0) warnings.push(`${SETTINGS_FILE} is ignored by .gitignore (a "*.env" rule?), so it never reaches other machines or the scheduled jobs: add the line !${SETTINGS_FILE} to .gitignore`);
+  }
+  for (const w of extraChecks(root)) warnings.push(w);
+  const pendingMerge = upstreamCopies(root);
+  if (pendingMerge.length) warnings.push(`${pendingMerge.length} file(s) from bin/harold update wait for a hand merge: ${pendingMerge.slice(0, 6).join(', ')}${pendingMerge.length > 6 ? ` (+${pendingMerge.length - 6})` : ''}. Merge the starter's version into each, then delete the .upstream copy`);
   for (const [rel, budget] of Object.entries(sizeBudgets(root))) { try { const n = fs.statSync(path.join(root, rel)).size; if (n > budget) warnings.push(`${rel} is ${Math.round(n / 1000)}k chars, over its ${Math.round(budget / 1000)}k budget: the monthly full audit moves stale sections into an archive file beside it (nothing is deleted)`); } catch (_) {} }
   if (process.env.HAROLD_NOW) warnings.push(`HAROLD_NOW=${process.env.HAROLD_NOW} is set: "now" is overridden (testing only)`);
   return { failures, warnings, playbooks: pb, learnings: lr, projects: pj, ctx, triggers };
 }
 
+
+// HAROLD_CHECKS (optional): the workspace's own checks, run by check, boot and close. Comma-separated commands,
+// each a script inside the workspace plus arguments (e.g. "bin/my-site-qa --quiet"). Exit 0 says nothing; any
+// other exit becomes one warning with the script's last line of output. Never a failure.
+function extraChecks(root) {
+  const out = [];
+  for (const spec of setting('HAROLD_CHECKS').split(',').map(x => x.trim()).filter(Boolean)) {
+    const [cmd, ...args] = spec.split(/\s+/);
+    const p = path.resolve(root, cmd);
+    if (path.isAbsolute(cmd) || !p.startsWith(root + path.sep) || !fs.existsSync(p)) { out.push(`HAROLD_CHECKS: ${cmd} is not a script inside the workspace; skipped`); continue; }
+    const r = spawnSync(p, args, { cwd: root, encoding: 'utf8', timeout: 60000 });
+    if (r.error) { out.push(`${cmd}: could not run (${r.error.code || r.error.message})`); continue; }
+    if (r.status === 0) continue;
+    const last = `${r.stdout || ''}\n${r.stderr || ''}`.split('\n').map(l => l.trim()).filter(Boolean).pop() || `exit ${r.status}`;
+    out.push(`${cmd}: ${last.slice(0, 240)}`);
+  }
+  return out;
+}
 
 // ───────────────────────── search index (SQLite FTS5 via bin/harold-index) ─────────────────────────
 // The index carries the link graph too (nodes, edges, broken links). harold-index decides staleness itself
@@ -803,6 +856,7 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown, archives included; ${idxNote}; replaces Obsidian)`);
   L.push(`Links: ${CLI(root)} related "<person, company, project or topic>"   (follows [[links]] 1-2 hops; read only the notes that matter; state staleness and gaps)`);
   L.push(crmQueue.line);
+  const upd = upstreamNotice(root); if (upd) L.push(upd);
   L.push('');
   // A successful pull already fetched origin: no second network round trip inside the 60s hook.
   L.push(...briefDraftLines(root, today, { fetch: !(pull && pull.code === 0) }));
@@ -910,7 +964,10 @@ const PRIORITIES = ['high', 'medium', 'low'];
 const INTERACTION_TYPES = ['call', 'email', 'meeting', 'note', 'linkedin', 'other'];
 const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
 // harold_upsert_contact's fields (tools/harold-mcp/schema.sql → contacts).
-const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'investor_type'];
+// HAROLD_CRM_EXTRA_FIELDS (optional): contact columns your own database added beyond schema.sql (e.g. "title"),
+// which queued upserts may then set. Column names only: letters, digits and underscores.
+const CONTACT_FIELDS = ['name', 'org', 'category', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'investor_type',
+  ...setting('HAROLD_CRM_EXTRA_FIELDS').split(',').map(f => f.trim()).filter(f => /^[a-z][a-z0-9_]*$/.test(f))];
 // The words the vault cards and playbooks use, mapped to the CRM's column names.
 const CONTACT_ALIASES = { company: 'org', type: 'category', labels: 'categories' };
 
@@ -967,17 +1024,35 @@ function resolveCrmContact(cfg, name, org, id) {
 }
 // Optional, off by default: HAROLD_NO_LOG_TYPES lists contact types whose conversations are never logged
 // as CRM interactions (for example, some people choose never to log conversations with their own team).
-// Their contact records are still kept current. A contact matches by its CRM type or its vault card's
-// `type` (or the older `category`).
+// Their contact records are still kept current. A contact matches by its CRM type, any of its CRM labels,
+// or its vault card's `type` (or the older `category`) or `labels`.
 function noLogTypes() { return new Set(setting('HAROLD_NO_LOG_TYPES').split(',').map(t => t.trim().toLowerCase()).filter(Boolean)); }
-function cardType(root, name) {
-  const card = path.join(root, 'vault/people', `${name}.md`);
-  try { if (!fs.existsSync(card)) return ''; const fm = frontmatter(readFull(card)); return (fm.type || fm.category || '').toLowerCase(); } catch (_) { return ''; }
+function cardText(root, name) { const card = path.join(root, 'vault/people', `${name}.md`); try { return fs.existsSync(card) ? readFull(card) : ''; } catch (_) { return ''; } }
+function cardType(root, name) { const fm = frontmatter(cardText(root, name)); return (fm.type || fm.category || '').toLowerCase(); }
+// `labels: [a, b]`, `labels: a, b`, or a YAML block list under `labels:`.
+function fmLabels(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if (!m) return [];
+  const lines = m[1].split('\n'); const i = lines.findIndex(l => /^labels:/.test(l)); if (i < 0) return [];
+  let vals = lines[i].replace(/^labels:\s*/, '').trim();
+  let out = vals ? vals.replace(/^\[|\]$/g, '').split(',') : [];
+  if (!vals) for (let j = i + 1; j < lines.length && /^\s+-\s*/.test(lines[j]); j++) out.push(lines[j].replace(/^\s+-\s*/, ''));
+  return out.map(v => v.trim().replace(/^["']|["']$/g, '').toLowerCase()).filter(Boolean);
 }
-function cardIsNoLog(root, name) { const t = noLogTypes(); return t.size > 0 && t.has(cardType(root, name)); }
-function isNoLogContact(root, c) {
+// What on the vault card puts this contact under HAROLD_NO_LOG_TYPES ("type team", "label team"), or ''.
+function cardNoLogMatch(root, name) {
+  const t = noLogTypes(); if (!t.size) return '';
+  const text = cardText(root, name); if (!text) return '';
+  const type = cardType(root, name); if (t.has(type)) return `type ${type}`;
+  const label = fmLabels(text).find(l => t.has(l)); return label ? `label ${label}` : '';
+}
+function cardIsNoLog(root, name) { return !!cardNoLogMatch(root, name); }
+function isNoLogContact(root, c, cfg) {
   const t = noLogTypes();
-  return t.size > 0 && (t.has((c.category || '').toLowerCase()) || t.has(cardType(root, c.name)));
+  if (!t.size) return false;
+  if (t.has((c.category || '').toLowerCase()) || cardIsNoLog(root, c.name)) return true;
+  if (!cfg || !c.id) return false;
+  const r = crmRequest(cfg, 'GET', `contact_categories?select=category_name&contact_id=eq.${enc(c.id)}`);
+  return !!(r.ok && Array.isArray(r.data) && r.data.some(x => t.has(String(x.category_name || '').toLowerCase())));
 }
 // "2026-07" and "2026" are how people remember dates; Postgres wants a day.
 function normalizeWhen(s) {
@@ -1049,7 +1124,7 @@ function replayLogInteraction(cfg, root, row, dry) {
   if (typeof p.subject !== 'string') throw new Error('subject is required');
   const when = normalizeWhen(p.occurred_at) || row.ts;
   const c = resolveCrmContact(cfg, p.contact_name || row.contact, p.org || p.company, p.contact_id);
-  if (isNoLogContact(root, c)) throw new Refusal(`${c.name}'s type is listed in HAROLD_NO_LOG_TYPES: conversations with this type are never logged as CRM interactions`);
+  if (isNoLogContact(root, c, cfg)) throw new Refusal(`${c.name}'s type or a label is listed in HAROLD_NO_LOG_TYPES: conversations with this type are never logged as CRM interactions`);
   const q = `interactions?select=id&contact_id=eq.${enc(c.id)}&type=eq.${enc(p.type)}&subject=eq.${enc(p.subject)}&occurred_at=eq.${enc(when)}`;
   const dup = crmRequest(cfg, 'GET', q);
   if (!dup.ok) throw new Error(`duplicate check failed: ${dup.err}`);
@@ -1326,7 +1401,8 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     const fm = frontmatter(readFull(path.join(root, f)));
     const name = path.basename(f, '.md');
     const type = (fm.type || fm.category || '').toLowerCase();
-    if (noLog.has(type)) { notes.push(`${name}: type ${type} is in HAROLD_NO_LOG_TYPES — conversations are not logged`); continue; }
+    const label = noLog.has(type) ? '' : fmLabels(readFull(path.join(root, f))).find(l => noLog.has(l));
+    if (noLog.has(type) || label) { notes.push(`${name}: ${label ? `label ${label}` : `type ${type}`} is in HAROLD_NO_LOG_TYPES — conversations are not logged`); continue; }
     if ((fm.crm || '').toLowerCase() === 'none') { notes.push(`${name}: crm: none — this card is deliberately out of the CRM`); continue; }
     const filed = crmWritten.has(name.toLowerCase()) || queue.some(q => (q.contact || '').toLowerCase() === name.toLowerCase());
     const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
@@ -1474,7 +1550,7 @@ function cmdFile(root, today, args, opts = {}) {
     let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error('usage: harold file crm \'{"contact":"Name","action":"log_interaction|upsert_contact|crm_task","payload":{...}}\''); return 2; }
     if (!obj.contact || !obj.action) { console.error('crm entry needs "contact" and "action"'); return 2; }
     if (!CRM_ACTIONS.includes(obj.action)) { console.error(`action must be one of: ${CRM_ACTIONS.join(', ')}`); return 2; }
-    if (obj.action === 'log_interaction' && cardIsNoLog(root, obj.contact)) { console.error(`REFUSED: ${obj.contact} is type: ${cardType(root, obj.contact)}, which HAROLD_NO_LOG_TYPES says is never logged. Keep the record current with upsert_contact instead.`); return 3; }
+    if (obj.action === 'log_interaction' && cardIsNoLog(root, obj.contact)) { console.error(`REFUSED: ${obj.contact} is ${cardNoLogMatch(root, obj.contact).replace(/^type /, 'type: ').replace(/^label /, 'labelled: ')}, which HAROLD_NO_LOG_TYPES says is never logged. Keep the record current with upsert_contact instead.`); return 3; }
     const qp = path.join(root, CRM_QUEUE);
     // "applied":"connector" records a write already made through a CRM connector or MCP tool in a harness
     // where bin/harold cannot see the CRM itself (no credentials here): it counts as filed, never replayed.
@@ -1983,6 +2059,186 @@ function closeHousekeepingJob(root, today, opts, hook) {
   return closeReply(hook, 'block', reason);
 }
 
+// ───────────────────────── update (the starter's machinery, never the operator's content) ─────────────────────────
+// `harold update` brings the Harold-owned files listed in harold/update-manifest.txt up to the starter
+// (harold/upstream.json: its url and ref, and the starter commit this workspace last updated from). It never
+// touches the operator's content. A machinery file edited here since the last update is not overwritten: the
+// starter's copy lands beside it as <file>.upstream for a session to merge by hand. AGENTS.md is the operator's
+// own (filled in): never overwritten; when the starter's changed, AGENTS.md.upstream is written the same way.
+// A file counts as unedited when it is byte-identical to the starter's copy at the last update, or to any version
+// the starter ever shipped (so a workspace that never ran update, or copied files by hand, still updates cleanly).
+const UPSTREAM_FILE = 'harold/upstream.json';
+const MANIFEST_FILE = 'harold/update-manifest.txt';
+const UPSTREAM_DEFAULT = { url: 'https://github.com/dswinder-repo/harold-template.git', ref: 'main' };
+const UPSTREAM_REF = 'refs/harold/upstream';
+const UPSTREAM_CHECK = 'upstream-check.json'; // in STATE_DIR (gitignored): boot's cached look at the starter
+// Never written by update, whatever a manifest says (seeds may create the harold/ ones when missing).
+const USER_CONTENT = ['AGENTS.md', 'CLAUDE.md', 'README.md', 'memory/', 'dashboard/', 'raw/', 'projects/', 'harold/active-sessions/', 'harold/briefs/2*', 'harold/briefs/housekeeping-notes.md',
+  'harold/learnings.jsonl', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md', 'harold/facts.md', 'harold/projects.md', 'harold/crm-queue.jsonl',
+  'harold/trigger-log.jsonl', 'harold/sync-map.md', 'harold/housekeeping.json', 'harold/settings.env', 'harold/upstream.json', 'harold/graph.json', 'harold/linear-snapshot.md'];
+function readUpstream(root) { try { const j = JSON.parse(readFull(path.join(root, UPSTREAM_FILE))); return j && typeof j === 'object' ? j : {}; } catch (_) { return {}; } }
+function globRe(pat) { return new RegExp('^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\0').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\0/g, '.*') + '$'); }
+function pathMatches(p, pat) { if (pat.endsWith('/')) return p.startsWith(pat); if (/[*?]/.test(pat)) return globRe(pat).test(p); return p === pat; }
+// Lines: a path (a directory ends with /; * and ** globs), "seed <path>" (added when missing, then the operator's),
+// "! <pattern>" (excluded). # starts a comment.
+function parseManifest(text) {
+  const m = { own: [], seed: [], exclude: [] };
+  for (let l of String(text).split('\n')) {
+    l = l.replace(/#.*$/, '').trim(); if (!l) continue;
+    if (l.startsWith('!')) m.exclude.push(l.slice(1).trim());
+    else if (/^seed\s+/.test(l)) m.seed.push(l.replace(/^seed\s+/, ''));
+    else m.own.push(l);
+  }
+  return m;
+}
+function isUserContent(p) { return USER_CONTENT.some(u => pathMatches(p, u)) || (p.startsWith('vault/') && !p.startsWith('vault/templates/')); }
+function gitBuf(root, args, input) { const r = spawnSync('git', args, { cwd: root, input, maxBuffer: 256 * 1024 * 1024, timeout: 180000 }); return { code: r.status, out: r.stdout || Buffer.alloc(0), err: String(r.stderr || '') }; }
+function lsTree(root, commit) {
+  const r = gitBuf(root, ['ls-tree', '-r', '-z', '--full-tree', commit]); const t = new Map();
+  if (r.code !== 0) return t;
+  for (const rec of r.out.toString('utf8').split('\0')) { const m = rec.match(/^(\d+) (\w+) ([0-9a-f]+)\t(.*)$/s); if (m && m[2] === 'blob') t.set(m[4], { mode: m[1], sha: m[3] }); }
+  return t;
+}
+// Every blob the starter's history ever held at each path (both sides of every change).
+function upstreamHistory(root, commit, pats) {
+  const r = gitBuf(root, ['log', '--no-renames', '--format=', '--raw', '--no-abbrev', '-z', commit, '--', ...pats.map(p => p.endsWith('/') ? p.slice(0, -1) : p)]);
+  const h = new Map();
+  if (r.code !== 0) return h;
+  const parts = r.out.toString('utf8').split('\0').filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const m = parts[i].match(/^\n?:(\d+) (\d+) ([0-9a-f]+) ([0-9a-f]+) (\w+)$/); if (!m) continue;
+    const p = parts[++i]; if (!p) continue;
+    const s = h.get(p) || new Set(); for (const sha of [m[3], m[4]]) if (!/^0+$/.test(sha)) s.add(sha); h.set(p, s);
+  }
+  return h;
+}
+function hashLocal(root, paths) {
+  const out = new Map(); if (!paths.length) return out;
+  const r = gitBuf(root, ['hash-object', '--stdin-paths'], paths.join('\n') + '\n');
+  if (r.code !== 0) throw new Error(`git hash-object failed: ${r.err.trim().slice(0, 200)}`);
+  const shas = r.out.toString('utf8').trim().split('\n'); paths.forEach((p, i) => out.set(p, shas[i]));
+  return out;
+}
+function writeBlob(root, rel, sha, mode) {
+  const r = gitBuf(root, ['cat-file', 'blob', sha]); if (r.code !== 0) throw new Error(`cannot read ${rel} from the starter: ${r.err.trim()}`);
+  const p = path.join(root, rel); fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, r.out); try { fs.chmodSync(p, mode === '100755' ? 0o755 : 0o644); } catch (_) {}
+}
+// .upstream copies waiting for a hand merge (tracked or not, never ignored ones).
+function upstreamCopies(root) {
+  const r = git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '--', '*.upstream'], { timeout: 10000 });
+  return r.code === 0 ? r.out.split('\n').filter(f => f && fs.existsSync(path.join(root, f))) : [];
+}
+function argValue(argv, name) {
+  const i = argv.findIndex(a => a === `--${name}` || a.startsWith(`--${name}=`)); if (i < 0) return undefined;
+  return argv[i].includes('=') ? argv[i].slice(argv[i].indexOf('=') + 1) : argv[i + 1];
+}
+
+function cmdUpdate(root, today, argv) {
+  const dry = argv.includes('--dry-run');
+  const up = readUpstream(root);
+  let url = argValue(argv, 'from') || up.url || UPSTREAM_DEFAULT.url;
+  const ref = argValue(argv, 'ref') || up.ref || UPSTREAM_DEFAULT.ref;
+  if (!/^[a-z][a-z0-9+.-]*:\/\/|^[^/]+@[^:]+:/i.test(url) && fs.existsSync(path.resolve(url))) url = path.resolve(url);
+  if (git(root, ['rev-parse', '--git-dir']).code !== 0) { console.error(`harold update: ${root} is not a git repository; update needs git to tell your edits from the starter's`); return 2; }
+  const f = spawnSync('git', ['fetch', '--no-tags', '-q', url, `+${ref}:${UPSTREAM_REF}`], { cwd: root, encoding: 'utf8', timeout: 300000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+  if (f.status !== 0) { console.error(`harold update: could not fetch ${ref} from ${url}: ${((f.stderr || '') + (f.error ? f.error.message : '')).trim().split('\n').pop()}`); return 2; }
+  const head = git(root, ['rev-parse', UPSTREAM_REF]).out;
+  const when = git(root, ['log', '-1', '--format=%cs', head]).out;
+  const manText = gitBuf(root, ['show', `${head}:${MANIFEST_FILE}`]);
+  if (manText.code !== 0) { console.error(`harold update: ${url} ${ref} has no ${MANIFEST_FILE}, so it does not say which files are Harold's; nothing changed`); return 2; }
+  const man = parseManifest(manText.out.toString('utf8'));
+  const skip = Array.isArray(up.skip) ? up.skip.map(String) : [];
+  const owned = p => !isUserContent(p) && man.own.some(x => pathMatches(p, x)) && !man.exclude.some(x => pathMatches(p, x)) && !skip.some(x => pathMatches(p, x)) && !p.endsWith('.upstream');
+  const base = up.commit && git(root, ['cat-file', '-e', `${up.commit}^{commit}`]).code === 0 ? up.commit : null;
+  const newT = lsTree(root, head), baseT = base ? lsTree(root, base) : new Map();
+  const hist = upstreamHistory(root, head, [...man.own, 'AGENTS.md']);
+  const tracked = git(root, ['ls-files', '-z'], { timeout: 30000 }).out.split('\0').filter(Boolean);
+  const cand = new Set([...newT.keys(), ...baseT.keys(), ...tracked].filter(owned));
+  for (const s of man.seed) if (newT.has(s) && !skip.some(x => pathMatches(s, x))) cand.delete(s);
+  const exists = p => { try { return fs.lstatSync(path.join(root, p)).isFile(); } catch (_) { return false; } };
+  const localSha = hashLocal(root, [...cand, 'AGENTS.md'].filter(exists));
+  const R = { updated: [], added: [], removed: [], merge: [], kept: [], keptRemoved: [], notRestored: [], mode: [], staleCopies: [], seeded: [] };
+  const plan = [];
+  const unedited = (p, sha) => (base && baseT.get(p) && baseT.get(p).sha === sha) || (hist.get(p) && hist.get(p).has(sha));
+  for (const p of [...cand].sort()) {
+    const n = newT.get(p), b = baseT.get(p), l = localSha.get(p);
+    const everUpstream = !!(b || hist.has(p));
+    if (n && !l) {
+      if (b) R.notRestored.push(p);
+      else { R.added.push(p); plan.push(() => writeBlob(root, p, n.sha, n.mode)); }
+    } else if (n && l) {
+      if (l === n.sha) {
+        const isExec = (() => { try { return (fs.statSync(path.join(root, p)).mode & 0o111) !== 0; } catch (_) { return false; } })();
+        if (isExec !== (n.mode === '100755')) { R.mode.push(p); plan.push(() => fs.chmodSync(path.join(root, p), n.mode === '100755' ? 0o755 : 0o644)); }
+        if (exists(p + '.upstream')) { R.staleCopies.push(p + '.upstream'); plan.push(() => fs.rmSync(path.join(root, p + '.upstream'), { force: true })); }
+      } else if (unedited(p, l)) {
+        R.updated.push(p); plan.push(() => writeBlob(root, p, n.sha, n.mode));
+        if (exists(p + '.upstream')) { R.staleCopies.push(p + '.upstream'); plan.push(() => fs.rmSync(path.join(root, p + '.upstream'), { force: true })); }
+      } else if (b && b.sha === n.sha) R.kept.push(p);
+      else { R.merge.push(p); plan.push(() => writeBlob(root, p + '.upstream', n.sha, '100644')); }
+    } else if (!n && l && everUpstream) {
+      if (unedited(p, l)) { R.removed.push(p); plan.push(() => fs.rmSync(path.join(root, p), { force: true })); }
+      else R.keptRemoved.push(p);
+    }
+  }
+  for (const s of man.seed) { const n = newT.get(s); if (n && !exists(s) && !skip.some(x => pathMatches(s, x))) { R.seeded.push(s); plan.push(() => writeBlob(root, s, n.sha, n.mode)); } }
+  // AGENTS.md: never overwritten.
+  let agents = 'unchanged';
+  const nA = newT.get('AGENTS.md'), bA = baseT.get('AGENTS.md'), lA = localSha.get('AGENTS.md');
+  if (nA && lA !== nA.sha && !(bA && bA.sha === nA.sha)) { agents = base ? 'changed' : 'unknown'; plan.push(() => writeBlob(root, 'AGENTS.md.upstream', nA.sha, '100644')); }
+  else if (nA && exists('AGENTS.md.upstream') && lA === nA.sha) { R.staleCopies.push('AGENTS.md.upstream'); plan.push(() => fs.rmSync(path.join(root, 'AGENTS.md.upstream'), { force: true })); }
+
+  if (!dry) {
+    for (const step of plan) step();
+    const rec = { ...up, url: up.url || UPSTREAM_DEFAULT.url, ref: up.ref || UPSTREAM_DEFAULT.ref, commit: head, date: today.iso };
+    fs.writeFileSync(path.join(root, UPSTREAM_FILE), JSON.stringify(rec, null, 2) + '\n');
+    try { fs.rmSync(path.join(root, STATE_DIR, UPSTREAM_CHECK), { force: true }); } catch (_) {}
+  }
+  const W = dry ? 'would be ' : '';
+  const L = [`harold update${dry ? ' --dry-run (nothing changed)' : ''} — starter ${url} ${ref} at ${head.slice(0, 10)} (${when})`,
+    `last update: ${up.commit ? `${String(up.commit).slice(0, 10)}${up.date ? ` on ${up.date}` : ''}${base ? '' : ' (not in the fetched history: files compared against every version the starter shipped)'}` : 'none recorded (files compared against every version the starter shipped)'}`];
+  const sect = (title, list, fmt = x => x) => { if (list.length) { L.push(`${title} (${list.length}):`); list.forEach(x => L.push(`  ${fmt(x)}`)); } };
+  sect(`${W}updated`, R.updated); sect(`${W}added`, R.added); sect(`${W}added (seed: yours from now on)`, R.seeded);
+  sect(`${W}removed (the starter removed them; unedited here)`, R.removed);
+  sect('NEEDS MERGE (edited here and changed in the starter)', R.merge, x => `${x}  ← starter's copy ${dry ? 'would be written to' : 'in'} ${x}.upstream`);
+  sect('kept: your edits, unchanged in the starter', R.kept);
+  sect('kept: the starter removed them, but they were edited here (delete them if no longer needed)', R.keptRemoved);
+  sect('not restored: deleted here', R.notRestored);
+  sect(`${W}made executable/non-executable`, R.mode);
+  sect(`${W}deleted (stale .upstream copies, the file now matches the starter)`, R.staleCopies);
+  if (agents !== 'unchanged') L.push(`AGENTS.md is yours and never overwritten. ${agents === 'changed' ? "The starter's AGENTS.md changed since the last update" : "No recorded last update, and it differs from the starter's"}: its copy ${dry ? 'would be written to' : 'is in'} AGENTS.md.upstream. Bring every new machinery section and rule into your AGENTS.md, keep your own text, then delete the copy.`);
+  const total = R.updated.length + R.added.length + R.removed.length + R.merge.length + R.seeded.length + R.mode.length;
+  if (!total && agents === 'unchanged') L.push('Everything Harold owns already matches the starter.');
+  else if (!dry) {
+    L.push('');
+    L.push(`Next: ${R.merge.length || agents !== 'unchanged' ? 'merge each .upstream copy into its file by hand (keep your changes, take the starter\'s), delete the copy, then ' : ''}run ${CLI(root)} check. The changes are not committed yet: review them with git diff; harold close commits them at the end of the turn.`);
+  }
+  console.log(L.join('\n'));
+  return 0;
+}
+
+// Boot's one line when the starter has moved past what this workspace last updated from. One `git ls-remote`, at
+// most every 12 hours, inside a 2.5-second budget; skipped in scheduled jobs, with no recorded update, and on failure.
+function upstreamNotice(root) {
+  if (isJobEnv() || process.env.HAROLD_HOUSEKEEPING_JOB || process.env.HAROLD_UPDATE_CHECK === '0') return null;
+  const up = readUpstream(root); if (!up.commit) return null;
+  const url = up.url || UPSTREAM_DEFAULT.url, ref = up.ref || UPSTREAM_DEFAULT.ref;
+  const cp = path.join(root, STATE_DIR, UPSTREAM_CHECK); let c = null;
+  try { c = JSON.parse(readFull(cp)); } catch (_) {}
+  let sha = null;
+  if (c && c.url === url && c.ref === ref && Date.now() - c.atMs < (c.sha ? 12 : 1) * 3600000) sha = c.sha;
+  else {
+    const r = spawnSync('git', ['ls-remote', url, `refs/heads/${ref}`], { cwd: root, encoding: 'utf8', timeout: 2500, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    sha = r.status === 0 ? ((r.stdout || '').match(/^([0-9a-f]{40})/) || [])[1] || null : null;
+    try { fs.mkdirSync(path.dirname(cp), { recursive: true }); fs.writeFileSync(cp, JSON.stringify({ url, ref, sha, atMs: Date.now() })); } catch (_) {}
+  }
+  if (!sha || sha === up.commit) return null;
+  // The workspace may have updated from a newer branch that already contains the starter's ref.
+  if (git(root, ['cat-file', '-e', `${sha}^{commit}`]).code === 0 && git(root, ['merge-base', '--is-ancestor', sha, up.commit]).code === 0) return null;
+  return `Harold update available: the starter's ${ref} is at ${sha.slice(0, 7)}; this workspace last updated from ${String(up.commit).slice(0, 7)}${up.date ? ` on ${up.date}` : ''}. See what would change: ${CLI(root)} update --dry-run`;
+}
+
 // ───────────────────────── main ─────────────────────────
 function main() {
   const argv = process.argv.slice(2);
@@ -2041,9 +2297,10 @@ function main() {
     case 'search': case 'related': case 'backlinks': code = cmdIndexQuery(root, cmd, argv.slice(1)); break;
     case 'pulse': code = cmdPulse(root, argv.slice(1)); break;
     case 'index': console.log(rebuildIndex(root, opts.full)); break;
+    case 'update': code = cmdUpdate(root, today, argv.slice(1)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);
