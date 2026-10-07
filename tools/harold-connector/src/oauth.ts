@@ -40,7 +40,14 @@ const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =
 const oauthError = (error: string, description: string, status = 400) => json({ error, error_description: description }, status);
 const text = (body: string, status: number) => new Response(body, { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
 const redirect = (url: string) => new Response(null, { status: 302, headers: { Location: url, "Cache-Control": "no-store" } });
-export const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "*", "Access-Control-Max-Age": "86400" };
+export const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  // Named, not "*": browsers never let "*" cover Authorization.
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID",
+  "Access-Control-Expose-Headers": "WWW-Authenticate, Mcp-Session-Id",
+  "Access-Control-Max-Age": "86400",
+};
 
 export const resourceUrl = (c: Config) => `${c.publicBaseUrl}/mcp`;
 
@@ -58,6 +65,7 @@ export function authorizationServerMetadata(): Response {
     response_modes_supported: ["query"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
+    authorization_response_iss_parameter_supported: true,
     token_endpoint_auth_methods_supported: ["none"],
     scopes_supported: [SCOPE],
     client_id_metadata_document_supported: true,
@@ -197,6 +205,7 @@ export async function authorize(req: Request, deps: Deps): Promise<Response> {
   const state = q.get("state") || "";
   const back = (error: string, description: string) => {
     const u = new URL(redirectUri);
+    u.searchParams.set("iss", c.publicBaseUrl); // RFC 9207
     u.searchParams.set("error", error);
     u.searchParams.set("error_description", description);
     if (state) u.searchParams.set("state", state);
@@ -299,6 +308,7 @@ export async function githubCallback(req: Request, deps: Deps): Promise<Response
   if (!st) return text("This sign-in link has expired or is invalid. Start again from your app.", 400);
   const back = (params: Record<string, string>) => {
     const u = new URL(st.redirect_uri);
+    u.searchParams.set("iss", c.publicBaseUrl); // RFC 9207: some clients (Gemini CLI) reject a callback without it
     for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
     if (st.state) u.searchParams.set("state", st.state);
     return redirect(u.toString());

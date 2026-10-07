@@ -52,13 +52,22 @@ export function createApp(opts: AppOptions = {}) {
       + `${config().publicBaseUrl}/mcp\nSign-in is OAuth with GitHub; tools without OAuth can use a personal access token (npm run token).\n${notReady}`);
   });
 
+  // Browser-based MCP clients call these straight from a web page: answer the preflight (before the token
+  // check, which would refuse it) and mark every response, errors included, as readable cross-origin.
+  for (const p of ["/.well-known/*", "/register", "/token", "/mcp", "/mcp/"]) {
+    app.use(p, async (c, next) => {
+      if (c.req.method === "OPTIONS") return new Response(null, { status: 204, headers: oauth.CORS });
+      await next();
+      const res = new Response(c.res.body, c.res);
+      for (const [k, v] of Object.entries(oauth.CORS)) if (!res.headers.has(k)) res.headers.set(k, v);
+      c.res = res;
+    });
+  }
+
   app.get("/.well-known/oauth-authorization-server", () => oauth.authorizationServerMetadata());
   app.get("/.well-known/oauth-authorization-server/mcp", () => oauth.authorizationServerMetadata());
   app.get("/.well-known/oauth-protected-resource", () => oauth.protectedResourceMetadata());
   app.get("/.well-known/oauth-protected-resource/mcp", () => oauth.protectedResourceMetadata());
-  app.options("/.well-known/*", () => new Response(null, { status: 204, headers: oauth.CORS }));
-  app.options("/register", () => new Response(null, { status: 204, headers: oauth.CORS }));
-  app.options("/token", () => new Response(null, { status: 204, headers: oauth.CORS }));
 
   app.post("/register", c => oauth.register(c.req.raw));
   app.get("/authorize", c => oauth.authorize(c.req.raw, deps));
@@ -72,6 +81,7 @@ export function createApp(opts: AppOptions = {}) {
     resourceUrl: config().publicBaseUrl,
   })(req);
   app.all("/mcp", c => authed(c.req.raw));
+  app.all("/mcp/", c => authed(new Request(c.req.url.replace(/\/mcp\/(\?|$)/, "/mcp$1"), c.req.raw)));
 
   app.notFound(c => c.text("Not found", 404));
   app.onError((e, c) => { console.error("harold-connector error:", e instanceof Error ? e.message : e); return c.text("Internal error", 500); });
