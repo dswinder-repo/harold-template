@@ -21,7 +21,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SRC = path.resolve(__dirname, '..');
-const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state']);
+const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '.last-boot']);
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
@@ -117,13 +117,14 @@ test('Codex SessionEnd: close --final --detach returns {} at once and finishes i
   const r = run(w, ['close', '--final', '--via=codex', '--detach'], codex('SessionEnd', 'cx-end', { reason: 'other' }));
   assert.ok(Date.now() - t0 < 3000, 'inside the 3-second SessionEnd limit');
   assert.deepStrictEqual(json(r), {});
-  let closed = false;
-  for (let i = 0; i < 60 && !closed; i++) {
+  // The session file is closed first; the summary reaches the log when the detached close ends (after its commit).
+  let closed = false, log = '';
+  for (let i = 0; i < 120 && !(closed && /harold close \(final\) OK/.test(log)); i++) {
     await new Promise(res => setTimeout(res, 250));
     try { closed = JSON.parse(fs.readFileSync(path.join(sessions, file), 'utf8')).session === false; } catch (_) {}
+    try { log = fs.readFileSync(path.join(sessions, '.state/cx-end.detached.log'), 'utf8'); } catch (_) {}
   }
   assert.ok(closed, 'the detached close --final set "session": false');
-  const log = fs.readFileSync(path.join(sessions, '.state/cx-end.detached.log'), 'utf8');
   assert.match(log, /harold close \(final\) OK/);
 });
 
