@@ -2150,6 +2150,11 @@ function cmdUpdate(root, today, argv) {
   const skip = Array.isArray(up.skip) ? up.skip.map(String) : [];
   const owned = p => !isUserContent(p) && man.own.some(x => pathMatches(p, x)) && !man.exclude.some(x => pathMatches(p, x)) && !skip.some(x => pathMatches(p, x)) && !p.endsWith('.upstream');
   const base = up.commit && git(root, ['cat-file', '-e', `${up.commit}^{commit}`]).code === 0 ? up.commit : null;
+  // Never go backwards: a ref that the recorded update already contains (e.g. main, after updating from a newer branch).
+  if (base && head !== base && git(root, ['merge-base', '--is-ancestor', head, base]).code === 0) {
+    console.log(`harold update — starter ${url} ${ref} at ${head.slice(0, 10)} (${when})\nThis workspace already has it: its last update (${base.slice(0, 10)}${up.date ? ` on ${up.date}` : ''}) is newer and contains ${ref}. Nothing to update.`);
+    return 0;
+  }
   const newT = lsTree(root, head), baseT = base ? lsTree(root, base) : new Map();
   const hist = upstreamHistory(root, head, [...man.own, 'AGENTS.md']);
   const tracked = git(root, ['ls-files', '-z'], { timeout: 30000 }).out.split('\0').filter(Boolean);

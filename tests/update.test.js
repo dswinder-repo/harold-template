@@ -133,6 +133,13 @@ test('update with a recorded base: local edits to files the starter did not chan
   assert.match(read(P('vault/templates/daily.md')), /v3 line/);
   assert.ok(!fs.existsSync(P('AGENTS.md.upstream')), 'AGENTS.md unchanged in the starter: no copy');
   assert.strictEqual(JSON.parse(read(P('harold/upstream.json'))).commit, v3);
+  // Never backwards: updating from a ref the recorded update already contains changes nothing.
+  s.u('branch', '-f', 'old', `${v3}~1`); s.u('push', '-q', 'origin', 'old');
+  const back = harold(s.ws, s.home, ['update', '--from', s.bare, '--ref', 'old']);
+  assert.strictEqual(back.code, 0, back.err);
+  assert.match(back.out, /already has it: its last update .* is newer and contains old\. Nothing to update\./);
+  assert.match(read(P('bin/harold-mcp')), /# v3/);
+  assert.strictEqual(JSON.parse(read(P('harold/upstream.json'))).commit, v3);
   // An edited file the starter then changes gets a .upstream copy; once merged to match, the next update removes it.
   write(U('bin/harold-setup-crm'), read(U('bin/harold-setup-crm')) + '\n# v4\n');
   s.commitUp('v4');
