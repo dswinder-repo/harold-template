@@ -18,7 +18,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SRC = path.resolve(__dirname, '..');
-const SKIP = new Set(['.git', 'node_modules', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md']);
+const SKIP = new Set(['.git', 'node_modules', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.last-boot']);
 
 function workspace() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'harold-brief-gate-'));
@@ -127,6 +127,13 @@ test('settings are read from ~/.harold/env when not in the environment', () => {
   fs.writeFileSync(envFile, 'export HAROLD_TZ="Asia/Kolkata"\nHAROLD_BRIEF_TIME=09:00\n');
   const r = status(w, { HAROLD_ENV_FILE: envFile, HAROLD_NOW: '2026-10-05T09:05:00' });
   assert.ok(isDue(r)); assert.match(r.out, /HAROLD_TZ=Asia\/Kolkata \(set\), HAROLD_BRIEF_TIME=09:00/);
+});
+
+test('check warns when HAROLD_TZ is unset, on every machine (review X-02)', () => {
+  const unset = JSON.parse(harold(w, ['check', '--json']).out);
+  assert.ok(unset.warnings.some(x => /HAROLD_TZ is not set, so dates and the brief time follow this machine's zone/.test(x)), JSON.stringify(unset.warnings));
+  const set = JSON.parse(harold(w, ['check', '--json'], { HAROLD_TZ: 'America/Chicago' }).out);
+  assert.ok(!set.warnings.some(x => /HAROLD_TZ/.test(x)), JSON.stringify(set.warnings));
 });
 
 test('in GitHub Actions without HAROLD_TZ, say so clearly', () => {
