@@ -41,6 +41,7 @@ harold/.brief-job.json
 harold/.brief-context.md
 harold/.housekeeping-job.json
 harold/.housekeeping-context.md
+harold/.last-boot
 .claude/settings.local.json
 
 # ── Obsidian app state (optional viewer; may hold API keys) ──
