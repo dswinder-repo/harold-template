@@ -13,6 +13,7 @@
 - `people` — wiki-links to `vault/people` cards
 - `competitors` — read by the analyst protocol
 - `card` — the `vault/projects` note
+- `next_step` — the one thing that moves it forward next (`bin/harold pulse` shows it; the card's frontmatter `next_step:` works too)
 - `notes` — anything else
 
 **Ending an engagement = set `status: archived`.** Nothing else changes; the folder, cards and history stay. New projects are added by `playbook/core/project-intake.md`, usually without being asked: you start talking about something the map does not know, and Harold creates the folder, this entry, the vault card and the cross-links.
@@ -29,6 +30,7 @@
 - people: [[Jane Doe]]
 - competitors: Globex
 - card: vault/projects/example-project.md
+- next_step: Send Jane Doe the signed NDA
 - notes: Starter example. Replace it with your first real project, or set status: archived.
 
 ## Harold (this system)
