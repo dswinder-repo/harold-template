@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { findStart, gaps, parseGraph, related, relatedText, resolveName } from "../../src/graph.js";
+import { findStart, gaps, hubDegree, isArchived, parseGraph, related, relatedText, resolveName } from "../../src/graph.js";
 import { HaroldRepo } from "../../src/github.js";
 import { FakeGithub } from "./fakes.js";
 import { OWNER, setTestEnv } from "./env.js";
@@ -67,6 +67,37 @@ describe("related (as bin/harold related) and gaps", () => {
     expect(rows.filter(r => r.type === "daily")).toHaveLength(3);
     expect(hiddenDaily).toHaveLength(2);
     expect(total).toBe(3 + DAILIES.length + 1 /* Bob; the decision shares only Acme: depth 2 */);
+  });
+
+  it("HAROLD_HUB_DEGREE (default 40): a note linked more than that is a hub and makes nothing shared", () => {
+    expect(hubDegree()).toBe(40);
+    process.env.HAROLD_HUB_DEGREE = "4";                                         // Acme has 5 links
+    try {
+      expect(hubDegree()).toBe(4);
+      const { rows } = related(g, [JANE], 1, 15);
+      expect(rows.find(r => r.path === BOB)).toBeUndefined();                    // only Pilot is left in common
+      expect(rows.find(r => r.path === ACME)).toMatchObject({ relation: "both" }); // a hub is still a direct link
+    } finally { delete process.env.HAROLD_HUB_DEGREE; }
+    process.env.HAROLD_HUB_DEGREE = "not a number";
+    try { expect(hubDegree()).toBe(40); } finally { delete process.env.HAROLD_HUB_DEGREE; }
+  });
+
+  it("archived notes are never stale (an archive/ folder, a *-archive.md file, or type archive)", () => {
+    const old = "2025-01-01";
+    const withArchives = graphJson().replace('"nodes":[\n', `"nodes":[\n${[
+      ["vault/people/archive/Old Contact.md", "Old Contact", "person", old],
+      ["dashboard/status-archive.md", "Status archive", "file", old],
+      ["harold/learnings-old.md", "Learnings old", "archive", old],
+      ["vault/people/Still Live.md", "Still Live", "person", old],
+    ].map(r => JSON.stringify(r)).join(",\n")},\n`);
+    const ga = parseGraph(withArchives, TODAY);
+    expect(isArchived("vault/people/archive/Old Contact.md")).toBe(true);
+    expect(isArchived("dashboard/status-archive.md")).toBe(true);
+    expect(isArchived("vault/archive.md")).toBe(false);
+    expect(ga.isStale(ga.node("vault/people/archive/Old Contact.md"))).toBe(false);
+    expect(ga.isStale(ga.node("dashboard/status-archive.md"))).toBe(false);
+    expect(ga.isStale(ga.node("harold/learnings-old.md"))).toBe(false);
+    expect(ga.isStale(ga.node("vault/people/Still Live.md"))).toBe(true);
   });
 
   it("depth 2 adds every note 2 hops out", () => {
