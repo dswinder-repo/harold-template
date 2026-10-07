@@ -1168,6 +1168,34 @@ function knowledgeDirs(root) {
   return [...new Set([...std, ...folders])];
 }
 
+// A task reference on an action item: a tracker ID (ABC-123), a URL, or "(no task: <reason>)".
+// The ID is case-sensitive ("abc-123" in prose is not one); the no-task marker needs a reason.
+const TASK_REFS = [/\b[A-Z][A-Z0-9]{1,9}-\d+\b/, /https?:\/\/\S+/, /\(no task:\s*[^)\s][^)]*\)/i];
+const hasTaskRef = s => TASK_REFS.some(re => re.test(s));
+
+// Top-level list items under any heading matching /action items/i (until the next heading of the same or a
+// higher level) that carry no task reference. Fenced code is skipped; nested sub-items are detail, not items.
+function actionItemsWithoutTask(text) {
+  const lines = text.split(/\r?\n/), out = [];
+  let level = 0, fence = false, items = [];
+  const flush = () => { if (!items.length) return; const top = Math.min(...items.map(i => i.indent)); for (const i of items) if (i.indent === top && !hasTaskRef(i.text)) out.push(i); items = []; };
+  lines.forEach((l, n) => {
+    if (/^\s*(```|~~~)/.test(l)) { fence = !fence; return; }
+    if (fence) return;
+    const h = l.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      if (level && h[1].length <= level) { flush(); level = 0; }
+      if (!level && /action items/i.test(h[2])) level = h[1].length;
+      return;
+    }
+    if (!level) return;
+    const li = l.match(/^(\s*)(?:[-*+]|\d+[.)])\s+(.*\S)\s*$/);
+    if (li) items.push({ indent: li[1].replace(/\t/g, '    ').length, line: n + 1, text: l.trim() });
+  });
+  flush();
+  return out;
+}
+
 function changedSince(root, sinceMs, dirs) {
   const out = [];
   for (const d of dirs) walk(path.join(root, d), p => { try { return fs.statSync(p).mtimeMs >= sinceMs && !/\.DS_Store$|\/\.state\//.test(p); } catch (_) { return false; } }, out);
@@ -1280,6 +1308,16 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
     if (!dated || !filed) problems.push(`contact touched but not fully filed: ${name} — ${!dated ? `set last_updated: ${today.iso} in its frontmatter; ` : ''}${!filed ? `the CRM has no record of this contact being written today: write it with the CRM tool (crm_upsert_contact on the connector or harold_upsert_contact on harold-mcp; the log_interaction tool for a conversation). Written through the connector and this computer has no CRM credentials? Record it: ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","applied":"connector"}'. If the CRM is unreachable, queue it instead with ${CLI(root)} file crm '{"contact":"${name}","action":"upsert_contact","payload":{...}}' and say it was queued.` : ''}`);
   }
+
+  // 3b. action items became tasks: in a meeting note added or changed this session, every top-level list item
+  //     under an "Action items" heading carries a task reference (a tracker ID such as ABC-123, a URL, or
+  //     "(no task: <reason>)"). Notes not touched this session are never checked.
+  const untasked = [], untaskedNotes = new Set();
+  for (const f of changed.filter(f => f.startsWith('vault/meetings/') && f.endsWith('.md'))) {
+    let text; try { text = readFull(path.join(root, f)); } catch (_) { continue; }
+    for (const it of actionItemsWithoutTask(text)) { untaskedNotes.add(f); untasked.push(`${f}:${it.line}: ${it.text.length > 120 ? it.text.slice(0, 117) + '...' : it.text}`); }
+  }
+  if (untasked.length) problems.push(`action items without a task in ${[...untaskedNotes].join(', ')}: every commitment in a meeting note becomes a task automatically. Create each one in the task manager (${path.join(root, 'bin', 'harold-linear')} create "<title>" --project <name> --due YYYY-MM-DD, or the task manager's own tool, e.g. task_create on the connector) and write its ID on the item, e.g. "- Send the revised deck (ABC-123)". An item that should not become a task says why: "(no task: <reason>)". Items:\n  ${untasked.slice(0, 12).join('\n  ')}${untasked.length > 12 ? `\n  (+${untasked.length - 12} more)` : ''}`);
 
   // 4. scheduled work recorded
   const c = runCheck(root, today);

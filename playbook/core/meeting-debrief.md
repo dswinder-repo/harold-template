@@ -3,7 +3,7 @@
 > **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
 
 **Purpose:** Capture a meeting's outcomes and file them into the CRM, vault, tasks and facts so nothing is lost.
-**Trigger:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted notes or a transcript, or any mention of a completed meeting with a contact.
+**Trigger:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted notes or a transcript, a forwarded email, or any mention of a completed meeting with a contact.
 
 ---
 
@@ -14,6 +14,7 @@ The operator may provide any of:
 - **A transcript** from a meeting-transcription tool
 - **A recording** to be transcribed first
 - **A quick dump** of unstructured thoughts about how it went
+- **A forwarded email** with commitments in it
 
 Harold processes whatever is provided, then **asks follow-up questions only for the gaps**.
 
@@ -71,11 +72,14 @@ Target the gaps only. Never re-ask what the notes already answer.
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"meeting","subject":"...","body":"..."}}'
 ```
 
-### 4. Create tasks
-For each action item:
-- **Task manager (Linear by default):** clear title, owner, due date, linked to the right project (resolve it with `bin/harold where <topic>`).
-- **`crm_task` / `harold_crm_task`** for contact-specific follow-ups ("Send case studies to Jane Doe", "Schedule follow-up with Sam Lee"), with due dates taken from what was said ("by Friday", "next week"). Queue with `bin/harold file crm` (`action: crm_task`) if the CRM is down.
-- *If the task manager is unreachable:* list the tasks in today's daily note under "Tasks to create" so the next session files them.
+### 4. Create tasks (automatically, never on request)
+Every commitment in the input becomes a task, without asking the operator first: something the operator said they would do, and something someone owes the operator. This applies to pasted call notes, transcripts and forwarded emails alike. (Harold does not read email on its own; it acts on what is pasted or forwarded.)
+1. **Check what is open first** so nothing is created twice: `bin/harold-linear tasks`, `task_list` on the connector, or the task manager's own tool.
+2. **One task per commitment in the task manager (Linear by default):** `bin/harold-linear create "<title>" --project <name> --due YYYY-MM-DD`, `task_create` on the connector, or the task manager's own tool. Title: the operator's own to-dos as a plain action ("Send the case studies to Jane Doe"); things owed to the operator as "Follow up: <who> owes <what>". Due date when stated or clearly implied ("by Friday", "next week"); project from `bin/harold where <topic>`.
+3. **`crm_task` / `harold_crm_task` as well** when the follow-up is tied to a contact ("Schedule follow-up with Sam Lee"). Queue with `bin/harold file crm` (`action: crm_task`) if the CRM is down.
+4. **Write each task ID into the meeting note's `## Action items`** (step 7), one item per commitment: `- [ ] Send the case studies to Jane Doe, due 2026-10-10 (ABC-123)`. A task URL works in place of the ID. An item that should not become a task says why: `(no task: <reason>)`. `bin/harold close` blocks on any item under that heading in a meeting note changed this session that has neither.
+5. **Say what was created**, one line per task: ID, title, due date.
+- *If the task manager is unreachable:* mark the items `(no task: task manager unreachable, see daily note)` and list them in today's daily note under "Tasks to create" so the next session files them.
 
 ### 5. Update the relationship
 All three together, per the CRM filing protocol:
@@ -99,7 +103,7 @@ If the contact belongs to a project, also update that project's folder or `vault
 **If a fact contradicts an existing entry:** update that entry with the new date. Don't add a duplicate.
 
 ### 7. Vault notes
-- **Always** create `vault/meetings/YYYY-MM-DD-<contact-slug>.md` from `vault/templates/meeting.md`: attendees, decisions, action items, and `[[wiki-links]]` to people and companies.
+- **Always** create `vault/meetings/YYYY-MM-DD-<contact-slug>.md` from `vault/templates/meeting.md`: attendees, decisions, action items (each with its task ID from step 4), and `[[wiki-links]]` to people and companies.
 - If the meeting surfaced market, competitor or strategy intel, create `vault/intel/<topic-slug>.md` from `vault/templates/intel.md` (mark it durable or timely) and run `playbook/core/analyst.md` on it.
 
 ### 8. Draft the follow-up (if needed)
@@ -184,7 +188,7 @@ Best,
 
 - [ ] Gate checked for every attendee (`crm: none` and `HAROLD_NO_LOG_TYPES`, if set, respected)
 - [ ] `crm_log_interaction` / `harold_log_interaction` called (or queued) for each contact
-- [ ] Tasks created in the task manager; `crm_task` / `harold_crm_task` for contact-specific follow-ups
+- [ ] A task for every commitment, created without asking (open tasks checked first); `crm_task` / `harold_crm_task` for contact-specific follow-ups; every `## Action items` line carries its task ID
 - [ ] `crm_upsert_contact` / `harold_upsert_contact` called; pipeline entry added/moved/closed only if the conversation established it
 - [ ] `vault/people/` profile evolved (warmth, status, `last_updated`, timeline)
 - [ ] Atomic facts in `harold/facts.md` (contradictions updated, not duplicated)

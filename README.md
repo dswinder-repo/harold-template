@@ -9,7 +9,7 @@ Harold is an AI chief of staff that works with any AI tool and any model: it is 
 Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/harold`, a zero-dependency Node program that runs at the start and end of every session.
 
 - **`bin/harold boot`** gets the real date, verifies that the constitution, every core file and every playbook can be read, loads the lessons, the project map, alerts, blockers and the scheduled work that is due, and registers the session. If anything cannot be read, it **refuses** rather than letting the session start blind.
-- **`bin/harold close`** runs at the end of every turn. It checks that changed knowledge was written to today's daily note, that every contact touched was filed, and that due scheduled work was recorded. If something is missing it blocks the turn with the exact list. When everything passes, it scans for secrets and commits and pushes the workspace.
+- **`bin/harold close`** runs at the end of every turn. It checks that changed knowledge was written to today's daily note, that every contact touched was filed, that every action item in a meeting note written this session carries its task ID, and that due scheduled work was recorded. If something is missing it blocks the turn with the exact list. When everything passes, it scans for secrets and commits and pushes the workspace.
 
 ## Quick start
 
@@ -57,7 +57,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
    - Optional AI (contact research, enrichment, meeting prep) runs on Google Gemini, whose free tier covers it: get a free API key at [Google AI Studio](https://aistudio.google.com/apikey) and set it as `GEMINI_API_KEY` in the host's environment variables (and in `tools/harold-crm/.env.local` for local development). Without it, the AI buttons say AI is off.
 
-5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on.
+5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on. Action items become tasks automatically: paste call notes or a transcript, or forward an email, and every commitment in it (yours, or something someone owes you) becomes a task without you asking, with its ID written into the meeting note's `## Action items`. From a chat app, set the same two variables on the connector (`task_list`, `task_create`).
 
 6. **The connector and the scheduled jobs.** The hosted connector lets any MCP client (a chat app on your phone or in a browser, a coding agent, a scheduled job) read and write Harold without the workspace folder ([below](#from-any-chat-app-the-hosted-connector)); you deploy it once. The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
 

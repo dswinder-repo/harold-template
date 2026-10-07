@@ -33,8 +33,10 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 | `crm_upsert_contact` | write | Creates or updates a contact. The type is free text from your own list (as in `dashboard/people.md`). Never places anyone in the pipeline. |
 | `crm_pipeline` | write | The one pipeline: add (a purpose is required), move, close, list. |
 | `crm_task` | write | Contact follow-up tasks: create, update, complete, cancel, list. |
+| `task_list` | read | Open tasks in your task manager (Linear, team `LINEAR_TEAM_KEY`), most recently updated first, with ID, project, state, due date and URL; optional text filter. The model calls it before `task_create` so nothing is created twice. |
+| `task_create` | write | One task in your task manager: title, optional description, due date (`YYYY-MM-DD`), project (by name) and priority, the same calls as `bin/harold-linear create`. An open task with the same title is returned instead of a duplicate. Refuses secrets. The instructions tell the model to create one per commitment whenever you paste meeting notes, a transcript or a forwarded email, without being asked, and to write each task ID into the meeting note's `## Action items`. |
 
-Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "not configured" and everything else works.
+Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "not configured" and everything else works. Without `LINEAR_API_KEY` and `LINEAR_TEAM_KEY`, `task_list` and `task_create` say so plainly and point the model at `crm_task` for contact follow-ups.
 
 ## Security model
 
@@ -107,6 +109,8 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `HAROLD_COMMIT_EMAIL` | no | `you@example.com` | Commit author email. Default `harold-connector@users.noreply.github.com`. |
 | `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM. Without it the CRM tools say "not configured". |
 | `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM (server side only; never in the repository). |
+| `LINEAR_API_KEY` | no | a Linear personal API key | The task manager, for `task_list` and `task_create` (server side only; never in the repository). Without it those two tools say "not configured". |
+| `LINEAR_TEAM_KEY` | no | `ENG` | Your Linear team's issue prefix (`ENG` for `ENG-123`). Same settings as in `~/.harold/env`. |
 
 Set `HAROLD_TZ`: otherwise "today", the chat-log file name and note dates are UTC dates. To replace a single secret later on Vercel: `vercel env rm GITHUB_CLIENT_SECRET production`, `vercel env add GITHUB_CLIENT_SECRET production`, then redeploy.
 
@@ -230,6 +234,7 @@ Local server: `PORT=8787 npm run dev` with the variables from `.env.example` and
 - `src/kb.ts`: knowledge-base reads and writes. `src/github.ts`: GitHub API. `src/text.ts`: dates, frontmatter, secret scan.
 - `src/projects.ts`, `src/learnings.ts`: ports of `bin/harold where` and `bin/harold file learning`.
 - `src/graph.ts`: `harold_related`, a port of `bin/harold related` over `harold/graph.json`. `src/stale.ts`: `crm_stale`. `src/morning.ts`: the critical lessons, housekeeping notes and Step 0 in `harold_today`.
+- `src/tasks.ts`: `task_list` and `task_create`, Linear's GraphQL API as `bin/harold-linear` calls it.
 - `src/crm.ts`: the CRM, ported from `tools/harold-mcp/server.js` against the same schema. `src/config.ts`: every setting.
 
 Library note: `mcp-handler` 2.x is built on the MCP TypeScript SDK v2 (`@modelcontextprotocol/server`). The tests connect with both the 1.31 client (`@modelcontextprotocol/sdk`) and the v2 client (`@modelcontextprotocol/client`).
