@@ -143,6 +143,8 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 > 4. always state staleness and gaps: `related` ends with a `gaps:` line (stale after `HAROLD_STALE_DAYS`, default 30 days; broken links; orphans; no meeting notes). Say them in the answer.
 >
 > `bin/harold backlinks "<note>"` lists everything pointing at a note. Links are `[[wikilinks]]` (by filename, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related` and similar). The graph lives in `harold/search.db` (gitignored, rebuilt by boot, search and close whenever a file changed); `harold/graph.json` is its committed copy (paths, titles, types, dates and links, no note text), rewritten by close, so a surface without the workspace follows the same links through the connector's `harold_related`, which reads that file. Archived notes (`archive/` folders, `*-archive.md`) are indexed and searchable, and never flagged stale. Resolve any project to its folder with `bin/harold where <topic>`.
+>
+> **Which projects have gone quiet:** `bin/harold pulse` lists each active project's newest activity (what it was and its date), its next step, and a quiet flag after `HAROLD_PULSE_DAYS` (default 14) days without any; boot prints the quiet ones. A project with no next step recorded is a gap: say it, and record the step as `next_step:` in its `harold/projects.md` entry once the operator names it. The connector's `harold_pulse` gives the same answer.
 
 ---
 
@@ -339,7 +341,8 @@ These trigger on natural language; no slash prefix needed. They work the same in
 
 1. Read `dashboard/status.md`, `harold/alerts.md` and `harold/blockers.md`
 2. Check for stale relationships with the CRM tool: `crm_stale` on the connector, `harold_cadence_check` on harold-mcp (the same rule)
-3. Present a concise summary: project status, flags, stale relationships, upcoming deadlines
+3. Check which projects have gone quiet: `bin/harold pulse` (`harold_pulse` on the connector, the same answer)
+4. Present a concise summary: project status, quiet projects with their next step, flags, stale relationships, upcoming deadlines
 
 ### /intake — Contact Intake
 
