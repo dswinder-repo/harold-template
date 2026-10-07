@@ -14,6 +14,7 @@ export class FakeGithub {
   concurrentWrite?: (path: string, current: string | undefined) => string;
   calls: string[] = [];
   searchHits: string[] = [];                  // paths /search/code answers with (GitHub code search)
+  commitLog: { date: string; message: string; paths: string[] }[] = [];  // what /repos/:o/:r/commits?path= answers from
 
   sha(s: string) { return createHash("sha1").update(s).digest("hex"); }
 
@@ -60,6 +61,12 @@ export class FakeGithub {
         this.puts.push({ path, message: body.message, author: body.author, branch: body.branch });
         return res(200, { content: { sha: this.sha(text) }, commit: { sha: this.sha(body.message + text + this.puts.length) } });
       }
+    }
+    if (url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/commits$/) && method === "GET") {
+      const p = url.searchParams.get("path") || "";
+      const hits = this.commitLog.filter(c => !p || c.paths.some(x => x === p || x.startsWith(`${p}/`)))
+        .sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).slice(0, Number(url.searchParams.get("per_page") || 30));
+      return res(200, hits.map((c, i) => ({ sha: this.sha(c.message + c.date + i), commit: { message: c.message, committer: { date: c.date }, author: { name: "t", email: "t@example.com", date: c.date } } })));
     }
     if (url.pathname.match(/\/git\/trees\//)) return res(200, { tree: [...this.files.keys()].map(p => ({ path: p, type: "blob", size: this.files.get(p)!.length })) });
     if (url.pathname === "/search/code") return res(200, { items: this.searchHits.map(path => ({ path, text_matches: [] })) });
