@@ -28,7 +28,7 @@ How to use it:
   3. when the follow-up is tied to a contact, also call crm_task for that contact;
   4. file the meeting note with harold_note, with an "## Action items" section in which every item carries its task ID (or "(no task: <reason>)");
   5. say in one line per task what was created: ID, title, due date.
-  If task_create says no task manager is configured, use crm_task for contact follow-ups and mark the rest "(no task: no task manager configured)" in the note's Action items.
+  If task_create says no task manager is configured, use the task manager tool this chat has instead (a Jira, Asana, Notion or other task connector) when there is one; otherwise use crm_task for contact follow-ups and mark the rest "(no task: no task manager configured)" in the note's Action items.
 - Keep separate projects separate. Check harold_where when unsure which project something belongs to, and do not mix their notes.
 - Never put passwords, API keys or tokens into Harold; the write tools refuse them.
 - Search reflects the repository's default branch as GitHub last indexed it and can lag a few minutes behind writes made moments ago; read the file directly if you just wrote it. The link graph (harold_related) is as of the last session close.`;

@@ -833,6 +833,7 @@ function cmdBoot(root, today, opts, hook) {
   L.push('');
   const lin = linearSummary(root);
   L.push(`## Linear (task layer, via bin/harold-linear) — ${lin.live ? `live, ${lin.total} open` : lin.none ? 'UNAVAILABLE: ' + lin.err : `no API key here; committed snapshot ${lin.ageH}h old (${P('harold/linear-snapshot.md')})`}`);
+  if (lin.none) L.push(`No task manager is set up here, so action items cannot become tasks yet. Tell the operator once, and offer the two ways: Linear (LINEAR_API_KEY and LINEAR_TEAM_KEY in ~/.harold/env; README, step 5), or any other task manager through its own MCP server in this AI tool.`);
   if (lin.live) {
     const row = i => `- ${i.identifier} [${i.state.name}${i.dueDate ? ', due ' + i.dueDate : ''}] ${i.title}${i.project ? ' (' + i.project.name + ')' : ''}`;
     L.push(`Overdue ${lin.overdue.length} · due today ${lin.dueToday.length} · due this week ${lin.dueWeek.length} · in progress ${lin.inProg.length}. Full table: ${P('harold/linear-snapshot.md')}. Update state with: ${path.join(root, 'bin/harold-linear')} done|start <id>`);
