@@ -26,6 +26,8 @@
  *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
  *                      as CRM interactions (records are still kept current). Empty by default.
  *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
+ *   HAROLD_JOB=1       set by a scheduler that runs only Harold's jobs (as GitHub Actions and Claude Code routines
+ *                      are taken to): today's job marker alone puts close in job mode. Elsewhere a running job does.
  *   HAROLD_NOW         TESTING ONLY: pretend it is this time ("2026-10-05T06:10:00" is wall-clock time
  *                      in HAROLD_TZ; add Z or an offset for an absolute instant).
  *
@@ -78,7 +80,7 @@ function resolveTz() {
   if (raw) return { tz: sys, source: 'system', warning: `HAROLD_TZ "${raw}" is not an IANA time zone name (e.g. America/Chicago, Europe/London); using this machine's zone, ${sys}` };
   if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set the repository variable HAROLD_TZ to your zone, e.g. America/Chicago (Settings → Secrets and variables → Actions → Variables)` };
   if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ in the environment of the routine or cloud environment, e.g. America/Chicago` };
-  return { tz: sys, source: 'system' };
+  return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this machine's zone (${sys}). Set your own zone in ${envFilePath()}, e.g. export HAROLD_TZ="America/Chicago" (scheduled jobs take it as a repository variable)` };
 }
 const TZ_INFO = resolveTz();
 const TZ = TZ_INFO.tz;
@@ -457,16 +459,24 @@ function markWorkspaceStart(root, today) {
   return true;
 }
 
+// Whether a boot here starts the clock in an empty trigger log: a session does, a scheduled job never does.
+function marksWorkspaceStart(root, today) {
+  return !/^(brief-job|housekeeping)-/.test(process.env.HAROLD_SESSION_ID || '') && !inHousekeepingJob(root, today) && !currentJob(root, today) && !(isJobEnv() && loadJob(root));
+}
+
 function computeTriggers(root, today, ctx) {
   const log = triggerLog(root);
   const due = [], overdue = [], info = [];
   const t = today.iso;
-  const start = workspaceStart(log);
+  // Before the first boot (an empty trigger log), judge as that boot will: scheduled work counts from today.
+  const recordedStart = workspaceStart(log);
+  const start = recordedStart || (!log.length && marksWorkspaceStart(root, today) ? t : null);
   const after = d => !start || d > start;  // a day before (or the day of) the first boot was never missed
   const dow = dateOf(t).getUTCDay();
   const lastFriday = addDays(t, -((dow + 2) % 7));
   const weeklyRan = lastRun(log, 'weekly-scan');
-  if (!after(t)) info.push(`Harold started in this workspace today (${start}): the weekly scan, full audit and month-end review count from tomorrow.`);
+  if (!recordedStart && start) info.push('No boot has run in this workspace yet (empty trigger log): the first boot starts the clock, so nothing is overdue. The weekly scan, full audit and month-end review count from the day after it.');
+  else if (!after(t)) info.push(`Harold started in this workspace today (${start}): the weekly scan, full audit and month-end review count from tomorrow.`);
   if (dow === 5) { if (after(t)) due.push({ id: 'weekly-scan', what: 'Weekly summary + quick KB scan', where: 'playbook/core/knowledge-base-health.md (Quick Scan) → harold/weekly-summary.md' }); }
   else if ((!weeklyRan || weeklyRan < lastFriday) && after(lastFriday)) {
     const missed = weeklyRan ? Math.floor(daysBetween(weeklyRan, t) / 7) : null;
@@ -531,7 +541,31 @@ function sizeBudgets(root) {
 // ───────────────────────── session state ─────────────────────────
 const SESSIONS_DIR = 'harold/active-sessions';
 const STATE_DIR = 'harold/active-sessions/.state';
-function sessionId(hook) { return (hook && (hook.session_id || hook.conversation_id)) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || `terminal-${process.ppid}`; }
+function explicitSessionId(hook) { return (hook && (hook.session_id || hook.conversation_id)) || process.env.HAROLD_SESSION_ID || process.env.CLAUDE_SESSION_ID || null; }
+function sessionId(hook) { return explicitSessionId(hook) || `terminal-${process.ppid}`; }
+// harold/.last-boot (gitignored): the latest boot in this workspace (session id, HEAD, time). A tool without hooks runs
+// each command in its own shell, so boot and close never share a parent process; close finds its session here.
+const LAST_BOOT = 'harold/.last-boot';
+function readLastBoot(root) {
+  try { const j = JSON.parse(readFull(path.join(root, LAST_BOOT))); return j && j.id && j.bootedAtMs && (!j.root || j.root === root) ? j : null; } catch (_) { return null; }
+}
+function gitHead(root) { const h = git(root, ['rev-parse', '--verify', '-q', 'HEAD']); return h.code === 0 && h.out ? h.out : null; }
+// close's session: the hook's (or the environment's) id; with none, the session of the latest boot in this workspace.
+function closeSession(root, hook) {
+  const id = explicitSessionId(hook);
+  if (id) return { id };
+  const lb = readLastBoot(root);
+  return lb ? { id: lb.id, lastBoot: lb } : { id: sessionId(hook) };
+}
+// Files that differ from `base` (a commit): tracked changes, committed or not, plus untracked files that are not
+// ignored. null when git cannot say (no repository, an unknown commit), and then the mtime check stands alone.
+function gitChangedSet(root, base) {
+  if (!base) return null;
+  const d = git(root, ['diff', '--relative', '--name-only', '-z', base, '--']);
+  const u = git(root, ['ls-files', '-z', '--others', '--exclude-standard']);
+  if (d.code !== 0 || u.code !== 0) return null;
+  return new Set([...d.out.split('\0'), ...u.out.split('\0')].map(s => s.trim()).filter(Boolean));
+}
 function statePath(root, id) { return path.join(root, STATE_DIR, `${id.replace(/[^A-Za-z0-9_-]/g, '_')}.json`); }
 function loadState(root, id) { try { return JSON.parse(readFull(statePath(root, id))); } catch (_) { return null; } }
 function saveState(root, id, st) { const p = statePath(root, id); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(st, null, 2)); }
@@ -687,7 +721,7 @@ function cmdBoot(root, today, opts, hook) {
   const pull = up.code === 0 ? git(root, ['pull', '--ff-only', '-q'], { timeout: 20000 }) : null;
   // A fresh install (empty trigger log): scheduled work counts from today, not from the template's dates. A
   // scheduled job never marks it: its own gate has already decided what is due.
-  if (!inHousekeepingJob(root, today) && !(isCloudRunner() && loadJob(root))) { try { markWorkspaceStart(root, today); } catch (_) {} }
+  if (marksWorkspaceStart(root, today)) { try { markWorkspaceStart(root, today); } catch (_) {} }
   const c = runCheck(root, today);
   if (pull && pull.code !== 0) c.warnings.push(`git pull --ff-only did not complete (${(pull.err || 'timeout').split('\n')[0].slice(0, 140)}); files from other writers may be stale`);
   if (c.failures.length) {
@@ -723,8 +757,15 @@ function cmdBoot(root, today, opts, hook) {
     const rel = path.join(SESSIONS_DIR, `${slug}.json`);
     fs.mkdirSync(path.join(root, SESSIONS_DIR), { recursive: true });
     fs.writeFileSync(path.join(root, rel), JSON.stringify(blankSession('Booting — set this to what the session is doing'), null, 2));
-    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, date: today.iso, blocks: 0, harness: hook ? `${H.label || hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
+    st = { id, sessionFile: rel, bootedAt: new Date(nowMs).toISOString(), bootedAtMs: nowMs, head: gitHead(root), date: today.iso, blocks: 0, harness: hook ? `${H.label || hook._harness}-hook` : (process.env.CLAUDE_PLUGIN_ROOT ? 'cowork-plugin' : 'terminal') };
     saveState(root, id, st);
+  }
+  // The latest boot in this workspace, for a close that arrives with no session id (a tool without hooks). Scheduled
+  // jobs keep out of it: their boot is not a session anyone will close by hand.
+  if (!process.env.HAROLD_HOUSEKEEPING_JOB && process.env.HAROLD_JOB !== '1' && !/^(brief-job|housekeeping)-/.test(id)) {
+    const lbId = adopted ? adopted.id : id;
+    const lbState = adopted ? adopted : st;
+    try { fs.writeFileSync(path.join(root, LAST_BOOT), JSON.stringify({ id: lbId, root, head: lbState.head || st.head || gitHead(root), bootedAt: new Date(lbState.bootedAtMs).toISOString(), bootedAtMs: lbState.bootedAtMs, sessionFile: st.sessionFile }, null, 2) + '\n'); } catch (_) {}
   }
   if (H.noStartContext) {
     // The model will never see this output. Register the session and leave the context to the agent's own
@@ -1136,29 +1177,26 @@ function changedSince(root, sinceMs, dirs) {
 // harness that loads another tool's hook file) can start close twice at once, and two closes racing
 // through git add/commit/push corrupt each other. The second one steps aside; the first does the work.
 function cmdClose(root, today, opts, hook) {
-  const id = sessionId(hook);
-  const lock = statePath(root, id).replace(/\.json$/, '.closing');
+  const sess = closeSession(root, hook);
+  const lock = statePath(root, sess.id).replace(/\.json$/, '.closing');
   try { fs.mkdirSync(path.dirname(lock), { recursive: true }); fs.mkdirSync(lock); }
   catch (e) {
     let fresh = false; try { fresh = Date.now() - fs.statSync(lock).mtimeMs < 300000; } catch (_) {}
     if (fresh) { if (hook) closeReply(hook, 'ok'); else console.log('harold close: another close for this session is running right now; it does the work'); return 0; }
     try { fs.rmSync(lock, { recursive: true, force: true }); fs.mkdirSync(lock); } catch (_) {}
   }
-  try { return closeOnce(root, today, opts, hook); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} }
+  try { return closeOnce(root, today, opts, hook, sess); } finally { try { fs.rmSync(lock, { recursive: true, force: true }); } catch (_) {} }
 }
 
-function closeOnce(root, today, opts, hook) {
-  if (isCloudRunner()) {
-    // A scheduled job, not a session: an unfinished housekeeping job first, then the brief job, then a
-    // finished or not-due housekeeping marker.
-    const bj = loadJob(root), hj = loadHkJob(root);
-    const hjLive = hj && hj.job && !hj.finished && (hj.date === today.iso || hj.date === addDays(today.iso, -1));
-    if (hjLive) return closeHousekeepingJob(root, today, opts, hook);
-    if (bj && bj.date === today.iso) return closeBriefJob(root, today, opts, hook);
-    if (hj && hj.date === today.iso) return closeHousekeepingJob(root, today, opts, hook);
-  }
-  const id = sessionId(hook);
+function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
+  // A scheduled job, not a session, on any machine: the job is the unit of work (see currentJob).
+  const job = currentJob(root, today);
+  if (job === 'housekeeping') return closeHousekeepingJob(root, today, opts, hook);
+  if (job === 'brief') return closeBriefJob(root, today, opts, hook);
+  const id = sess.id;
   let st = loadState(root, id);
+  // No session id from the harness: this close belongs to the latest boot in this workspace.
+  if (!st && sess.lastBoot) st = { id, bootedAtMs: sess.lastBoot.bootedAtMs, head: sess.lastBoot.head, sessionFile: sess.lastBoot.sessionFile, blocks: 0 };
   const final = !!opts.final;
   const stopHookActive = !!(hook && hook.stop_hook_active);
   const problems = [], notes = [];
@@ -1171,7 +1209,12 @@ function closeOnce(root, today, opts, hook) {
   // A session left open for days would otherwise measure change since Monday and demand a Wednesday
   // note for Monday's work. Never look back past local midnight. Same-day sessions are unaffected.
   const sinceMs = Math.max(bootMs, startOfLocalDayMs());
-  if (!st) notes.push('no boot state for this session (boot did not run in this harness) — checks use a 6h window');
+  // What changed this session is measured against the commit the session booted on (st.head), so files that only
+  // look new (a fresh clone, a checkout, a sync that touched them) never count. Without any boot: only what is
+  // uncommitted now counts.
+  const baseCommit = st ? st.head : gitHead(root);
+  if (sess.lastBoot && !explicitSessionId(hook)) notes.push(`no session id from the harness: using the latest boot in this workspace (${sess.lastBoot.bootedAt || new Date(sess.lastBoot.bootedAtMs).toISOString()})`);
+  if (!st) notes.push('no boot record in this workspace (boot did not run) — only uncommitted changes from the last 6h count');
   // A harness that never shows session-start output to the model (HARNESSES[].noStartContext): until the agent has
   // run boot itself, it is working without its instructions.
   if (hook && (HARNESSES[hook._harness] || {}).noStartContext && st && st.contextDelivered === false && !st.adoptedAt) problems.push(`Harold's context is not loaded: ${hook._harness} does not pass session-start hook output to the model. Run ${CLI(root)} boot now, read what it prints, and check your work against it before you finish.`);
@@ -1188,7 +1231,8 @@ function closeOnce(root, today, opts, hook) {
 
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
-  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/graph.json' && !f.endsWith('search.db'));
+  const sinceBase = gitChangedSet(root, baseCommit);
+  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/graph.json' && !f.endsWith('search.db') && (!sinceBase || sinceBase.has(f)));
   const dailyDir = path.join(root, 'vault/daily');
   const todaysNotes = fs.existsSync(dailyDir) ? fs.readdirSync(dailyDir).filter(f => f.startsWith(today.iso)) : [];
   const freshNote = todaysNotes.some(f => fs.statSync(path.join(dailyDir, f)).mtimeMs >= sinceMs);
@@ -1332,7 +1376,11 @@ function closeOnce(root, today, opts, hook) {
     }
     console.error(reason); return 2;
   }
-  st.blocks = 0; delete st.lastProblems; st.lastCloseOkMs = Date.now(); if (final) { try { fs.unlinkSync(statePath(root, id)); } catch (_) {} } else saveState(root, id, st);
+  st.blocks = 0; delete st.lastProblems; st.lastCloseOkMs = Date.now();
+  if (final) {
+    try { fs.unlinkSync(statePath(root, id)); } catch (_) {}
+    const lb = readLastBoot(root); if (lb && lb.id === id) { try { fs.unlinkSync(path.join(root, LAST_BOOT)); } catch (_) {} }
+  } else saveState(root, id, st);
   const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
   const pushFailed = gitNote.startsWith('PUSH FAILED');
   if (isHook) { return closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); }
@@ -1446,8 +1494,7 @@ function cmdWhere(root, args) {
 //   brief finish   validate, stamp, record the trigger, commit ONLY the brief paths, push
 //   brief status   where today's draft is (the same text boot prints) and whether the brief is due
 //   brief notify   optional phone push through ntfy (NTFY_TOPIC), carrying no brief content
-// While a job marker for today exists in a cloud runner, harold close checks the job instead of session
-// filing: a fresh clone looks like every file changed.
+// While the job runs, harold close checks the job instead of session filing, on any machine (currentJob).
 const BRIEF_JOB = 'harold/.brief-job.json';
 const BRIEF_CONTEXT = 'harold/.brief-context.md';
 const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/crm-queue.jsonl'];
@@ -1623,7 +1670,7 @@ function closeBriefJob(root, today, opts, hook) {
 //   housekeeping finish        verify (recorded, daily note written), commit everything the job changed,
 //                              push. --anyway saves even when unfinished, with a note for the next brief.
 //   housekeeping status        cloud on or off, and the gate for each job today
-// While a job marker exists in a cloud runner, harold close checks the job instead of session filing, and
+// While the job runs (currentJob), harold close checks the job instead of session filing, on any machine, and
 // saves the work anyway when the job cannot be finished: a cloud checkout is thrown away afterwards.
 const HK_JOB_FILE = 'harold/.housekeeping-job.json';
 const HK_CONTEXT = 'harold/.housekeeping-context.md';
@@ -1635,7 +1682,44 @@ function saveHkJob(root, j) { fs.writeFileSync(path.join(root, HK_JOB_FILE), JSO
 function inHousekeepingJob(root, today) {
   if (process.env.HAROLD_HOUSEKEEPING_JOB) return true;
   const j = loadHkJob(root);
-  return !!(j && j.job && !j.finished && isCloudRunner() && (j.date === today.iso || j.date === addDays(today.iso, -1)));
+  if (!(j && j.job && !j.finished)) return false;
+  return isJobEnv() ? (j.date === today.iso || j.date === addDays(today.iso, -1)) : jobRunning(j);
+}
+
+// ───────────────────────── scheduled jobs on any machine ─────────────────────────
+// A brief or housekeeping job is the unit of work while it runs, wherever it runs: harold close checks the job,
+// not session filing (a fresh clone looks like every file changed, and a job is not a conversation).
+// One difference, because it is necessary: where only jobs run (GitHub Actions, a Claude Code routine, or any
+// scheduler that sets HAROLD_JOB=1), today's job marker is enough. On a machine that also runs your sessions (a
+// laptop, a server), the marker counts only while the job is running (started, not finished, fired in the last
+// 6 hours) or in the 10 minutes after it finished (the job agent's own last close), so a leftover marker never
+// stands in for a session's filing.
+function isJobEnv() { return isCloudRunner() || process.env.HAROLD_JOB === '1'; }
+const JOB_RUNNING_MS = 6 * 3600000, JOB_JUST_FINISHED_MS = 10 * 60000;
+function markerMs(j, k) { const t = Date.parse((j && j[k]) || ''); return isNaN(t) ? null : t; }
+function jobRunning(j) {
+  if (!j || j.finished || j.skipped) return false;
+  const f = markerMs(j, 'firedAt');
+  return f !== null && nowDate().getTime() - f < JOB_RUNNING_MS;
+}
+function jobJustFinished(j) {
+  if (!j || !j.finished || j.skipped) return false;  // a not-due gate run did no work: a session's close stays a session's
+  const f = markerMs(j, 'finishedAt'); if (f !== null) return Date.now() - f < JOB_JUST_FINISHED_MS;
+  const g = markerMs(j, 'firedAt'); return g !== null && nowDate().getTime() - g < JOB_JUST_FINISHED_MS;
+}
+// 'housekeeping' | 'brief' | null
+function currentJob(root, today) {
+  const bj = loadJob(root), hj = loadHkJob(root);
+  if (isJobEnv()) {
+    if (hj && hj.job && !hj.finished && (hj.date === today.iso || hj.date === addDays(today.iso, -1))) return 'housekeeping';
+    if (bj && bj.date === today.iso) return 'brief';
+    if (hj && hj.date === today.iso) return 'housekeeping';
+    return null;
+  }
+  if (hj && hj.job && jobRunning(hj)) return 'housekeeping';
+  if (jobRunning(bj) || jobJustFinished(bj)) return 'brief';
+  if (jobJustFinished(hj)) return 'housekeeping';
+  return null;
 }
 function housekeepingNotesNew(root) {
   let t = ''; try { t = readFull(path.join(root, HK_NOTES)); } catch (_) { return []; }
@@ -1859,7 +1943,7 @@ function main() {
   // A hook with a hard time limit (Codex SessionEnd: 3 seconds at most) hands the work to a detached
   // process and returns at once. Its output goes to harold/active-sessions/.state/<session>.detached.log.
   if (opts.detach && cmd === 'close' && !process.env.HAROLD_DETACHED) {
-    const id = sessionId(hook);
+    const id = closeSession(root, hook).id;
     const log = statePath(root, id).replace(/\.json$/, '.detached.log');
     fs.mkdirSync(path.dirname(log), { recursive: true });
     const fd = fs.openSync(log, 'a');
