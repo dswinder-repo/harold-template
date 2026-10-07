@@ -1108,6 +1108,7 @@ function replayCrmQueue(root, opts = {}) {
   const res = { pending: pending.length, applied: [], failed: [], refused: [], deferred: 0, details: [], line: '' };
   if (!pending.length) { res.line = 'CRM queue: nothing waiting'; return res; }
   const n = `${pending.length} queued CRM write${pending.length === 1 ? '' : 's'}`;
+  if (!opts.manual && inScheduledJob(root)) { res.line = `CRM queue: ${n} waiting; scheduled jobs never apply it (the next session does)`; return res; }
   const cfg = crmConfig();
   if (!cfg) { res.line = `CRM queue: ${n} waiting; no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in the environment or ${envFilePath()}, so nothing was replayed here. They go in from the next boot or close that has the CRM credentials`; return res; }
   const probe = crmRequest(cfg, 'GET', 'contacts?select=id&limit=1', undefined, { timeout: 6 });
@@ -1152,7 +1153,7 @@ function replayCrmQueue(root, opts = {}) {
 }
 
 function cmdReplay(root, opts) {
-  const r = replayCrmQueue(root, { dryRun: opts.dryRun, budgetMs: 120000 });
+  const r = replayCrmQueue(root, { dryRun: opts.dryRun, budgetMs: 120000, manual: true });
   if (r.details.length) console.log(r.details.join('\n'));
   console.log(r.line);
   return r.failed.length ? 1 : 0;
@@ -1317,7 +1318,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   }
   if (!problems.length || final || cloudGiveUp) {
     const add = git(root, ['add', '-A']);
-    if (add.code !== 0) gitNote = `git add failed: ${add.err.slice(0, 200)}`;
+    if (add.code !== 0) gitNote = `SAVE FAILED: git add failed: ${add.err.trim().split('\n')[0].slice(0, 200)}`;
     else {
       const staged = git(root, ['diff', '--cached', '--name-only']).out.split('\n').filter(Boolean);
       let refused = false;
@@ -1326,8 +1327,10 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
         if (hits.length) { git(root, ['reset', '-q']); refused = true; problems.push(`refusing to commit: possible secrets in ${hits.join('; ')} — move credentials out of the repo (~/.harold/env) or add the file to .gitignore`); }
         else {
           const label = sf ? path.basename(sf, '.json') : id;
-          const cm = git(root, ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\n${agentTrailer(hook && hook._harness)}`]);
-          if (cm.code !== 0) gitNote = `commit failed: ${cm.err.slice(0, 200)}`;
+          // No git identity on this machine: commit anyway under a neutral one (as the scheduled jobs do) rather than lose the work.
+          const ident = git(root, ['config', 'user.email']).out ? [] : ['-c', 'user.name=Harold (close)', '-c', 'user.email=harold-close@users.noreply.github.com'];
+          const cm = git(root, [...ident, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\n${agentTrailer(hook && hook._harness)}`]);
+          if (cm.code !== 0) gitNote = `SAVE FAILED: commit failed: ${(cm.err || cm.out).trim().split('\n')[0].slice(0, 200)}`;
         }
       }
       if (!gitNote && !refused && isCloudRunner() && git(root, ['remote', 'get-url', 'origin']).code === 0) {
@@ -1382,7 +1385,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     const lb = readLastBoot(root); if (lb && lb.id === id) { try { fs.unlinkSync(path.join(root, LAST_BOOT)); } catch (_) {} }
   } else saveState(root, id, st);
   const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
-  const pushFailed = gitNote.startsWith('PUSH FAILED');
+  const pushFailed = /^(PUSH|SAVE) FAILED/.test(gitNote);
   if (isHook) { return closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); }
   console.log(summary); return pushFailed ? 1 : 0;
 }
@@ -1694,6 +1697,13 @@ function inHousekeepingJob(root, today) {
 // laptop, a server), the marker counts only while the job is running (started, not finished, fired in the last
 // 6 hours) or in the 10 minutes after it finished (the job agent's own last close), so a leftover marker never
 // stands in for a session's filing.
+// A brief or housekeeping job is running here (any machine): its agent never writes to the CRM.
+function inScheduledJob(root) {
+  if (process.env.HAROLD_JOB === '1' || process.env.HAROLD_HOUSEKEEPING_JOB) return true;
+  if (/^(brief-job|housekeeping)-/.test(process.env.HAROLD_SESSION_ID || '')) return true;
+  const today = todayParts(nowDate());
+  return !!(currentJob(root, today) || inHousekeepingJob(root, today));
+}
 function isJobEnv() { return isCloudRunner() || process.env.HAROLD_JOB === '1'; }
 const JOB_RUNNING_MS = 6 * 3600000, JOB_JUST_FINISHED_MS = 10 * 60000;
 function markerMs(j, k) { const t = Date.parse((j && j[k]) || ''); return isNaN(t) ? null : t; }

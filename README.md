@@ -26,7 +26,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    git push -u origin main
    ```
    Until `origin` points at your own repository, boot warns that it still points at the public starter.
-   Requirements: git, Node 18+ and Python 3.8+ (standard library only, for search and the link graph). Each optional component has its own: the CRM web app needs Node 20+ and pnpm, the hosted connector Node 22+ (both only where you build or host them). Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
+   Requirements: git, curl, Node 22+ and Python 3.8+ (standard library only, for search and the link graph). The CRM web app also needs pnpm, only where you build it. Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
 
 2. **Check it works as-is.**
    ```bash
@@ -219,7 +219,7 @@ tests/
   first-run.test.js        a fresh install: first boot and first close pass on any date, with the examples in place
 ```
 
-Run them all with `node --test tests/*.test.js` (Node 18+ and Python 3.8+). `tests/crm.test.js` also runs the CRM app's migration checks once `pnpm install` has run in `tools/harold-crm`.
+Run them all with `node --test tests/*.test.js` (Node 22+ and Python 3.8+). `tests/crm.test.js` also runs the CRM app's migration checks once `pnpm install` has run in `tools/harold-crm`.
 
 ### The CRM model
 
