@@ -15,6 +15,7 @@ How to use it:
 - Before answering about a person, a company, a project or a past decision, look it up rather than relying on memory: call harold_related with the name, title or topic to find the note and follow its links (people, companies, projects, decisions, meetings), then read only the notes that matter with harold_read. harold_person adds the CRM record for a person, harold_where resolves which project a topic belongs to, harold_search finds anything else.
 - Always state staleness and gaps. harold_related ends with a gaps line (notes not updated in 30+ days, broken links, orphans, no meeting notes); say them in your answer, with the date the note was last updated, instead of presenting old notes as current.
 - crm_stale lists who has gone quiet: contacts past their cadence. Use it for "who should I follow up with".
+- harold_pulse lists which projects have gone quiet: each active project's last activity, its next step, and a flag when nothing happened in more than 14 days (HAROLD_PULSE_DAYS). Use it for "which projects have gone quiet" or "what am I dropping"; say a missing next step as a gap. harold_today already lists the quiet ones.
 - File what the owner shares without being asked. When the owner tells you something new (a fact, a decision, how a meeting went, a correction), file it in the same turn, then say in one line what you filed and where:
   - harold_capture is the default "remember this": it adds a timestamped line to today's chat log.
   - harold_note creates a durable note: intel, a decision, a meeting, a company or a project.
