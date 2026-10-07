@@ -1,6 +1,7 @@
 // harold_related: follow the links between notes, from harold/graph.json.
 // graph.json is the committed copy of the link graph that bin/harold-index builds (bin/harold close
-// writes it): nodes [path, title, type, last_updated], edges [src, dst, kind], broken [src, target, kind].
+// writes it): nodes [path, title, type, last_updated], edges [src, dst, kind], broken [src, target, kind],
+// mentions [src, project] (daily and meeting notes that name a project of harold/projects.md; read by pulse.ts).
 // This file ports the ranking and the gaps line of `bin/harold related` (bin/harold-index) so a chat
 // gets the same answer a terminal session does, from the same file, through the same GitHub access.
 
@@ -34,7 +35,9 @@ export class Graph {
   out = new Map<string, Map<string, string>>();   // src -> dst -> kind (first kind wins, as bin/harold-index)
   inn = new Map<string, Map<string, string>>();
   broken = new Map<string, { target: string; kind: string }[]>();
+  mentions = new Map<string, Set<string>>();     // project name -> daily and meeting notes that name it
   staleDays = 30;
+  pulseDays: number | null = null;               // the workspace's HAROLD_PULSE_DAYS, when graph.json carries it
   constructor(public today: string) {}
 
   node(p: string): GNode {
@@ -62,6 +65,7 @@ export function parseGraph(text: string, today: string): Graph {
   const idx = (fields: unknown, name: string, dflt: number) => (Array.isArray(fields) && fields.indexOf(name) >= 0 ? fields.indexOf(name) : dflt);
   if (!Array.isArray(j.nodes) || !Array.isArray(j.edges)) throw new Error(`${GRAPH_PATH} has no nodes/edges; the next bin/harold close rewrites it.`);
   if (typeof j.stale_days === "number" && j.stale_days > 0) g.staleDays = j.stale_days;
+  if (typeof j.pulse_days === "number" && Number.isInteger(j.pulse_days) && j.pulse_days >= 0) g.pulseDays = j.pulse_days;
   const nf = j.node_fields, ef = j.edge_fields, bf = j.broken_fields;
   const [np, nt, nty, nlu] = [idx(nf, "path", 0), idx(nf, "title", 1), idx(nf, "type", 2), idx(nf, "last_updated", 3)];
   for (const r of j.nodes as unknown[][]) {
@@ -86,6 +90,15 @@ export function parseGraph(text: string, today: string): Graph {
     if (!s) continue;
     if (!g.broken.has(s)) g.broken.set(s, []);
     g.broken.get(s)!.push({ target: String(r[bt] ?? ""), kind: String(r[bk] ?? "") });
+  }
+  const mf = j.mention_fields;
+  const [ms, mp] = [idx(mf, "src", 0), idx(mf, "project", 1)];
+  for (const r of (Array.isArray(j.mentions) ? j.mentions : []) as unknown[][]) {
+    if (!Array.isArray(r)) continue;
+    const s = String(r[ms] ?? ""), p = String(r[mp] ?? "");
+    if (!s || !p) continue;
+    if (!g.mentions.has(p)) g.mentions.set(p, new Set());
+    g.mentions.get(p)!.add(s);
   }
   return g;
 }
