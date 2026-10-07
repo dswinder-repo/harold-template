@@ -1,15 +1,16 @@
 // Sealed blobs: AES-256-GCM, no database anywhere.
 //
 // Every artefact the OAuth server hands out (client_id, state, authorization code, access token,
-// refresh token) is JSON sealed with the TOKEN_KEY. The blob's purpose ("client", "code", ...) is
+// refresh token), and every personal access token (src/pat.ts), is JSON sealed with the TOKEN_KEY. The blob's purpose ("client", "code", ...) is
 // bound in as additional authenticated data, so a blob minted for one purpose cannot be replayed
-// as another (an authorization code is not an access token, a client_id is not a refresh token).
+// as another (an authorization code is not an access token, a client_id is not a refresh token, a
+// personal access token is none of them).
 //
 // Wire format: base64url( version(1) | iv(12) | ciphertext | tag(16) )
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-export type Purpose = "client" | "state" | "code" | "access" | "refresh";
+export type Purpose = "client" | "state" | "code" | "access" | "refresh" | "pat";
 const VERSION = 1;
 
 export function seal(key: Buffer, purpose: Purpose, payload: Record<string, unknown>): string {

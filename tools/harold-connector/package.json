@@ -2,7 +2,7 @@
   "name": "harold-connector",
   "version": "0.1.0",
   "private": true,
-  "description": "Optional hosted remote MCP server for your Harold knowledge base and CRM",
+  "description": "Hosted remote MCP server for your Harold knowledge base and CRM, usable from any MCP client",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -11,6 +11,7 @@
     "dev": "tsx local.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run test/unit",
+    "token": "tsx scripts/mint-token.ts",
     "test:e2e:read": "tsx test/e2e/read.e2e.ts",
     "test:e2e:write": "tsx test/e2e/write.e2e.ts",
     "test:e2e:crm": "tsx test/e2e/crm-read.e2e.ts"

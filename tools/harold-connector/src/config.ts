@@ -2,13 +2,16 @@
 // set process.env before each case and a missing variable fails loudly where it is needed.
 // Every value is an environment variable; nothing about one owner or one deployment is built in.
 
+import { redirectHostsFromEnv, type RedirectHosts } from "./redirects.js";
+
 export interface Config {
   tokenKey: Buffer;
   githubClientId: string;
   githubClientSecret: string;
   allowedGithubLogin: string;
   allowedGithubId: number;
-  allowedRedirectHosts: string[];
+  /** Optional narrowing of redirect targets; null (the default) means any https host. See redirects.ts. */
+  allowedRedirectHosts: RedirectHosts;
   publicBaseUrl: string;
 }
 // HAROLD_REPO / HAROLD_BRANCH are read by repoConfig() and the CRM variables by crm.supabaseFromEnv(),
@@ -36,8 +39,7 @@ export function config(): Config {
     githubClientSecret: required("GITHUB_CLIENT_SECRET"),
     allowedGithubLogin: required("ALLOWED_GITHUB_LOGIN", "the owner's GitHub login"),
     allowedGithubId: id,
-    allowedRedirectHosts: (process.env.ALLOWED_REDIRECT_HOSTS || "claude.ai,claude.com")
-      .split(",").map(s => s.trim().toLowerCase()).filter(Boolean),
+    allowedRedirectHosts: redirectHostsFromEnv(),
     publicBaseUrl: required("PUBLIC_BASE_URL").replace(/\/+$/, ""),
   };
 }
