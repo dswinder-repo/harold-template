@@ -15,12 +15,13 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 
 | Tool | Kind | What it does |
 |---|---|---|
-| `harold_today` | read | Today's date in `HAROLD_TZ`, today's morning brief draft (`harold/briefs/<date>.md`, if you use the scheduled brief), the Current Alerts section of `harold/alerts.md`, the critical lessons from `harold/learnings.jsonl`, the housekeeping notes waiting under `## New` in `harold/briefs/housekeeping-notes.md`, the five latest daily notes, and the brief's Step 0: show the draft, ask what came in overnight, then the day's priorities. |
+| `harold_today` | read | Today's date in `HAROLD_TZ`, today's morning brief draft (`harold/briefs/<date>.md`, if you use the scheduled brief), the Current Alerts section of `harold/alerts.md`, the critical lessons from `harold/learnings.jsonl`, the housekeeping notes waiting under `## New` in `harold/briefs/housekeeping-notes.md`, the active projects that have gone quiet (as `harold_pulse`), the five latest daily notes, and the brief's Step 0: show the draft, ask what came in overnight, then the day's priorities. |
 | `harold_search` | read | Searches the repository (GitHub code search; falls back to matching file names). |
 | `harold_read` | read | Reads one text file by repo path. Refuses binaries, truncates very long files. |
 | `harold_list` | read | Lists a folder. |
 | `harold_where` | read | Resolves a topic to a project from `harold/projects.md`, with the same scoring as `bin/harold where`. |
 | `harold_related` | read | Follows the links from a note (a path, a title, or a topic found with the same search as `harold_search`): the linked notes 1 to 2 hops out, each with how it is linked and its `last_updated` date, then a gaps line (not updated in 30+ days, broken links, orphans, no meeting notes; archived notes are never stale). Reads `harold/graph.json`, which `bin/harold close` writes; the same ranking as `bin/harold related`. A workspace without that file gets a plain message saying how to produce it. |
+| `harold_pulse` | read | Which projects have gone quiet: for each active project in `harold/projects.md`, its newest activity (a note linked to its card, a note in its folder, a daily or meeting note that names it, or a commit touching its folder) with what it was and its date, its next step (`next_step:` in the map entry or the card, or a `Next step:` line in the card or the folder README), and a quiet flag after `HAROLD_PULSE_DAYS` days (default 14) without any. The same answer as `bin/harold pulse`, from `harold/graph.json`, the project map and the commit history; `all: true` adds every next step and the projects that are not active. |
 | `harold_person` | read | A person's card in `vault/people/` (fuzzy name match) plus, when the CRM is configured, their CRM record. |
 | `crm_search_contacts` | read | Filters CRM contacts (type, warmth, stage, purpose, project, keyword, ...). |
 | `crm_get_contact` | read | One contact's full record: interactions, open tasks, stage history. |
@@ -106,6 +107,7 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `HAROLD_NO_LOG_TYPES` | no | `team` | Contact types whose conversations are never logged as interactions. Empty by default. Same setting as in `~/.harold/env`. |
 | `HAROLD_NO_CADENCE_TYPES` | no | `other` | Contact types `crm_stale` never checks. Default `other`; set it empty to check every type. Same setting as in `~/.harold/env`. |
 | `HAROLD_HUB_DEGREE` | no | `40` (default) | `harold_related`: a note with more links than this is a hub and no longer makes its neighbours related. Same setting as in `~/.harold/env`. |
+| `HAROLD_PULSE_DAYS` | no | `14` (default) | `harold_pulse`: days without activity after which an active project is quiet. Unset, it uses the value the workspace wrote into `harold/graph.json` (its `HAROLD_PULSE_DAYS`), else 14. |
 | `HAROLD_COMMIT_EMAIL` | no | `you@example.com` | Commit author email. Default `harold-connector@users.noreply.github.com`. |
 | `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM. Without it the CRM tools say "not configured". |
 | `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM (server side only; never in the repository). |
@@ -233,7 +235,7 @@ Local server: `PORT=8787 npm run dev` with the variables from `.env.example` and
 - `src/tools.ts`: MCP tools. `src/instructions.ts`: what the client's model is told when the connector is on.
 - `src/kb.ts`: knowledge-base reads and writes. `src/github.ts`: GitHub API. `src/text.ts`: dates, frontmatter, secret scan.
 - `src/projects.ts`, `src/learnings.ts`: ports of `bin/harold where` and `bin/harold file learning`.
-- `src/graph.ts`: `harold_related`, a port of `bin/harold related` over `harold/graph.json`. `src/stale.ts`: `crm_stale`. `src/morning.ts`: the critical lessons, housekeeping notes and Step 0 in `harold_today`.
+- `src/graph.ts`: `harold_related`, a port of `bin/harold related` over `harold/graph.json`. `src/stale.ts`: `crm_stale`. `src/pulse.ts`: `harold_pulse`, the same procedure as `bin/harold pulse` (`test/unit/pulse-fixture.json` is shared with the workspace's Python tests, so both give the same text for the same repository). `src/morning.ts`: the critical lessons, housekeeping notes and Step 0 in `harold_today`.
 - `src/tasks.ts`: `task_list` and `task_create`, Linear's GraphQL API as `bin/harold-linear` calls it.
 - `src/crm.ts`: the CRM, ported from `tools/harold-mcp/server.js` against the same schema. `src/config.ts`: every setting.
 
