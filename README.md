@@ -1,4 +1,4 @@
-# Harold 2.1 — starter workspace
+# Harold 2.0 — starter workspace
 
 Harold is an AI chief of staff that works with any AI tool and any model: it is platform-, model- and harness-agnostic, and runs in any harness that can read `AGENTS.md` and run a shell command, from any computer or from the cloud. Every harness with lifecycle hooks is wired: boot and close run on their own in Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI, Qwen Code, Copilot CLI, Grok Build, Kimi Code, goose, Hermes Agent, Cline, opencode, Amp and OpenClaw. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
 
