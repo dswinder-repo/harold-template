@@ -8,7 +8,7 @@ Harold is an AI chief of staff that works with any AI tool and any model: it is 
 
 Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/harold`, a zero-dependency Node program that runs at the start and end of every session.
 
-- **`bin/harold boot`** gets the real date, verifies that the constitution, every core file and every playbook can be read, loads the lessons, the project map, alerts, blockers and the scheduled work that is due, and registers the session. If anything cannot be read, it **refuses** rather than letting the session start blind.
+- **`bin/harold boot`** gets the real date, verifies that the constitution, every core file and every playbook can be read, loads the lessons, the project map, alerts, blockers, the projects that have gone quiet and the scheduled work that is due, and registers the session. If anything cannot be read, it **refuses** rather than letting the session start blind.
 - **`bin/harold close`** runs at the end of every turn. It checks that changed knowledge was written to today's daily note, that every contact touched was filed, that every action item in a meeting note written this session carries its task ID, and that due scheduled work was recorded. If something is missing it blocks the turn with the exact list. When everything passes, it scans for secrets and commits and pushes the workspace.
 
 ## Quick start
@@ -164,7 +164,7 @@ CLAUDE.md                  one line: @AGENTS.md
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
 bin/
   harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | housekeeping |
-                           where | search | related | backlinks | index | root
+                           where | search | related | backlinks | pulse | index | root
   harold-index             SQLite FTS5 search index and link graph over every markdown file, archives included
                            (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
@@ -215,7 +215,9 @@ tests/
   agent-action.test.js     each agent's credential choice (subscription first) and what it is given, with stub CLIs
   agent-auth.test.js       sign-in files kept fresh across runs, and a custom agent's secrets
   index.test.js            search, related, backlinks and graph.json end to end; runs test_harold_index.py
-  test_harold_index.py     the link graph: resolution, backlinks, traversal, stale and broken flags, archives
+  test_harold_index.py     the link graph: resolution, backlinks, traversal, stale and broken flags, archives; project
+                           pulse, against the fixture the connector's tests share (same files, same answer)
+  pulse.test.js            bin/harold pulse and the project pulse in boot, end to end
   first-run.test.js        a fresh install: first boot and first close pass on any date, with the examples in place
 ```
 
@@ -232,6 +234,20 @@ Every conversation with a contact is logged unless you choose otherwise: the opt
 `bin/harold search "<query>"` is full-text search over every markdown file in the workspace (the knowledge directories, every folder in the project map, and archives: `archive/` folders and `*-archive.md` files). Each hit also lists the notes it links to. `bin/harold related "<person, company, project or topic>"` follows the links from a note, one hop or two (`--depth 2`): people, companies, projects, decisions and meetings, how each is linked and the line where, and a closing `gaps:` line (stale notes, broken links, orphans, no meeting notes). `bin/harold backlinks "<note>"` lists everything that points at a note. Links are `[[wikilinks]]` (by file name, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related`). A note counts as stale after `HAROLD_STALE_DAYS` (default 30) without an update; daily notes, meetings and archives never do.
 
 All of it lives in `harold/search.db`, which boot, search and close rebuild whenever a file changed (only changed files are read). Close also writes `harold/graph.json`, a compact copy of the graph with no note text, and commits it, so anything that reads your repository (the connector's `harold_read`, for example) can see the links without the workspace.
+
+## Project pulse: which projects have gone quiet
+
+`crm_stale` tells you which people you are dropping; `bin/harold pulse` does the same for projects. For each active project in `harold/projects.md` it shows the newest activity, what it was and its date, the next step, and a flag when the project has gone quiet:
+
+```
+- Example Project — quiet 19 days (last: meeting note 2026-09-18, "Acme kickoff"); next step: Send Jane Doe the signed NDA
+```
+
+- **Activity** is the newest of: the project card, any note that links to it, the meeting, daily and decision notes it links to, any note in the project's folder, daily and meeting notes that name the project or one of its aliases (in the title or a heading; in the text only when the note names at most three projects, so a monthly review that walks through every project is not activity for all of them), and the newest git commit touching its folder. Note dates are the ones written in the notes (`last_updated`, `date`, or a dated file name); a date after today (a planned meeting) does not count.
+- **Next step** is `next_step:` in the project's `harold/projects.md` entry, else `next_step:` in its card's frontmatter, else a `Next step:` line (or the first line under a `Next step` heading) in the card, then in the folder's `README.md`. With none, it says "no next step recorded", which is a gap worth closing.
+- **Quiet** means no activity in more than `HAROLD_PULSE_DAYS` days (default 14, set it in `~/.harold/env`). Paused and archived projects are not judged.
+
+Quiet projects come first, with their next step; the rest follow in one line each. `--all` adds every next step and lists the projects that are not active; `--json` gives the data. Boot prints only the quiet ones (or one line saying all are active), and the morning brief lists them under WATCH next to stale relationships. The connector's `harold_pulse` computes the same thing from `harold/graph.json`, the project map and the repository's commit history, so a chat on your phone gets the same answer as a terminal session.
 
 ## Scheduled jobs in the cloud
 
