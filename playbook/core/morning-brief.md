@@ -118,10 +118,11 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 3-7 days = 🟠. A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
 3. **`harold/events.md`:** days until each event. An event fewer than 10 days out with prep not complete fires `event-prep:<event>`.
 4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job has no CRM tool, so the alerts it rebuilds do not include stale relationships; with no CRM tool here either, say so in one line.
-5. **Rebuild the "Current Alerts" section** of `harold/alerts.md` from those sources.
-6. Move resolved items to the Alert History section.
-7. Update the `Last updated: <Month D, YYYY>` line at the bottom of the file.
-8. Record the trigger:
+5. **Quiet projects:** `bin/harold pulse` (boot already printed them; `harold_pulse` on the connector, and `harold_today` lists them). List each quiet project under 🟡 WATCH next to the stale relationships: name, days quiet, what the last activity was, and its next step. "No next step recorded" goes in as written: it is the gap to close. The scheduled draft job runs `bin/harold`, so its alerts include them.
+6. **Rebuild the "Current Alerts" section** of `harold/alerts.md` from those sources.
+7. Move resolved items to the Alert History section.
+8. Update the `Last updated: <Month D, YYYY>` line at the bottom of the file.
+9. Record the trigger:
    ```bash
    bin/harold file trigger alerts-rebuild ran "morning brief"
    ```
