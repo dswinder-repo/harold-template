@@ -2208,7 +2208,7 @@ function cmdUpdate(root, today, argv) {
   sect(`${W}deleted (stale .upstream copies, the file now matches the starter)`, R.staleCopies);
   if (agents !== 'unchanged') L.push(`AGENTS.md is yours and never overwritten. ${agents === 'changed' ? "The starter's AGENTS.md changed since the last update" : "No recorded last update, and it differs from the starter's"}: its copy ${dry ? 'would be written to' : 'is in'} AGENTS.md.upstream. Bring every new machinery section and rule into your AGENTS.md, keep your own text, then delete the copy.`);
   const total = R.updated.length + R.added.length + R.removed.length + R.merge.length + R.seeded.length + R.mode.length;
-  if (!total && agents === 'unchanged') L.push('Everything Harold owns already matches the starter.');
+  if (!total && agents === 'unchanged') L.push(R.kept.length || R.keptRemoved.length || R.notRestored.length ? 'Nothing to update: the rest of what Harold owns matches the starter.' : 'Everything Harold owns already matches the starter.');
   else if (!dry) {
     L.push('');
     L.push(`Next: ${R.merge.length || agents !== 'unchanged' ? 'merge each .upstream copy into its file by hand (keep your changes, take the starter\'s), delete the copy, then ' : ''}run ${CLI(root)} check. The changes are not committed yet: review them with git diff; harold close commits them at the end of the turn.`);
