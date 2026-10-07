@@ -18,6 +18,10 @@ const { spawnSync } = require('child_process');
 
 const SRC = path.resolve(__dirname, '..');
 const dirs = [];
+// These tests are about the starter as published. In a workspace that has already booted (its trigger log records
+// harold-start), the copy below is no longer a fresh install, so they skip themselves (review X-05).
+const USED = (() => { try { return /"id":"harold-start"/.test(fs.readFileSync(path.join(SRC, 'harold/trigger-log.jsonl'), 'utf8')); } catch (_) { return false; } })();
+const firstRun = (name, fn) => test(name, { skip: USED && 'this workspace has already booted (harold-start is in harold/trigger-log.jsonl); first-run tests apply to an unused starter' }, fn);
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
 // Exactly what git would publish: tracked files plus new ones that are not ignored.
@@ -52,7 +56,7 @@ function run(w, args, env = {}) {
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
 }
 
-test('the starter ships an empty trigger log and undated example rows', () => {
+firstRun('the starter ships an empty trigger log and undated example rows', () => {
   assert.strictEqual(fs.readFileSync(path.join(SRC, 'harold/trigger-log.jsonl'), 'utf8').trim(), '');
   const blockers = fs.readFileSync(path.join(SRC, 'harold/blockers.md'), 'utf8');
   assert.match(blockers, /\| B001 \|[^\n]*\(example: no date\)/);
@@ -61,7 +65,7 @@ test('the starter ships an empty trigger log and undated example rows', () => {
 
 // A Monday, a Friday that is the last business day, the 1st, and a Friday that is the 1st.
 for (const now of ['2026-10-12T09:00:00', '2026-10-30T09:00:00', '2026-12-01T09:00:00', '2027-01-01T09:00:00']) {
-  test(`first boot and first close pass on a fresh install (${now.slice(0, 10)})`, () => {
+  firstRun(`first boot and first close pass on a fresh install (${now.slice(0, 10)})`, () => {
     const w = freshInstall();
     const env = { HAROLD_NOW: now };
     const b = run(w, ['boot'], env);
@@ -83,7 +87,7 @@ for (const now of ['2026-10-12T09:00:00', '2026-10-30T09:00:00', '2026-12-01T09:
   });
 }
 
-test('after the first day, scheduled work counts as usual', () => {
+firstRun('after the first day, scheduled work counts as usual', () => {
   const w = freshInstall();
   assert.strictEqual(run(w, ['boot'], { HAROLD_NOW: '2026-10-07T09:00:00' }).code, 0);  // a Wednesday
   const ids = now => { const c = JSON.parse(run(w, ['check', '--json'], { HAROLD_NOW: now }).out); return { due: c.triggers.due.map(d => d.id), overdue: c.triggers.overdue.map(d => d.id) }; };
@@ -95,7 +99,7 @@ test('after the first day, scheduled work counts as usual', () => {
   assert.ok(!ids('2026-10-12T09:00:00').overdue.includes('full-audit'), 'October 1st was before install');
 });
 
-test('an existing install (a trigger log without the start row) is unchanged', () => {
+firstRun('an existing install (a trigger log without the start row) is unchanged', () => {
   const w = freshInstall();
   fs.writeFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), JSON.stringify({ id: 'weekly-scan', status: 'ran', date: '2026-09-25' }) + '\n');
   const c = JSON.parse(run(w, ['check', '--json'], { HAROLD_NOW: '2026-10-07T09:00:00' }).out);
@@ -104,7 +108,7 @@ test('an existing install (a trigger log without the start row) is unchanged', (
   assert.ok(!fs.readFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), 'utf8').includes('harold-start'), 'boot marks only an empty log');
 });
 
-test('a clone still pointing at the public starter is warned about at boot (review B-03)', () => {
+firstRun('a clone still pointing at the public starter is warned about at boot (review B-03)', () => {
   const w = freshInstall();
   const quiet = JSON.parse(run(w, ['check', '--json']).out);
   assert.ok(!quiet.warnings.some(x => /public Harold starter/.test(x)), 'your own repository: no warning');
@@ -113,9 +117,68 @@ test('a clone still pointing at the public starter is warned about at boot (revi
   assert.ok(c.warnings.some(x => /looks like the public Harold starter.*PRIVATE repository.*remote set-url origin/.test(x)), JSON.stringify(c.warnings));
 });
 
-test('a committed Linear snapshot is dated by its "Pulled" line, not by checkout time (review C-16)', () => {
+firstRun('a committed Linear snapshot is dated by its "Pulled" line, not by checkout time (review C-16)', () => {
   const w = freshInstall();
   fs.writeFileSync(path.join(w.ws, 'harold/linear-snapshot.md'), '# Linear snapshot — team X\n\n*Pulled 2026-10-01T10:00:00.000Z (2026-10-01 06:00 America/New_York). 0 open issues.*\n');
   const b = run(w, ['boot'], { HAROLD_NOW: '2026-10-03T10:00:00Z', LINEAR_API_KEY: '' });
   assert.match(b.out, /committed snapshot 48h old/);
+});
+
+// A tool without hooks: the agent runs boot and close itself, each in its own shell, with no session id (review X-03).
+function shell(w, args, env = {}) {
+  const clean = { ...process.env };
+  STRIP.forEach(k => delete clean[k]);
+  const cmd = [process.execPath, path.join(w.ws, 'bin/harold'), ...args].map(a => `'${a.replace(/'/g, `'\\''`)}'`).join(' ');
+  const r = spawnSync('/bin/sh', ['-c', `${cmd} < /dev/null`], {
+    cwd: w.ws, encoding: 'utf8', timeout: 120000,
+    env: { ...clean, HOME: w.home, HAROLD_ENV_FILE: path.join(w.home, 'none'), HAROLD_TZ: 'America/Chicago', ...env },
+  });
+  return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
+const lastBoot = w => JSON.parse(fs.readFileSync(path.join(w.ws, 'harold/.last-boot'), 'utf8'));
+
+firstRun('no hooks, no session id: close finds the latest boot, and the starter\'s own files never count as changed', () => {
+  const w = freshInstall();
+  const b = shell(w, ['boot']);
+  assert.strictEqual(b.code, 0, b.out + b.err);
+  const lb = lastBoot(w);
+  assert.match(lb.id, /^terminal-\d+$/);
+  assert.strictEqual(lb.head, w.git('rev-parse', 'HEAD'), 'the boot records the commit it started on');
+  assert.ok(!w.git('status', '--porcelain').includes('.last-boot'), 'harold/.last-boot is gitignored');
+  // A normal turn: the agent sets its session file's task, does its work, and the turn ends.
+  const sf = path.join(w.ws, lb.sessionFile);
+  const j = JSON.parse(fs.readFileSync(sf, 'utf8')); j.task = 'Answer a question'; j.activities.research = { status: 'working', task: 'reading', progress: 50, started: new Date().toISOString() };
+  fs.writeFileSync(sf, JSON.stringify(j, null, 2));
+  const c = shell(w, ['close']);
+  assert.strictEqual(c.code, 0, c.out + c.err);
+  assert.match(c.out, /using the latest boot in this workspace/);
+  assert.match(c.out, new RegExp(`set to sleeping: ${lb.sessionFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), 'the boot\'s own session file');
+  assert.match(c.out, /git: pushed 1 commit/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(sf, 'utf8')).activities.research.status, 'sleeping');
+});
+
+firstRun('no hooks, no session id: what the session changed still has to be filed, and only that', () => {
+  const w = freshInstall();
+  assert.strictEqual(shell(w, ['boot']).code, 0);
+  const today = JSON.parse(shell(w, ['check', '--json']).out).today.iso;
+  fs.appendFileSync(path.join(w.ws, 'harold/facts.md'), '\n- A new fact.\n');
+  const blocked = shell(w, ['close']);
+  assert.strictEqual(blocked.code, 2, blocked.out + blocked.err);
+  assert.match(blocked.err, /1 knowledge file\(s\) changed this session[\s\S]*Changed: harold\/facts\.md$/m);
+  fs.writeFileSync(path.join(w.ws, `vault/daily/${today}-first-turn.md`), `# ${today}\n\nAdded a fact.\n`);
+  const ok = shell(w, ['close']);
+  assert.strictEqual(ok.code, 0, ok.out + ok.err);
+  const fin = shell(w, ['close', '--final']);
+  assert.strictEqual(fin.code, 0, fin.out + fin.err);
+  assert.ok(!fs.existsSync(path.join(w.ws, 'harold/.last-boot')), 'the final close ends the session it belonged to');
+});
+
+firstRun('before the first boot, check judges an empty trigger log as boot does: nothing overdue (review X-08)', () => {
+  for (const now of ['2026-10-12T09:00:00', '2026-11-02T09:00:00', '2026-10-30T09:00:00']) {
+    const w = freshInstall();
+    const c = JSON.parse(run(w, ['check', '--json'], { HAROLD_NOW: now }).out);
+    assert.deepStrictEqual({ due: c.triggers.due.map(d => d.id), overdue: c.triggers.overdue.map(d => d.id) }, { due: [], overdue: [] }, now);
+    assert.ok(c.triggers.info.some(i => /No boot has run in this workspace yet/.test(i)), JSON.stringify(c.triggers.info));
+    assert.strictEqual(fs.readFileSync(path.join(w.ws, 'harold/trigger-log.jsonl'), 'utf8'), '', 'check writes nothing');
+  }
 });
