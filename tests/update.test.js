@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const SRC = path.resolve(__dirname, '..');
+const { SRC } = require('./fixture'); // this repository, or in a workspace the starter's content with its machinery (tests/fixture.js)
 const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.json', '.brief-context.md', '.housekeeping-job.json', '.housekeeping-context.md', '.state', '.last-boot', 'harold-connector', 'harold-crm', '__pycache__']);
 const copyFilter = s => !SKIP.has(path.basename(s)) && !/\/harold\/active-sessions\/[^/]+\.json$/.test(s) && !/\/harold\/briefs\/\d{4}-\d{2}-\d{2}\.md$/.test(s) && !/\.upstream$/.test(s);
 const dirs = [];
@@ -60,7 +60,7 @@ test('update: unedited machinery is updated, new files added, removed ones remov
   // The starter moves on.
   write(U('bin/harold-linear'), read(U('bin/harold-linear')) + '\n// v2\n');
   write(U('tools/harness-hooks/new-harness.json'), '{"v":2}\n');
-  fs.rmSync(U('tools/visualizer'), { recursive: true });
+  fs.rmSync(U('tools/openclaw-plugin'), { recursive: true });
   const pb = 'playbook/core/' + fs.readdirSync(U('playbook/core')).filter(f => f.endsWith('.md') && f !== 'README.md')[0];
   write(U(pb), read(U(pb)) + '\nStarter v2 step.\n');
   write(U('AGENTS.md'), read(U('AGENTS.md')) + '\nStarter v2 rule.\n');
@@ -86,7 +86,7 @@ test('update: unedited machinery is updated, new files added, removed ones remov
   assert.strictEqual(read(P('bin/harold-linear')), read(U('bin/harold-linear')), 'unedited machinery is updated');
   assert.ok(fs.statSync(P('bin/harold-linear')).mode & 0o100, 'executable bit kept');
   assert.strictEqual(read(P('tools/harness-hooks/new-harness.json')), '{"v":2}\n', 'new machinery is added');
-  assert.ok(!fs.existsSync(P('tools/visualizer')) || !fs.readdirSync(P('tools/visualizer')).length, 'machinery the starter removed is removed');
+  assert.ok(!fs.existsSync(P('tools/openclaw-plugin')) || !fs.readdirSync(P('tools/openclaw-plugin')).length, 'machinery the starter removed is removed');
   assert.match(r.out, /removed \(the starter removed them; unedited here\)/);
   // Edited here and changed upstream: never overwritten; the starter's copy lands beside it.
   assert.match(read(P(pb)), /My own step\./);
@@ -132,6 +132,13 @@ test('update with a recorded base: local edits to files the starter did not chan
   assert.match(read(P('bin/harold-mcp')), /# v3/);
   assert.match(read(P('vault/templates/daily.md')), /v3 line/);
   assert.ok(!fs.existsSync(P('AGENTS.md.upstream')), 'AGENTS.md unchanged in the starter: no copy');
+  assert.strictEqual(JSON.parse(read(P('harold/upstream.json'))).commit, v3);
+  // Never backwards: updating from a ref the recorded update already contains changes nothing.
+  s.u('branch', '-f', 'old', `${v3}~1`); s.u('push', '-q', 'origin', 'old');
+  const back = harold(s.ws, s.home, ['update', '--from', s.bare, '--ref', 'old']);
+  assert.strictEqual(back.code, 0, back.err);
+  assert.match(back.out, /already has it: its last update .* is newer and contains old\. Nothing to update\./);
+  assert.match(read(P('bin/harold-mcp')), /# v3/);
   assert.strictEqual(JSON.parse(read(P('harold/upstream.json'))).commit, v3);
   // An edited file the starter then changes gets a .upstream copy; once merged to match, the next update removes it.
   write(U('bin/harold-setup-crm'), read(U('bin/harold-setup-crm')) + '\n# v4\n');
@@ -244,7 +251,8 @@ test('settings.env: a label counts like a type; credential-like names are never 
   assert.strictEqual(harold(w.ws, w.home, logRow('Ana Ruiz')).code, 0);
   const c = harold(w.ws, w.home, ['check']);
   assert.match(c.out, /settings\.env is committed, so only non-secret HAROLD_\* settings are read from it; ignored: SUPABASE_URL, HAROLD_API_KEY/);
-  write(path.join(w.ws, 'harold/settings.env'), 'HAROLD_TZ="UTC"\nSUPABASE_SERVICE_ROLE_KEY="sb_secret_abcdefghijklmnopqrstuvwxyz"\n');
+  // Built at run time, so this file never trips a secret scan itself.
+  write(path.join(w.ws, 'harold/settings.env'), `HAROLD_TZ="UTC"\nSUPABASE_SERVICE_ROLE_KEY="${'sb_' + 'secret_'}abcdefghijklmnopqrstuvwxyz"\n`);
   assert.match(harold(w.ws, w.home, ['check']).out, /looks like it holds a credential/);
   const close = harold(w.ws, w.home, ['close', '--final']);
   assert.match(close.out + close.err, /refusing to commit: possible secrets in harold\/settings\.env/);

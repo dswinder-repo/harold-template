@@ -2145,12 +2145,17 @@ function cmdUpdate(root, today, argv) {
   if (f.status !== 0) { console.error(`harold update: could not fetch ${ref} from ${url}: ${((f.stderr || '') + (f.error ? f.error.message : '')).trim().split('\n').pop()}`); return 2; }
   const head = git(root, ['rev-parse', UPSTREAM_REF]).out;
   const when = git(root, ['log', '-1', '--format=%cs', head]).out;
+  const base = up.commit && git(root, ['cat-file', '-e', `${up.commit}^{commit}`]).code === 0 ? up.commit : null;
+  // Never go backwards: a ref that the recorded update already contains (e.g. main, after updating from a newer branch).
+  if (base && head !== base && git(root, ['merge-base', '--is-ancestor', head, base]).code === 0) {
+    console.log(`harold update — starter ${url} ${ref} at ${head.slice(0, 10)} (${when})\nThis workspace already has it: its last update (${base.slice(0, 10)}${up.date ? ` on ${up.date}` : ''}) is newer and contains ${ref}. Nothing to update.`);
+    return 0;
+  }
   const manText = gitBuf(root, ['show', `${head}:${MANIFEST_FILE}`]);
   if (manText.code !== 0) { console.error(`harold update: ${url} ${ref} has no ${MANIFEST_FILE}, so it does not say which files are Harold's; nothing changed`); return 2; }
   const man = parseManifest(manText.out.toString('utf8'));
   const skip = Array.isArray(up.skip) ? up.skip.map(String) : [];
   const owned = p => !isUserContent(p) && man.own.some(x => pathMatches(p, x)) && !man.exclude.some(x => pathMatches(p, x)) && !skip.some(x => pathMatches(p, x)) && !p.endsWith('.upstream');
-  const base = up.commit && git(root, ['cat-file', '-e', `${up.commit}^{commit}`]).code === 0 ? up.commit : null;
   const newT = lsTree(root, head), baseT = base ? lsTree(root, base) : new Map();
   const hist = upstreamHistory(root, head, [...man.own, 'AGENTS.md']);
   const tracked = git(root, ['ls-files', '-z'], { timeout: 30000 }).out.split('\0').filter(Boolean);
@@ -2209,7 +2214,7 @@ function cmdUpdate(root, today, argv) {
   sect(`${W}deleted (stale .upstream copies, the file now matches the starter)`, R.staleCopies);
   if (agents !== 'unchanged') L.push(`AGENTS.md is yours and never overwritten. ${agents === 'changed' ? "The starter's AGENTS.md changed since the last update" : "No recorded last update, and it differs from the starter's"}: its copy ${dry ? 'would be written to' : 'is in'} AGENTS.md.upstream. Bring every new machinery section and rule into your AGENTS.md, keep your own text, then delete the copy.`);
   const total = R.updated.length + R.added.length + R.removed.length + R.merge.length + R.seeded.length + R.mode.length;
-  if (!total && agents === 'unchanged') L.push('Everything Harold owns already matches the starter.');
+  if (!total && agents === 'unchanged') L.push(R.kept.length || R.keptRemoved.length || R.notRestored.length ? 'Nothing to update: the rest of what Harold owns matches the starter.' : 'Everything Harold owns already matches the starter.');
   else if (!dry) {
     L.push('');
     L.push(`Next: ${R.merge.length || agents !== 'unchanged' ? 'merge each .upstream copy into its file by hand (keep your changes, take the starter\'s), delete the copy, then ' : ''}run ${CLI(root)} check. The changes are not committed yet: review them with git diff; harold close commits them at the end of the turn.`);
