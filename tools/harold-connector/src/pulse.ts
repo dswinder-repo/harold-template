@@ -166,7 +166,7 @@ export interface PulseOpts { all?: boolean; nextFor?: "all" | "quiet" }
 /** Everything `bin/harold pulse --json` returns. Next steps are read for the quiet projects only unless nextFor is "all" (or all is set). */
 export async function pulseData(repo: HaroldRepo, today: string, tz: string, opts: PulseOpts = {}): Promise<PulseData> {
   const [gf, pf] = await Promise.all([repo.getText(GRAPH_PATH), repo.getText(PROJECTS_PATH)]);
-  if (!gf) throw new Error(`${GRAPH_PATH} is not in ${repo.repo} @ ${repo.branch}; it is written by \`bin/harold close\` in current versions of Harold (`bin/harold update`). Until then, run \`bin/harold pulse\` in a session.`);
+  if (!gf) throw new Error(`${GRAPH_PATH} is not in ${repo.repo} @ ${repo.branch}; it is written by \`bin/harold close\` in current versions of Harold (\`bin/harold update\`). Until then, run \`bin/harold pulse\` in a session.`);
   if (!pf) throw new Error(`${PROJECTS_PATH} is not in ${repo.repo} @ ${repo.branch}.`);
   const g = parseGraph(gf.text, today);
   const limit = pulseDays(g);
