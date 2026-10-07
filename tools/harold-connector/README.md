@@ -20,7 +20,7 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 | `harold_read` | read | Reads one text file by repo path. Refuses binaries, truncates very long files. |
 | `harold_list` | read | Lists a folder. |
 | `harold_where` | read | Resolves a topic to a project from `harold/projects.md`, with the same scoring as `bin/harold where`. |
-| `harold_related` | read | Follows the links from a note (a path, a title, or a topic found with the same search as `harold_search`): the linked notes 1 to 2 hops out, each with how it is linked and its `last_updated` date, then a gaps line (not updated in 30+ days, broken links, orphans, no meeting notes). Reads `harold/graph.json`, which `bin/harold close` writes; the same ranking as `bin/harold related`. A workspace without that file gets a plain message saying how to produce it. |
+| `harold_related` | read | Follows the links from a note (a path, a title, or a topic found with the same search as `harold_search`): the linked notes 1 to 2 hops out, each with how it is linked and its `last_updated` date, then a gaps line (not updated in 30+ days, broken links, orphans, no meeting notes; archived notes are never stale). Reads `harold/graph.json`, which `bin/harold close` writes; the same ranking as `bin/harold related`. A workspace without that file gets a plain message saying how to produce it. |
 | `harold_person` | read | A person's card in `vault/people/` (fuzzy name match) plus, when the CRM is configured, their CRM record. |
 | `crm_search_contacts` | read | Filters CRM contacts (type, warmth, stage, purpose, project, keyword, ...). |
 | `crm_get_contact` | read | One contact's full record: interactions, open tasks, stage history. |
@@ -103,6 +103,7 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `HAROLD_TZ` | no | `America/Chicago` | Your IANA time zone. Unset: dates are UTC. An invalid name also falls back to UTC, and `harold_today` says so. |
 | `HAROLD_NO_LOG_TYPES` | no | `team` | Contact types whose conversations are never logged as interactions. Empty by default. Same setting as in `~/.harold/env`. |
 | `HAROLD_NO_CADENCE_TYPES` | no | `other` | Contact types `crm_stale` never checks. Default `other`; set it empty to check every type. Same setting as in `~/.harold/env`. |
+| `HAROLD_HUB_DEGREE` | no | `40` (default) | `harold_related`: a note with more links than this is a hub and no longer makes its neighbours related. Same setting as in `~/.harold/env`. |
 | `HAROLD_COMMIT_EMAIL` | no | `you@example.com` | Commit author email. Default `harold-connector@users.noreply.github.com`. |
 | `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM. Without it the CRM tools say "not configured". |
 | `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM (server side only; never in the repository). |
