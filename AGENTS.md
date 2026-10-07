@@ -180,7 +180,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 **Activity selection:** when work spans categories, pick the one that best describes the *primary* output. Frontend/UI code is `design`, not `coding`. Analyzing data or auditing systems is `data`, not `research` (research *finds* information, data *analyzes* it). Messages to external people are `comms`, not `writing`.
 
-**Optional field:** `"artifact": "/absolute/path/to/output/file"` — if the session is producing a viewable output (document, page, image), set this so the Expedition HQ preview panel can show it.
+**Optional field:** `"artifact": "/absolute/path/to/output/file"` — the main output this session is producing, recorded for whoever reads the file. The starter's Expedition HQ page does not display it.
 
 **Cleanup:** `bin/harold boot` and `close` move session files older than 48 hours to `harold/active-sessions/archive/`, so a stuck `"session": true` never shows as live forever. Ended sessions older than 2 hours are hidden by the visualizer.
 

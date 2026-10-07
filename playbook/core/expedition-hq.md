@@ -37,7 +37,8 @@ Expedition HQ is a small zero-dependency Node server at `tools/visualizer/serve.
 - Zero dependencies: no `npm install` step.
 - It reads `harold/active-sessions/` relative to the workspace (override with `--sessions`).
 - Active sessions sort to the top; ended sessions dim, and ended sessions older than about 2 hours are retired from the view.
-- If a session stops updating its file, the server can infer recent activity from the harness's local session logs so the view does not freeze.
+- If a session stops updating its file, the server can infer recent activity from Claude Code's local session logs (`~/.claude/projects`), when that harness is in use, so the view does not freeze. Other harnesses show only what their session file says.
+- The page shows sessions and their activities only: there is no artifact preview and no clean-up button. Session files older than 48 hours are archived by `bin/harold boot` and `close`.
 - It is local-only. Do not expose port 3210 to the internet.
 - Optional: start it at login with your operating system's service manager. It is a local viewer only: nothing else in Harold needs it running.
 
