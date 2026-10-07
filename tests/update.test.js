@@ -251,6 +251,20 @@ test('settings.env: a label counts like a type; credential-like names are never 
   assert.match(w.g('status', '--porcelain').out, /settings\.env/, 'not committed');
 });
 
+test('HAROLD_CHECKS: a workspace script that exits non-zero becomes one warning; one outside the workspace is refused', () => {
+  const w = plainWorkspace();
+  write(path.join(w.ws, 'bin/my-check'), '#!/bin/sh\necho "checked 3 pages"\necho "2 finding(s), 1 high severity."\nexit 1\n');
+  fs.chmodSync(path.join(w.ws, 'bin/my-check'), 0o755);
+  write(path.join(w.ws, 'bin/ok-check'), '#!/bin/sh\necho fine\n');
+  fs.chmodSync(path.join(w.ws, 'bin/ok-check'), 0o755);
+  write(path.join(w.ws, 'harold/settings.env'), 'HAROLD_CHECKS="bin/my-check --quiet, bin/ok-check, /bin/true"\n');
+  const c = harold(w.ws, w.home, ['check']);
+  assert.match(c.out, /WARN  bin\/my-check: 2 finding\(s\), 1 high severity\./);
+  assert.ok(!/ok-check/.test(c.out));
+  assert.match(c.out, /HAROLD_CHECKS: \/bin\/true is not a script inside the workspace/);
+  assert.match(c.out, /RESULT: PASS/);
+});
+
 test('the manifest never claims the operator\'s content, and every path it names exists in the starter', () => {
   const man = read(path.join(SRC, 'harold/update-manifest.txt')).split('\n').map(l => l.replace(/#.*$/, '').trim()).filter(Boolean);
   const own = man.filter(l => !l.startsWith('!') && !l.startsWith('seed '));

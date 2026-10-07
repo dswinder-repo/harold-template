@@ -28,6 +28,7 @@
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
  *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
  *                      as CRM interactions (records are still kept current). Empty by default.
+ *   HAROLD_CHECKS      optional, comma-separated workspace scripts that check runs; a non-zero exit becomes a warning.
  *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
  *   HAROLD_PULSE_DAYS  days without activity after which an active project counts as quiet in pulse and boot. Default 14.
  *   HAROLD_JOB=1       set by a scheduler that runs only Harold's jobs (as GitHub Actions and Claude Code routines
@@ -658,6 +659,7 @@ function runCheck(root, today) {
     if (hits.length) warnings.push(`${SETTINGS_FILE} looks like it holds a credential (${hits[0]}): move it to ${envFilePath()}; close refuses to commit it`);
     if (git(root, ['check-ignore', '-q', SETTINGS_FILE]).code === 0) warnings.push(`${SETTINGS_FILE} is ignored by .gitignore (a "*.env" rule?), so it never reaches other machines or the scheduled jobs: add the line !${SETTINGS_FILE} to .gitignore`);
   }
+  for (const w of extraChecks(root)) warnings.push(w);
   const pendingMerge = upstreamCopies(root);
   if (pendingMerge.length) warnings.push(`${pendingMerge.length} file(s) from bin/harold update wait for a hand merge: ${pendingMerge.slice(0, 6).join(', ')}${pendingMerge.length > 6 ? ` (+${pendingMerge.length - 6})` : ''}. Merge the starter's version into each, then delete the .upstream copy`);
   for (const [rel, budget] of Object.entries(sizeBudgets(root))) { try { const n = fs.statSync(path.join(root, rel)).size; if (n > budget) warnings.push(`${rel} is ${Math.round(n / 1000)}k chars, over its ${Math.round(budget / 1000)}k budget: the monthly full audit moves stale sections into an archive file beside it (nothing is deleted)`); } catch (_) {} }
@@ -665,6 +667,24 @@ function runCheck(root, today) {
   return { failures, warnings, playbooks: pb, learnings: lr, projects: pj, ctx, triggers };
 }
 
+
+// HAROLD_CHECKS (optional): the workspace's own checks, run by check, boot and close. Comma-separated commands,
+// each a script inside the workspace plus arguments (e.g. "bin/my-site-qa --quiet"). Exit 0 says nothing; any
+// other exit becomes one warning with the script's last line of output. Never a failure.
+function extraChecks(root) {
+  const out = [];
+  for (const spec of setting('HAROLD_CHECKS').split(',').map(x => x.trim()).filter(Boolean)) {
+    const [cmd, ...args] = spec.split(/\s+/);
+    const p = path.resolve(root, cmd);
+    if (path.isAbsolute(cmd) || !p.startsWith(root + path.sep) || !fs.existsSync(p)) { out.push(`HAROLD_CHECKS: ${cmd} is not a script inside the workspace; skipped`); continue; }
+    const r = spawnSync(p, args, { cwd: root, encoding: 'utf8', timeout: 60000 });
+    if (r.error) { out.push(`${cmd}: could not run (${r.error.code || r.error.message})`); continue; }
+    if (r.status === 0) continue;
+    const last = `${r.stdout || ''}\n${r.stderr || ''}`.split('\n').map(l => l.trim()).filter(Boolean).pop() || `exit ${r.status}`;
+    out.push(`${cmd}: ${last.slice(0, 240)}`);
+  }
+  return out;
+}
 
 // ───────────────────────── search index (SQLite FTS5 via bin/harold-index) ─────────────────────────
 // The index carries the link graph too (nodes, edges, broken links). harold-index decides staleness itself
