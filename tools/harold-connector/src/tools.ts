@@ -13,7 +13,7 @@ import * as pulse from "./pulse.js";
 import * as stale from "./stale.js";
 import * as tasks from "./tasks.js";
 import * as calendar from "./calendar.js";
-import { googleFromEnv, type GoogleConfig } from "./google.js";
+import { googleAccountsFromEnv, type GoogleConfig } from "./google.js";
 import type { FetchLike } from "./identity.js";
 import { localParts, truncate } from "./text.js";
 
@@ -29,6 +29,7 @@ export interface ToolDeps {
   google?: () => GoogleConfig | null;
   /** fetch for Google's APIs; injected in tests. */
   googleFetch?: FetchLike;
+  googleAccounts?: () => GoogleConfig[];
 }
 
 export function githubTokenFrom(ctx: ServerContext): string {
@@ -59,7 +60,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
   const now = () => (deps.now ? deps.now() : new Date());
   const linear = () => (deps.linear || tasks.linearFromEnv)();
   const linearFetch: FetchLike = deps.linearFetch || ((i, init) => fetch(i, init));
-  const google = () => (deps.google || googleFromEnv)();
+  const googleAccounts = () => deps.googleAccounts ? deps.googleAccounts() : deps.google ? (d => d ? [d] : [])(deps.google()) : googleAccountsFromEnv();
   const googleFetch: FetchLike = deps.googleFetch || ((i, init) => fetch(i, init));
   const withSb = async (fn: (sb: crm.Sb) => Promise<crm.CrmResult>) => { const sb = deps.supabase(); return sb ? fn(sb) : crm.NOT_CONFIGURED; };
 
@@ -403,7 +404,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     description: "List the calendars the connector's own Google Calendar access can read: name, id, whether primary, access role and time zone. This access belongs to the connector, so it works the same from every connected tool. Read-only. Says plainly when no calendar is configured.",
     inputSchema: z.object({}),
     annotations: TASK_READ,
-  }, async () => guard(() => calendar.listCalendars(googleFetch, google())));
+  }, async () => guard(() => calendar.listCalendars(googleFetch, googleAccounts())));
 
   server.registerTool("calendar_events", {
     title: "Calendar: events",
@@ -414,7 +415,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       calendar: z.string().max(200).optional().describe("Only calendars whose name contains this text, or an exact calendar id"),
     }),
     annotations: TASK_READ,
-  }, async (args) => guard(() => calendar.listEvents(googleFetch, google(), args, now())));
+  }, async (args) => guard(() => calendar.listEvents(googleFetch, googleAccounts(), args, now())));
 }
 
 export const TOOL_NAMES = [

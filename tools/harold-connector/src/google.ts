@@ -39,6 +39,30 @@ export function googleFromEnv(): GoogleConfig | null {
   return { clientId, clientSecret, sealedToken };
 }
 
+/** One config per connected Google account: GOOGLE_REFRESH_TOKEN, then GOOGLE_REFRESH_TOKEN_2..8 in slot order. */
+export function googleAccountsFromEnv(): GoogleConfig[] {
+  const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim();
+  const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
+  if (!clientId || !clientSecret) return [];
+  const tokens: string[] = [];
+  const first = (process.env.GOOGLE_REFRESH_TOKEN || "").trim();
+  if (first) tokens.push(first);
+  for (let n = 2; n <= 8; n++) {
+    const t = (process.env[`GOOGLE_REFRESH_TOKEN_${n}`] || "").trim();
+    if (t) tokens.push(t);
+  }
+  return tokens.map(sealedToken => ({ clientId, clientSecret, sealedToken }));
+}
+
+/** The env name the next connected account should be stored as (first free slot; null when all 8 are taken). */
+export function nextTokenSlot(): string | null {
+  if (!(process.env.GOOGLE_REFRESH_TOKEN || "").trim()) return "GOOGLE_REFRESH_TOKEN";
+  for (let n = 2; n <= 8; n++) {
+    if (!(process.env[`GOOGLE_REFRESH_TOKEN_${n}`] || "").trim()) return `GOOGLE_REFRESH_TOKEN_${n}`;
+  }
+  return null;
+}
+
 const STATE_TTL_SEC = 600;
 
 /** Start of the owner-facing flow: redirect to Google's consent screen. State is sealed, 10 minutes. */
@@ -106,7 +130,7 @@ export async function callback(req: Request, fetchImpl: FetchLike): Promise<Resp
 
   const sealed = seal(tokenKey(), "google", { rt: tok.refresh_token, email });
   return page("Calendar connected", `<h2>Calendar connected for ${esc(email)}</h2>
-<p>Shown once. Store this as <code>GOOGLE_REFRESH_TOKEN</code> in the connector's environment (Production), redeploy, and the <code>calendar_list</code> and <code>calendar_events</code> tools go live:</p>
+<p>Shown once. Store this as <code>${esc(nextTokenSlot() || "GOOGLE_REFRESH_TOKEN_<n> (all 8 account slots are in use)")}</code> in the connector's environment (Production), redeploy, and the <code>calendar_list</code> and <code>calendar_events</code> tools read every connected account:</p>
 <p><code style="word-break:break-all;user-select:all">${esc(sealed)}</code></p>
 <p>It is encrypted with the connector's TOKEN_KEY and useless without it. Rotating TOKEN_KEY revokes it (connect again the same way). Google consent-screen note: an app left in "Testing" status issues refresh tokens that expire after 7 days; publish the consent screen to avoid a weekly re-connect.</p>`);
 }
