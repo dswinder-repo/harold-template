@@ -421,12 +421,12 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("calendar_event_create", {
     title: "Calendar: create event",
-    description: "Create an event on one of the owner's Google calendars (default: the primary calendar). Times are the owner's zone; dates alone make an all-day event. Attendees are email addresses; Google sends its own invitations by default. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write. Never shares or deletes a calendar.",
+    description: "Create an event on one of the owner's Google calendars. The calendar is never chosen automatically: pass calendar, and when several calendars are connected and none is passed the tool asks the owner which one instead of guessing. Times are the owner's zone; dates alone make an all-day event. Attendees are email addresses; Google sends its own invitations by default. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write. Never shares or deletes a calendar.",
     inputSchema: z.object({
       summary: z.string().max(300).describe("Event title"),
       start: z.string().describe("YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (24h, owner's zone)"),
       end: z.string().describe("Same shape as start"),
-      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
+      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id; omit only when exactly one calendar is connected - with several, the owner is asked to choose first"),
       location: z.string().max(300).optional(),
       description: z.string().max(2000).optional(),
       attendees: z.array(z.string().email()).max(50).optional().describe("Attendee email addresses"),
@@ -439,7 +439,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     description: "Edit an existing event: pass eventId (from calendar_events or the event link) plus only the fields to change. Times are the owner's zone; dates alone make an all-day event. Editing one instance of a recurring series changes that instance unless the series id is passed. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write. Never shares or deletes a calendar.",
     inputSchema: z.object({
       eventId: z.string().max(300).describe("The event id to edit"),
-      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
+      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id; omit only when exactly one calendar is connected - with several, the owner is asked to choose first"),
       summary: z.string().max(300).optional(),
       start: z.string().optional().describe("YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (24h, owner's zone)"),
       end: z.string().optional().describe("Same shape as start"),
@@ -455,7 +455,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     description: "Cancel (delete) one event by eventId; it stops appearing in calendar_events. This cancels an EVENT only: it never deletes, shares, or changes a calendar. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write.",
     inputSchema: z.object({
       eventId: z.string().max(300).describe("The event id to cancel"),
-      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
+      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id; omit only when exactly one calendar is connected - with several, the owner is asked to choose first"),
     }),
     annotations: TASK_WRITE,
   }, async (args) => guard(() => calendar.cancelEvent(googleFetch, googleAccounts(), args)));

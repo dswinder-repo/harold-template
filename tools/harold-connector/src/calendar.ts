@@ -200,7 +200,7 @@ export async function listEvents(fetchImpl: FetchLike, cfgs: GoogleConfig[], arg
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
 export interface EventWriteArgs {
-  calendar?: string;            // calendar id or name substring; default: the primary calendar
+  calendar?: string;            // calendar id or name substring; omit only when exactly one calendar is connected - with several, the write asks the owner which one instead of guessing
   summary?: string;             // event title
   start?: string;               // YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (owner's zone)
   end?: string;                 // same shape as start
@@ -245,15 +245,19 @@ const ROLE_RANK: Record<string, number> = { owner: 3, writer: 2, reader: 1 };
 /** The chosen write target: the calendar entry plus the account that should write it. */
 interface WriteTarget { entry: CalendarEntry; cfg: GoogleConfig; email: string }
 
-/** Resolve the write target across every connected account: the named calendar (else the primary), through the account with the strongest rights on it (owner > writer > reader; ties keep slot order). Never silently writes through a read-only account. */
+/** Resolve the write target. The calendar is never chosen for the owner: omit the target only when exactly one calendar is connected; with several, the write fails closed and names the candidates. For a settled calendar the write goes through the account with the strongest rights on THAT calendar (owner > writer > reader; ties keep slot order) - a credentials choice that does not change the owner's intent. Never silently writes through a read-only account. */
 async function writeCalendar(fetchImpl: FetchLike, cfgs: GoogleConfig[], name?: string): Promise<WriteTarget> {
   const { cals: pairs, failures } = await allCalendarPairs(fetchImpl, cfgs);
   if (!pairs.length && failures.length) throw new Error(failures[0]); // every account failed: surface the reason (e.g. reconnect guidance)
   if (!pairs.length) throw new Error("The connected Google accounts can see no calendars.");
   let hits: AccountCalendar[];
   if (!name) {
-    hits = pairs.filter(c => c.entry.primary);
-    if (!hits.length) throw new Error("No primary calendar found; pass calendar to pick one by name or id.");
+    const distinct = new Map(pairs.map(c => [c.entry.id, c.entry]));
+    if (distinct.size > 1) {
+      const cands = [...distinct.values()].map(e => `${e.summary} - id ${e.id}`).join("; ");
+      throw new Error(`Several calendars could be the target and none was specified: ask the owner which one (${cands}). The connector never picks a calendar for a write.`);
+    }
+    hits = pairs;
   } else {
     const q = name.toLowerCase();
     hits = pairs.filter(c => c.entry.id.toLowerCase() === q || c.entry.summary.toLowerCase().includes(q));
@@ -318,9 +322,9 @@ function eventLine(j: { id?: string; summary?: string; start?: { date?: string; 
 export async function createEvent(fetchImpl: FetchLike, cfgs: GoogleConfig[], args: EventWriteArgs): Promise<CalendarResult> {
   if (!cfgs.length) return NOT_CONFIGURED;
   const zone = tz();
+  const body = writeBody(args, zone, false);
   const target = await writeCalendar(fetchImpl, cfgs, args.calendar);
   const cal = target.entry;
-  const body = writeBody(args, zone, false);
   const r = await writeCall(fetchImpl, target.cfg, "POST", `${CALENDAR_API}/calendars/${encodeURIComponent(cal.id)}/events`, body);
   const j = await r.json().catch(() => ({})) as { id?: string; summary?: string; start?: { date?: string; dateTime?: string }; htmlLink?: string; error?: { message?: string } };
   if (!r.ok) throw new Error(`Google Calendar answered HTTP ${r.status}${j.error?.message ? ` (${j.error.message})` : ""}`);
@@ -331,10 +335,10 @@ export async function updateEvent(fetchImpl: FetchLike, cfgs: GoogleConfig[], ar
   if (!cfgs.length) return NOT_CONFIGURED;
   if (!args.eventId) throw new Error("eventId is required (from calendar_events or the event's link).");
   const zone = tz();
-  const target = await writeCalendar(fetchImpl, cfgs, args.calendar);
-  const cal = target.entry;
   const body = writeBody(args, zone, true);
   if (!Object.keys(body).length) throw new Error("Nothing to change: pass at least one of summary, start, end, location, description, attendees.");
+  const target = await writeCalendar(fetchImpl, cfgs, args.calendar);
+  const cal = target.entry;
   const r = await writeCall(fetchImpl, target.cfg, "PATCH", `${CALENDAR_API}/calendars/${encodeURIComponent(cal.id)}/events/${encodeURIComponent(args.eventId)}`, body);
   const j = await r.json().catch(() => ({})) as { id?: string; summary?: string; start?: { date?: string; dateTime?: string }; htmlLink?: string; error?: { message?: string } };
   if (!r.ok) throw new Error(`Google Calendar answered HTTP ${r.status}${j.error?.message ? ` (${j.error.message})` : ""}`);

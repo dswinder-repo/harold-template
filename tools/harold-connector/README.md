@@ -208,7 +208,7 @@ Use it as a header, for example `claude mcp add --transport http harold <PUBLIC_
 
 ### Optional: the calendars (Google)
 
-The connector can hold its own Google Calendar access, configured once, so every connected tool reads the same calendars - including chat apps with no calendar connector of their own. Read-only scopes only; there are no calendar write tools.
+The connector can hold its own Google Calendar access, configured once, so every connected tool reads the same calendars - including chat apps with no calendar connector of their own. Read-only scopes only; managing events is a separate grant, described after the setup steps.
 
 1. **Create a Google OAuth client** (console.cloud.google.com: APIs & Services - Credentials - Create OAuth client ID - Web application). Add `<PUBLIC_BASE_URL>/google/callback` under Authorized redirect URIs, and enable the Google Calendar API in the same project.
 2. **Publish the consent screen** (APIs & Services - OAuth consent screen - Publish app). A consent screen left in "Testing" status issues refresh tokens that expire after 7 days, which would mean a weekly re-connect. The requested scopes are read-only (`calendar.readonly` and `calendar.calendarlist.readonly`).
@@ -216,6 +216,8 @@ The connector can hold its own Google Calendar access, configured once, so every
 4. **Connect the account:** open `<PUBLIC_BASE_URL>/google/authorize` in a browser and approve. Google redirects back to the connector; the callback refuses any Google account whose email is not in `ALLOWED_GOOGLE_EMAILS`, then shows the sealed refresh token once. Store it as `GOOGLE_REFRESH_TOKEN` (Production) and redeploy.
 
 Connecting more than one Google account: run the connect flow once per account. The connect page identifies the token setting to use: GOOGLE_REFRESH_TOKEN for the first account, then GOOGLE_REFRESH_TOKEN_2 through GOOGLE_REFRESH_TOKEN_8. calendar_list groups calendars by account, and calendar_events reads across connected accounts. Shared calendars and duplicate events are combined. If one account's authorization expires, the response reports that failure while continuing to read the other accounts.
+
+Creating, editing and cancelling events: Harold can manage events after you grant Google's event-editing permission and reconnect the account. Each change requires your instruction. If more than one calendar could be the target, Harold asks you to specify which one before making a change. It reports permission problems, expired connections and usage-limit errors separately. Calendar sharing and deletion of whole calendars aren't supported.
 
 The sealed token is encrypted with `TOKEN_KEY` and useless without it; rotating `TOKEN_KEY` revokes it (connect again the same way).
 
