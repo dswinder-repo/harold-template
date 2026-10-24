@@ -22,7 +22,6 @@ import type { FetchLike } from "./identity.js";
 
 export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-export const GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 export const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 export const SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
@@ -93,11 +92,16 @@ export async function callback(req: Request, fetchImpl: FetchLike): Promise<Resp
 
   // The one-person gate, same idea as ALLOWED_GITHUB_LOGIN on the MCP sign-in: only Google accounts
   // the owner listed can bind a token here - anyone else completing the flow is refused.
-  const uiRes = await fetchImpl(GOOGLE_USERINFO_URL, { headers: { authorization: `Bearer ${tok.access_token}` } });
-  const ui = await uiRes.json().catch(() => ({})) as { email?: string };
-  const email = (ui.email || "").toLowerCase();
+  // The account's email is the id of its primary calendar, which the granted calendar scopes can read
+  // (the userinfo endpoint would need an identity scope this connector deliberately does not request).
+  const calRes = await fetchImpl(`${CALENDAR_API}/users/me/calendarList/primary`, { headers: { authorization: `Bearer ${tok.access_token}` } });
+  const cal = await calRes.json().catch(() => ({})) as { id?: string; error?: { message?: string } };
+  const email = (cal.id || "").toLowerCase();
   if (!email || !c.allowedGoogleEmails.includes(email)) {
-    return page("Calendar not connected", `<h2>Calendar not connected</h2><p>The Google account <b>${esc(email || "(unknown)")}</b> is not in this connector's ALLOWED_GOOGLE_EMAILS, so nothing was stored. Sign in with an allowed account, or add it to the deployment environment first.</p>`, 403);
+    const why = email ? "" : calRes.ok
+      ? " The primary-calendar lookup answered but carried no id."
+      : ` The primary-calendar lookup failed: HTTP ${calRes.status}${cal.error?.message ? ` (${esc(cal.error.message)})` : ""}.`;
+    return page("Calendar not connected", `<h2>Calendar not connected</h2><p>The Google account <b>${esc(email || "(unknown)")}</b> is not in this connector's ALLOWED_GOOGLE_EMAILS, so nothing was stored.${why} Sign in with an allowed account, or add it to the deployment environment first.</p>`, 403);
   }
 
   const sealed = seal(tokenKey(), "google", { rt: tok.refresh_token, email });

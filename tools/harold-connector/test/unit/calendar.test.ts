@@ -73,8 +73,8 @@ describe("google.callback", () => {
         if (grant.fail) return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
         return new Response(JSON.stringify({ access_token: "at-value", refresh_token: grant.refresh_token }), { status: 200 });
       }
-      if (url === google.GOOGLE_USERINFO_URL) {
-        return new Response(JSON.stringify({ email: grant.email }), { status: 200 });
+      if (url === `${google.CALENDAR_API}/users/me/calendarList/primary`) {
+        return new Response(JSON.stringify({ id: grant.email }), { status: 200 });
       }
       return new Response("not google", { status: 404 });
     };
@@ -90,6 +90,12 @@ describe("google.callback", () => {
     const res = await google.callback(req(`state=${goodState()}&code=c`), fakeToken({ refresh_token: "rt", email: "stranger@example.com" }));
     expect(res.status).toBe(403);
     expect(await res.text()).toContain("stranger@example.com");
+  });
+
+  it("fails closed when the account cannot be identified from the primary calendar", async () => {
+    const res = await google.callback(req(`state=${goodState()}&code=c`), fakeToken({ refresh_token: "rt" }));
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain("(unknown)");
   });
 
   it("shows the sealed refresh token once for the owner's account", async () => {
