@@ -299,3 +299,280 @@ describe("slotForAccount (connect-page slot selection)", () => {
     clearSlots();
   });
 });
+
+describe("calendar event writes", () => {
+  // Seal fresh per test: other describes re-randomize TOKEN_KEY via setTestEnv.
+  const freshCfg = (): google.GoogleConfig => { setTestEnv({ HAROLD_TZ: "America/Chicago" }); return { ...CFG, sealedToken: seal(tokenKey(), "google", { rt: "rt-value", email: "owner@example.com" }) }; };
+  class FakeWrite {
+    calls: { method: string; url: string; body: any }[] = [];
+    forbid = false;
+    forbidReason = "insufficientPermissions";
+    fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_URL) return new Response(JSON.stringify({ access_token: "at-value", expires_in: 3599 }), { status: 200 });
+      if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+        return new Response(JSON.stringify({ items: [
+          { id: "owner@example.com", summary: "Owner", primary: true, accessRole: "owner", timeZone: "America/Chicago" },
+          { id: "fam@group.calendar.google.com", summary: "Family", accessRole: "writer" },
+        ] }), { status: 200 });
+      }
+      if (this.forbid) return new Response(JSON.stringify({ error: { errors: [{ reason: this.forbidReason }], message: "Request had insufficient authentication scopes." } }), { status: 403 });
+      this.calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (method === "DELETE") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ id: "ev-new", summary: this.calls.at(-1)?.body?.summary || "?", start: this.calls.at(-1)?.body?.start, htmlLink: "https://calendar.google.com/event?eid=ev-new" }), { status: 200 });
+    };
+  }
+
+  it("never defaults to the primary calendar: several calendars and no target means the owner is asked which one", async () => {
+    const g = new FakeWrite();
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "Dentist", start: "2026-10-27T14:00", end: "2026-10-27T15:00" }))
+      .rejects.toThrow(/ask the owner which one/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("creates a timed event on the named calendar", async () => {
+    const g = new FakeWrite();
+    const out = await calendar.createEvent(g.fetch, [freshCfg()], { summary: "Dentist", start: "2026-10-27T14:00", end: "2026-10-27T15:00", calendar: "owner" });
+    expect(out.text).toContain("Created");
+    expect(out.text).toContain("Dentist");
+    const call = g.calls[0];
+    expect(call.method).toBe("POST");
+    expect(call.url).toContain("/calendars/owner%40example.com/events");
+    expect(call.body.start).toEqual({ dateTime: "2026-10-27T14:00:00", timeZone: "America/Chicago" });
+  });
+
+  it("the target can be omitted only when exactly one calendar is connected", async () => {
+    class FakeSingle extends FakeWrite {
+      fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url === TOKEN_URL) return new Response(JSON.stringify({ access_token: "at-value", expires_in: 3599 }), { status: 200 });
+        if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+          return new Response(JSON.stringify({ items: [
+            { id: "owner@example.com", summary: "Owner", primary: true, accessRole: "owner", timeZone: "America/Chicago" },
+          ] }), { status: 200 });
+        }
+        const method = (init?.method || "GET").toUpperCase();
+        this.calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (method === "DELETE") return new Response(null, { status: 204 });
+        return new Response(JSON.stringify({ id: "ev-new", summary: this.calls.at(-1)?.body?.summary || "?", start: this.calls.at(-1)?.body?.start, htmlLink: "https://calendar.google.com/event?eid=ev-new" }), { status: 200 });
+      };
+    }
+    const g = new FakeSingle();
+    const out = await calendar.createEvent(g.fetch, [freshCfg()], { summary: "Dentist", start: "2026-10-27T14:00", end: "2026-10-27T15:00" });
+    expect(out.text).toContain("Created");
+    expect(g.calls[0].url).toContain("/calendars/owner%40example.com/events");
+  });
+
+  it("never picks the writable calendar over a read-only one: ambiguity still asks the owner", async () => {
+    class FakeMixed extends FakeWrite {
+      fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url === TOKEN_URL) return new Response(JSON.stringify({ access_token: "at-value", expires_in: 3599 }), { status: 200 });
+        if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+          return new Response(JSON.stringify({ items: [
+            { id: "owner@example.com", summary: "Owner", primary: true, accessRole: "reader", timeZone: "America/Chicago" },
+            { id: "fam@group.calendar.google.com", summary: "Family", accessRole: "writer" },
+          ] }), { status: 200 });
+        }
+        const method = (init?.method || "GET").toUpperCase();
+        this.calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (method === "DELETE") return new Response(null, { status: 204 });
+        return new Response(JSON.stringify({ id: "ev-new", summary: this.calls.at(-1)?.body?.summary || "?", start: this.calls.at(-1)?.body?.start, htmlLink: "https://calendar.google.com/event?eid=ev-new" }), { status: 200 });
+      };
+    }
+    const g = new FakeMixed();
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "X", start: "2026-10-27", end: "2026-10-28" }))
+      .rejects.toThrow(/ask the owner which one/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("update and cancel also ask instead of guessing when several calendars are connected", async () => {
+    const g = new FakeWrite();
+    await expect(calendar.updateEvent(g.fetch, [freshCfg()], { eventId: "ev-1", location: "Zoom" })).rejects.toThrow(/ask the owner which one/);
+    await expect(calendar.cancelEvent(g.fetch, [freshCfg()], { eventId: "ev-9" })).rejects.toThrow(/ask the owner which one/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("creates an all-day event from dates only", async () => {
+    const g = new FakeWrite();
+    await calendar.createEvent(g.fetch, [freshCfg()], { summary: "Off", start: "2026-11-02", end: "2026-11-03", calendar: "family" });
+    expect(g.calls[0].url).toContain("fam%40group.calendar.google.com");
+    expect(g.calls[0].body.start).toEqual({ date: "2026-11-02" });
+  });
+
+  it("rejects a bad time shape before any write", async () => {
+    const g = new FakeWrite();
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "X", start: "next tuesday", end: "2026-10-27" })).rejects.toThrow(/YYYY-MM-DD/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("patches only the passed fields", async () => {
+    const g = new FakeWrite();
+    const out = await calendar.updateEvent(g.fetch, [freshCfg()], { eventId: "ev-1", location: "Zoom", calendar: "owner" });
+    expect(out.text).toContain("Updated");
+    expect(g.calls[0].method).toBe("PATCH");
+    expect(g.calls[0].url).toContain("/events/ev-1");
+    expect(g.calls[0].body).toEqual({ location: "Zoom" });
+  });
+
+  it("refuses an update with nothing to change", async () => {
+    const g = new FakeWrite();
+    await expect(calendar.updateEvent(g.fetch, [freshCfg()], { eventId: "ev-1" })).rejects.toThrow(/Nothing to change/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("cancels an event without touching the calendar", async () => {
+    const g = new FakeWrite();
+    const out = await calendar.cancelEvent(g.fetch, [freshCfg()], { eventId: "ev-9", calendar: "owner" });
+    expect(out.text).toContain("Cancelled event ev-9");
+    expect(out.text).toContain("never deletes or shares a calendar");
+    expect(g.calls[0].method).toBe("DELETE");
+  });
+
+  it("names the missing write permission when Google answers 403 insufficientPermissions", async () => {
+    const g = new FakeWrite();
+    g.forbid = true;
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "X", start: "2026-10-27", end: "2026-10-28", calendar: "owner" })).rejects.toThrow(/no calendar write permission.*calendar\.events/s);
+  });
+
+  it("reports a usage limit as a usage limit, not as a missing grant", async () => {
+    const g = new FakeWrite();
+    g.forbid = true;
+    g.forbidReason = "quotaExceeded";
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "X", start: "2026-10-27", end: "2026-10-28", calendar: "owner" })).rejects.toThrow(/usage limit.*quotaExceeded/s);
+  });
+
+  it("surfaces Google's reason for any other 403 without guessing a cause", async () => {
+    const g = new FakeWrite();
+    g.forbid = true;
+    g.forbidReason = "forbidden";
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "X", start: "2026-10-27", end: "2026-10-28", calendar: "owner" })).rejects.toThrow(/HTTP 403.*forbidden/s);
+  });
+
+  it("fails the write plainly when the stored grant was revoked, before any event call", async () => {
+    const g = new FakeWrite();
+    const realFetch = g.fetch;
+    g.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === TOKEN_URL) return new Response(JSON.stringify({ error: "invalid_grant", error_description: "Token has been revoked." }), { status: 400 });
+      return realFetch(input, init);
+    };
+    await expect(calendar.createEvent(g.fetch, [freshCfg()], { summary: "X", start: "2026-10-27", end: "2026-10-28", calendar: "owner" })).rejects.toThrow(/refused the stored calendar grant.*invalid_grant.*reconnect/s);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("never deletes or shares a calendar: the only DELETE targets an event, and no acl/share routes exist", async () => {
+    const fs = await import("node:fs");
+    const cal = fs.readFileSync(new URL("../../src/calendar.ts", import.meta.url), "utf8");
+    const tools = fs.readFileSync(new URL("../../src/tools.ts", import.meta.url), "utf8");
+    expect(cal).not.toMatch(/calendarList\/delete|\/acl|acl\.insert|calendars\/delete/);
+    expect(tools).not.toMatch(/calendarList\/delete|\/acl|acl\.insert|calendars\/delete/);
+    const deletes = cal.split("\n").filter(l => l.includes('"DELETE"'));
+    expect(deletes.length).toBe(1);
+    expect(deletes[0]).toContain("/events/");
+    expect(tools).not.toMatch(/registerTool\("calendar_(share|delete|acl)/);
+  });
+});
+
+describe("event writes across multiple accounts (composition)", () => {
+  // Seal fresh per test: other describes re-randomize TOKEN_KEY via setTestEnv.
+  const makeCfgs = () => {
+    setTestEnv({ HAROLD_TZ: "America/Chicago" });
+    const CFG_A: google.GoogleConfig = { ...CFG, sealedToken: seal(tokenKey(), "google", { rt: "rt-reader", email: "reader@example.com" }) };
+    const CFG_B: google.GoogleConfig = { ...CFG, sealedToken: seal(tokenKey(), "google", { rt: "rt-writer", email: "writer@example.com" }) };
+    return { CFG_A, CFG_B };
+  };
+
+  class FakeMulti {
+    writeCalls: { method: string; url: string; rt: string }[] = [];
+    lastRt = "";
+    fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === TOKEN_URL) {
+        this.lastRt = new URLSearchParams(String(init?.body)).get("refresh_token") || "";
+        return new Response(JSON.stringify({ access_token: `at-${this.lastRt}`, expires_in: 3599 }), { status: 200 });
+      }
+      const at = new Headers(init?.headers).get("authorization") || "";
+      if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+        // Both accounts see the same shared calendar; account A reads it, account B owns it.
+        const items = at === "Bearer at-rt-reader"
+          ? [{ id: "shared@group.calendar.google.com", summary: "Shared", accessRole: "reader" }]
+          : [{ id: "shared@group.calendar.google.com", summary: "Shared", accessRole: "owner" }];
+        return new Response(JSON.stringify({ items }), { status: 200 });
+      }
+      this.writeCalls.push({ method: (init?.method || "GET").toUpperCase(), url, rt: this.lastRt });
+      return new Response(JSON.stringify({ id: "ev-1", summary: "X", start: { date: "2026-11-02" } }), { status: 200 });
+    };
+  }
+
+  it("writes a shared calendar through the account with write rights, not the reader that saw it first", async () => {
+    const { CFG_A, CFG_B } = makeCfgs();
+    const g = new FakeMulti();
+    const out = await calendar.createEvent(g.fetch, [CFG_A, CFG_B], { summary: "X", start: "2026-11-02", end: "2026-11-03", calendar: "shared" });
+    expect(g.writeCalls[0].rt).toBe("rt-writer");
+    expect(out.text).toContain("via writer@example.com");
+  });
+
+  it("is deterministic: the same call picks the same account every time", async () => {
+    const { CFG_A, CFG_B } = makeCfgs();
+    const g1 = new FakeMulti(); const g2 = new FakeMulti();
+    await calendar.createEvent(g1.fetch, [CFG_A, CFG_B], { summary: "X", start: "2026-11-02", end: "2026-11-03", calendar: "shared" });
+    await calendar.createEvent(g2.fetch, [CFG_A, CFG_B], { summary: "X", start: "2026-11-02", end: "2026-11-03", calendar: "shared" });
+    expect(g1.writeCalls[0].rt).toBe(g2.writeCalls[0].rt);
+  });
+
+  it("one calendar visible to several accounts is still one target: omission proceeds through the writer", async () => {
+    const { CFG_A, CFG_B } = makeCfgs();
+    const g = new FakeMulti();
+    const out = await calendar.createEvent(g.fetch, [CFG_A, CFG_B], { summary: "X", start: "2026-11-02", end: "2026-11-03" });
+    expect(g.writeCalls[0].rt).toBe("rt-writer");
+    expect(out.text).toContain("via writer@example.com");
+  });
+
+  it("distinct calendars across accounts are ambiguity: no target means the owner is asked, nothing is written", async () => {
+    class FakeTwoTargets extends FakeMulti {
+      fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url === TOKEN_URL) {
+          this.lastRt = new URLSearchParams(String(init?.body)).get("refresh_token") || "";
+          return new Response(JSON.stringify({ access_token: `at-${this.lastRt}`, expires_in: 3599 }), { status: 200 });
+        }
+        const at = new Headers(init?.headers).get("authorization") || "";
+        if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+          const items = at === "Bearer at-rt-reader"
+            ? [{ id: "personal-a@example.com", summary: "Personal A", primary: true, accessRole: "owner" }, { id: "shared@group.calendar.google.com", summary: "Shared", accessRole: "reader" }]
+            : [{ id: "shared@group.calendar.google.com", summary: "Shared", accessRole: "owner" }];
+          return new Response(JSON.stringify({ items }), { status: 200 });
+        }
+        this.writeCalls.push({ method: (init?.method || "GET").toUpperCase(), url, rt: this.lastRt });
+        return new Response(JSON.stringify({ id: "ev-1" }), { status: 200 });
+      };
+    }
+    const { CFG_A, CFG_B } = makeCfgs();
+    const g = new FakeTwoTargets();
+    await expect(calendar.createEvent(g.fetch, [CFG_A, CFG_B], { summary: "X", start: "2026-11-02", end: "2026-11-03" }))
+      .rejects.toThrow(/ask the owner which one/);
+    expect(g.writeCalls.length).toBe(0);
+  });
+
+  it("refuses the write when every connected account is read-only on that calendar", async () => {
+    class FakeReadOnly {
+      writeCalls = 0;
+      fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url === TOKEN_URL) return new Response(JSON.stringify({ access_token: "at-x", expires_in: 3599 }), { status: 200 });
+        if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+          return new Response(JSON.stringify({ items: [{ id: "s@g", summary: "Shared", accessRole: "reader" }] }), { status: 200 });
+        }
+        this.writeCalls++;
+        return new Response("{}", { status: 200 });
+      };
+    }
+    const { CFG_A, CFG_B } = makeCfgs();
+    const g = new FakeReadOnly();
+    await expect(calendar.createEvent(g.fetch, [CFG_A, CFG_B], { summary: "X", start: "2026-11-02", end: "2026-11-03", calendar: "shared" }))
+      .rejects.toThrow(/read.*access|reader access|writer or owner/i);
+    expect(g.writeCalls).toBe(0);
+  });
+});
