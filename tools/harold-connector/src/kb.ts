@@ -184,6 +184,84 @@ export async function touchPersonCard(repo: HaroldRepo, name: string, now = new 
   return r.ok ? `Vault card ${card.path}: last_updated → ${iso} (commit ${r.commit.slice(0, 7)}).` : `Vault card not updated: ${r.reason}`;
 }
 
+// ───────────── people: create ─────────────
+
+export const PERSON_WARMTH = ["Hot", "Warm", "Lukewarm", "Cold"] as const;  // the template's values
+export const PERSON_STATUS = ["active", "pending", "cold", "archived"] as const;
+
+export interface PersonCreateArgs {
+  name: string;
+  type: string;
+  labels?: string[];
+  company?: string;
+  role?: string;
+  warmth?: string;
+  status?: string;
+  crm?: string;
+  context?: string;
+  timeline?: string;
+  related?: string[];
+}
+
+/** Create a person's vault card in the vault/templates/person.md shape - the third record of
+ *  contact filing, next to the CRM contact and the interaction log. Read-before-write: an existing
+ *  card for this name is a refusal (harold_update is the tool for changes), near matches are named. */
+export async function createPersonCard(repo: HaroldRepo, a: PersonCreateArgs, now = new Date()): Promise<ToolText> {
+  const name = a.name.replace(/[\/\\:*?"<>|#^\[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!name) return fail("Need a name.");
+  const type = a.type.trim().toLowerCase();
+  if (!type || type.length > 60 || /[\n\r]/.test(type)) return fail("Need a type: one word from your own list (the template's examples: investor | partner | founder | team | other).");
+  if (a.warmth && !(PERSON_WARMTH as readonly string[]).includes(a.warmth)) return fail(`warmth must be one of ${PERSON_WARMTH.join(" | ")} - or left unset: blank means not rated yet (the owner rates people; Harold does not guess).`);
+  if (a.status && !(PERSON_STATUS as readonly string[]).includes(a.status)) return fail(`status must be one of: ${PERSON_STATUS.join(", ")}.`);
+  if (a.crm && a.crm !== "none") return fail(`crm is either "none" (deliberately kept out of the CRM) or left unset.`);
+  const labels = (a.labels || []).map(l => l.trim()).filter(Boolean).slice(0, 8);
+  if (labels.some(l => l.toLowerCase() === type)) return fail("labels never repeat the type.");
+
+  const matches = await findPersonCards(repo, name);
+  if (matches.length && matches[0].score >= 80) {
+    return fail(`A vault card already exists for ${name} (${matches[0].path}). Use harold_update to change it; do not file a person twice.`);
+  }
+  const near = matches.map(m => m.path.slice("vault/people/".length, -3));
+
+  const iso = localParts(now).iso;
+  const fm = [
+    "---",
+    "tags: [person]",
+    `type: ${type}`,
+    `labels: [${labels.join(", ")}]`,
+    `company: ${(a.company || "").trim()}`,
+    `role: ${(a.role || "").trim()}`,
+    `warmth: ${a.warmth || ""}`,
+    `status: ${a.status || "pending"}`,
+    `crm: ${a.crm === "none" ? "none" : ""}`,
+    `last_updated: ${iso}`,
+    "---",
+  ].join("\n");
+  const body = [
+    "",
+    `# ${name}`,
+    "",
+    `**Role:** ${(a.role || "").trim()}`,
+    `**Company:**${(a.company || "").trim() ? ` [[${(a.company || "").trim()}]]` : ""}`,
+    "",
+    "## Context",
+    (a.context || "").trim(),
+    "",
+    "## Timeline",
+    (a.timeline || "").trim(),
+    "",
+    "## Related",
+    (a.related || []).map(r => r.replace(/^\[\[|\]\]$/g, "").trim()).filter(Boolean).slice(0, 12).map(r => `- [[${r}]]`).join("\n"),
+    "",
+  ].join("\n");
+
+  const path = `vault/people/${name}.md`;
+  const r = await repo.commit(path, cur => cur ? { refuse: `${path} already exists` } : { text: `${fm}\n${body}` }, msg(`create ${name} people card`));
+  if (!r.ok) return fail(r.reason);
+  const dup = near.length ? `\nSimilar names already in vault/people: ${near.join(", ")} - check they are not the same person.` : "";
+  return { text: `Created ${path} (commit ${r.commit.slice(0, 7)} on ${repo.branch}): type ${type}, status ${a.status || "pending"}, warmth ${a.warmth || "unset (unrated)"}.${dup}` };
+}
+
 // ───────────── write ─────────────
 
 export async function capture(repo: HaroldRepo, text: string, topic?: string, now = new Date()): Promise<ToolText> {
@@ -288,3 +366,4 @@ export async function learning(repo: HaroldRepo, a: { lesson: string; severity: 
 }
 
 export { GithubError };
+

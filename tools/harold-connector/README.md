@@ -30,6 +30,7 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 | `harold_note` | write | A new note in `vault/intel`, `vault/decisions`, `vault/meetings`, `vault/companies` or `vault/projects`. Never overwrites. |
 | `harold_update` | write | Appends to (optionally under a heading) and/or sets simple frontmatter fields of an existing `.md` under `vault/` or `harold/`. |
 | `harold_learning` | write | Appends a lesson to `harold/learnings.jsonl` with the next free id, in the same format as `bin/harold file learning` (`source: connector`). |
+| `harold_person_create` | write | Creates a person's card `vault/people/<Name>.md` in the person template shape - the third record of contact filing, next to the CRM contact and the interaction. Refuses when a card for the name exists (`harold_update` changes cards) and names similar cards. `warmth` stays unset unless you rated the person; `status` defaults to `pending`. Refuses secrets. |
 | `crm_log_interaction` | write | Logs a touchpoint with a contact and freshens their vault card. Refused for contact types in `HAROLD_NO_LOG_TYPES`. |
 | `crm_upsert_contact` | write | Creates or updates a contact. The type is free text from your own list (as in `dashboard/people.md`). Never places anyone in the pipeline. |
 | `crm_pipeline` | write | The one pipeline: add (a purpose is required), move, close, list. |

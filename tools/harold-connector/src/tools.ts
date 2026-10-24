@@ -259,6 +259,25 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     annotations: WRITE,
   }, async (args, ctx) => guard(() => kb.learning(deps.repoFor(ctx), args, now())));
 
+  server.registerTool("harold_person_create", {
+    title: "Harold: create a person's card",
+    description: "Create a person's profile card in the knowledge base (vault/people/<Name>.md), the third record of contact filing next to the CRM contact (crm_upsert_contact) and the interaction (crm_log_interaction). Fill only what the owner or a source actually said. warmth: the owner rates people, Harold does not guess - leave it unset when the owner has not; unset means not rated. status defaults to pending. Refuses when a card for this name already exists (use harold_update to change it) and names similar existing cards so nobody is filed twice. Refuses secrets.",
+    inputSchema: z.object({
+      name: z.string().min(1).max(100).describe("The person's name as it should appear on the card"),
+      type: z.string().min(1).max(60).describe("The contact type, one word from the owner's own list (the template's examples: investor | partner | founder | team | other)"),
+      labels: z.array(z.string().max(40)).max(8).optional().describe("Extra tags, e.g. [board, advisor]; never a copy of the type"),
+      company: z.string().max(120).optional(),
+      role: z.string().max(120).optional(),
+      warmth: z.enum(["Hot", "Warm", "Lukewarm", "Cold"]).optional().describe("Only when the owner rated them; omit otherwise"),
+      status: z.enum(["active", "pending", "cold", "archived"]).optional().describe("Default pending"),
+      crm: z.enum(["none"]).optional().describe("none = deliberately kept out of the CRM (vault card only)"),
+      context: z.string().max(5000).optional().describe("The Context section: how the owner knows them, what they care about, key relationship dynamics, with dates"),
+      timeline: z.string().max(500).optional().describe("First Timeline line, e.g. the touchpoint that created the contact"),
+      related: z.array(z.string().max(120)).max(12).optional().describe("Wiki-link targets: related people, companies, projects"),
+    }),
+    annotations: WRITE,
+  }, async (args, ctx) => guard(() => kb.createPersonCard(deps.repoFor(ctx), args, now())));
+
   server.registerTool("crm_log_interaction", {
     title: "CRM: log interaction",
     description: "Log a touchpoint (call, email, meeting, note, linkedin, other) with a contact. Refused for contact types listed in the optional HAROLD_NO_LOG_TYPES setting (empty by default, so nothing is refused unless the owner opted in). Also freshens the person's vault card.",
@@ -400,7 +419,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
 export const TOOL_NAMES = [
   "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
-  "harold_capture", "harold_note", "harold_update", "harold_learning", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
+  "harold_capture", "harold_note", "harold_update", "harold_learning", "harold_person_create", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
   "task_list", "task_create",
   "calendar_list", "calendar_events",
 ];
