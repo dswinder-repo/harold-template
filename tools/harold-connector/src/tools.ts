@@ -13,7 +13,7 @@ import * as pulse from "./pulse.js";
 import * as stale from "./stale.js";
 import * as tasks from "./tasks.js";
 import * as calendar from "./calendar.js";
-import { googleFromEnv, type GoogleConfig } from "./google.js";
+import { googleAccountsFromEnv, type GoogleConfig } from "./google.js";
 import type { FetchLike } from "./identity.js";
 import { localParts, truncate } from "./text.js";
 
@@ -29,6 +29,7 @@ export interface ToolDeps {
   google?: () => GoogleConfig | null;
   /** fetch for Google's APIs; injected in tests. */
   googleFetch?: FetchLike;
+  googleAccounts?: () => GoogleConfig[];
 }
 
 export function githubTokenFrom(ctx: ServerContext): string {
@@ -59,7 +60,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
   const now = () => (deps.now ? deps.now() : new Date());
   const linear = () => (deps.linear || tasks.linearFromEnv)();
   const linearFetch: FetchLike = deps.linearFetch || ((i, init) => fetch(i, init));
-  const google = () => (deps.google || googleFromEnv)();
+  const googleAccounts = () => deps.googleAccounts ? deps.googleAccounts() : deps.google ? (d => d ? [d] : [])(deps.google()) : googleAccountsFromEnv();
   const googleFetch: FetchLike = deps.googleFetch || ((i, init) => fetch(i, init));
   const withSb = async (fn: (sb: crm.Sb) => Promise<crm.CrmResult>) => { const sb = deps.supabase(); return sb ? fn(sb) : crm.NOT_CONFIGURED; };
 
@@ -403,7 +404,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     description: "List the calendars the connector's own Google Calendar access can read: name, id, whether primary, access role and time zone. This access belongs to the connector, so it works the same from every connected tool. Read-only. Says plainly when no calendar is configured.",
     inputSchema: z.object({}),
     annotations: TASK_READ,
-  }, async () => guard(() => calendar.listCalendars(googleFetch, google())));
+  }, async () => guard(() => calendar.listCalendars(googleFetch, googleAccounts())));
 
   server.registerTool("calendar_events", {
     title: "Calendar: events",
@@ -414,13 +415,13 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       calendar: z.string().max(200).optional().describe("Only calendars whose name contains this text, or an exact calendar id"),
     }),
     annotations: TASK_READ,
-  }, async (args) => guard(() => calendar.listEvents(googleFetch, google(), args, now())));
+  }, async (args) => guard(() => calendar.listEvents(googleFetch, googleAccounts(), args, now())));
 
   // ───────────── event writes (review only: not deployed, scope not granted) ─────────────
 
   server.registerTool("calendar_event_create", {
     title: "Calendar: create event",
-    description: "Create an event on one of the owner's Google calendars (default: the primary calendar). Times are the owner's zone; dates alone make an all-day event. Attendees are email addresses; Google sends its own invitations by default. Needs the calendar write grant, which is not enabled on the deployed connector yet (Google answers 403 until it is). Never shares or deletes a calendar.",
+    description: "Create an event on one of the owner's Google calendars (default: the primary calendar). Times are the owner's zone; dates alone make an all-day event. Attendees are email addresses; Google sends its own invitations by default. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write. Never shares or deletes a calendar.",
     inputSchema: z.object({
       summary: z.string().max(300).describe("Event title"),
       start: z.string().describe("YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (24h, owner's zone)"),
@@ -431,11 +432,11 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       attendees: z.array(z.string().email()).max(50).optional().describe("Attendee email addresses"),
     }),
     annotations: TASK_WRITE,
-  }, async (args) => guard(() => calendar.createEvent(googleFetch, google(), args)));
+  }, async (args) => guard(() => calendar.createEvent(googleFetch, googleAccounts(), args)));
 
   server.registerTool("calendar_event_update", {
     title: "Calendar: edit event",
-    description: "Edit an existing event: pass eventId (from calendar_events or the event link) plus only the fields to change. Times are the owner's zone; dates alone make an all-day event. Editing one instance of a recurring series changes that instance unless the series id is passed. Needs the calendar write grant, which is not enabled on the deployed connector yet (Google answers 403 until it is). Never shares or deletes a calendar.",
+    description: "Edit an existing event: pass eventId (from calendar_events or the event link) plus only the fields to change. Times are the owner's zone; dates alone make an all-day event. Editing one instance of a recurring series changes that instance unless the series id is passed. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write. Never shares or deletes a calendar.",
     inputSchema: z.object({
       eventId: z.string().max(300).describe("The event id to edit"),
       calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
@@ -447,17 +448,17 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       attendees: z.array(z.string().email()).max(50).optional().describe("Full replacement attendee list (emails)"),
     }),
     annotations: TASK_WRITE,
-  }, async (args) => guard(() => calendar.updateEvent(googleFetch, google(), args)));
+  }, async (args) => guard(() => calendar.updateEvent(googleFetch, googleAccounts(), args)));
 
   server.registerTool("calendar_event_cancel", {
     title: "Calendar: cancel event",
-    description: "Cancel (delete) one event by eventId; it stops appearing in calendar_events. This cancels an EVENT only: it never deletes, shares, or changes a calendar. Needs the calendar write grant, which is not enabled on the deployed connector yet (Google answers 403 until it is).",
+    description: "Cancel (delete) one event by eventId; it stops appearing in calendar_events. This cancels an EVENT only: it never deletes, shares, or changes a calendar. Needs the calendar.events scope on the OAuth grant, which is not enabled on the deployed connector yet - until it is, Google refuses the write with a permission error. Use only when the owner has explicitly asked for this specific change: the OAuth grant is never blanket authority to write.",
     inputSchema: z.object({
       eventId: z.string().max(300).describe("The event id to cancel"),
       calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
     }),
     annotations: TASK_WRITE,
-  }, async (args) => guard(() => calendar.cancelEvent(googleFetch, google(), args)));
+  }, async (args) => guard(() => calendar.cancelEvent(googleFetch, googleAccounts(), args)));
 }
 
 export const TOOL_NAMES = [

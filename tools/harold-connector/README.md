@@ -215,6 +215,8 @@ The connector can hold its own Google Calendar access, configured once, so every
 3. **Set the variables** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ALLOWED_GOOGLE_EMAILS` (your own Google email) in Production.
 4. **Connect the account:** open `<PUBLIC_BASE_URL>/google/authorize` in a browser and approve. Google redirects back to the connector; the callback refuses any Google account whose email is not in `ALLOWED_GOOGLE_EMAILS`, then shows the sealed refresh token once. Store it as `GOOGLE_REFRESH_TOKEN` (Production) and redeploy.
 
+Connecting more than one Google account: run the connect flow once per account. The connect page identifies the token setting to use: GOOGLE_REFRESH_TOKEN for the first account, then GOOGLE_REFRESH_TOKEN_2 through GOOGLE_REFRESH_TOKEN_8. calendar_list groups calendars by account, and calendar_events reads across connected accounts. Shared calendars and duplicate events are combined. If one account's authorization expires, the response reports that failure while continuing to read the other accounts.
+
 The sealed token is encrypted with `TOKEN_KEY` and useless without it; rotating `TOKEN_KEY` revokes it (connect again the same way).
 
 ## Limits
