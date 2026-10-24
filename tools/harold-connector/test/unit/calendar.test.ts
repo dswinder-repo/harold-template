@@ -56,10 +56,10 @@ class FakeGoogle {
 const NOW = new Date("2026-10-23T15:00:00Z"); // a Friday morning in the test zone
 
 describe("google.authorize", () => {
-  it("asks for the two read-only scopes, offline access and consent, with a sealed state", () => {
+  it("asks for the read scopes plus event editing, offline access and consent, with a sealed state", () => {
     const url = new URL(google.authorize("https://harold-connector.example.com", "test-google-client"));
     expect(url.hostname).toBe("accounts.google.com");
-    expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.calendarlist.readonly");
+    expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.events");
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("redirect_uri")).toBe("https://harold-connector.example.com/google/callback");
