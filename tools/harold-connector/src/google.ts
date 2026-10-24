@@ -54,6 +54,20 @@ export function googleAccountsFromEnv(): GoogleConfig[] {
   return tokens.map(sealedToken => ({ clientId, clientSecret, sealedToken }));
 }
 
+const SLOT_NAMES: string[] = ["GOOGLE_REFRESH_TOKEN", ...Array.from({ length: 7 }, (_, i) => `GOOGLE_REFRESH_TOKEN_${i + 2}`)];
+
+/** The slot for a just-connected account: its EXISTING slot when this account is already connected (re-consent replaces that grant, never a second slot), else the first free slot. Offline: reads the sealed payloads, no API call. */
+export function slotForAccount(email: string): { slot: string | null; replaces: boolean } {
+  const target = email.toLowerCase();
+  for (const name of SLOT_NAMES) {
+    const t = (process.env[name] || "").trim();
+    if (!t) continue;
+    const p = open(tokenKey(), "google", t) as { email?: string } | null;
+    if (p && typeof p.email === "string" && p.email.toLowerCase() === target) return { slot: name, replaces: true };
+  }
+  return { slot: nextTokenSlot(), replaces: false };
+}
+
 /** The env name the next connected account should be stored as (first free slot; null when all 8 are taken). */
 export function nextTokenSlot(): string | null {
   if (!(process.env.GOOGLE_REFRESH_TOKEN || "").trim()) return "GOOGLE_REFRESH_TOKEN";
@@ -130,7 +144,7 @@ export async function callback(req: Request, fetchImpl: FetchLike): Promise<Resp
 
   const sealed = seal(tokenKey(), "google", { rt: tok.refresh_token, email });
   return page("Calendar connected", `<h2>Calendar connected for ${esc(email)}</h2>
-<p>Shown once. Store this as <code>${esc(nextTokenSlot() || "GOOGLE_REFRESH_TOKEN_<n> (all 8 account slots are in use)")}</code> in the connector's environment (Production), redeploy, and the <code>calendar_list</code> and <code>calendar_events</code> tools read every connected account:</p>
+<p>Shown once. ${(() => { const pick = slotForAccount(email); return pick.slot ? `Store this as <code>${esc(pick.slot)}</code>${pick.replaces ? ", replacing the existing grant for this account" : ""} in the connector's environment (Production)` : "All 8 account slots are in use; free one before storing"; })()}, redeploy, and the <code>calendar_list</code> and <code>calendar_events</code> tools read every connected account:</p>
 <p><code style="word-break:break-all;user-select:all">${esc(sealed)}</code></p>
 <p>It is encrypted with the connector's TOKEN_KEY and useless without it. Rotating TOKEN_KEY revokes it (connect again the same way). Google consent-screen note: an app left in "Testing" status issues refresh tokens that expire after 7 days; publish the consent screen to avoid a weekly re-connect.</p>`);
 }

@@ -269,3 +269,33 @@ describe("googleFromEnv", () => {
     delete process.env.GOOGLE_REFRESH_TOKEN;
   });
 });
+
+describe("slotForAccount (connect-page slot selection)", () => {
+  const EMAIL = "owner@example.com";
+  const clearSlots = () => { delete process.env.GOOGLE_REFRESH_TOKEN; for (let n = 2; n <= 8; n++) delete process.env[`GOOGLE_REFRESH_TOKEN_${n}`]; };
+  it("names the existing slot for a re-consent of an already-connected account, never a second slot", () => {
+    setTestEnv(); clearSlots();
+    process.env.GOOGLE_REFRESH_TOKEN = seal(tokenKey(), "google", { rt: "old-rt", email: EMAIL });
+    expect(google.slotForAccount(EMAIL)).toEqual({ slot: "GOOGLE_REFRESH_TOKEN", replaces: true });
+    clearSlots();
+  });
+  it("matches the account email case-insensitively", () => {
+    setTestEnv(); clearSlots();
+    process.env.GOOGLE_REFRESH_TOKEN = seal(tokenKey(), "google", { rt: "old-rt", email: "Owner@Example.com" });
+    expect(google.slotForAccount(EMAIL)).toEqual({ slot: "GOOGLE_REFRESH_TOKEN", replaces: true });
+    clearSlots();
+  });
+  it("names the first free slot for a genuinely new account", () => {
+    setTestEnv(); clearSlots();
+    process.env.GOOGLE_REFRESH_TOKEN = seal(tokenKey(), "google", { rt: "r1", email: "owner@example.com" });
+    process.env.GOOGLE_REFRESH_TOKEN_2 = seal(tokenKey(), "google", { rt: "r2", email: "work@example.com" });
+    expect(google.slotForAccount("third@example.com")).toEqual({ slot: "GOOGLE_REFRESH_TOKEN_3", replaces: false });
+    clearSlots();
+  });
+  it("skips occupied slots when naming a free one and never names an occupied slot as free", () => {
+    setTestEnv(); clearSlots();
+    process.env.GOOGLE_REFRESH_TOKEN_2 = seal(tokenKey(), "google", { rt: "r2", email: "work@example.com" }); // slot 1 empty, slot 2 taken
+    expect(google.slotForAccount("new@example.com")).toEqual({ slot: "GOOGLE_REFRESH_TOKEN", replaces: false });
+    clearSlots();
+  });
+});
