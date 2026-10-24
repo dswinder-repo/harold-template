@@ -10,7 +10,7 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
-export type Purpose = "client" | "state" | "code" | "access" | "refresh" | "pat";
+export type Purpose = "client" | "state" | "code" | "access" | "refresh" | "pat" | "google" | "google-state";
 const VERSION = 1;
 
 export function seal(key: Buffer, purpose: Purpose, payload: Record<string, unknown>): string {
@@ -62,3 +62,4 @@ export function sha256(s: string): string {
 export function randomId(bytes = 12): string {
   return randomBytes(bytes).toString("base64url");
 }
+

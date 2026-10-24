@@ -36,8 +36,10 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 | `crm_task` | write | Contact follow-up tasks: create, update, complete, cancel, list. |
 | `task_list` | read | Open tasks in your task manager (Linear, team `LINEAR_TEAM_KEY`), most recently updated first, with ID, project, state, due date and URL; optional text filter. The model calls it before `task_create` so nothing is created twice. |
 | `task_create` | write | One task in your task manager: title, optional description, due date (`YYYY-MM-DD`), project (by name) and priority, the same calls as `bin/harold-linear create`. An open task with the same title is returned instead of a duplicate. Refuses secrets. The instructions tell the model to create one per commitment whenever you paste meeting notes, a transcript or a forwarded email, without being asked, and to write each task ID into the meeting note's `## Action items`. |
+| `calendar_list` | read | The calendars the connector's own Google Calendar access can read: name, id, primary, access role, time zone. Configured once on the connector, so every connected tool reads the same calendars. |
+| `calendar_events` | read | Events from your Google calendars, today through the next 7 days by default (`from`/`to` `YYYY-MM-DD`, at most 31 days; `calendar` narrows to one), as a day-by-day table in your time zone (`HAROLD_TZ`). All-day and multi-day events are labeled, recurring events expanded per day, cancelled ones omitted. For the morning brief, meeting prep and scheduling. A calendar outside Google is not included; read its export file in the vault, if there is one. |
 
-Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "not configured" and everything else works. Without `LINEAR_API_KEY` and `LINEAR_TEAM_KEY`, `task_list` and `task_create` say so plainly and point the model at `crm_task` for contact follow-ups.
+Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "not configured" and everything else works. Without `LINEAR_API_KEY` and `LINEAR_TEAM_KEY`, `task_list` and `task_create` say so plainly and point the model at `crm_task` for contact follow-ups. Without `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN`, `calendar_list` and `calendar_events` say "not configured" and point at the chat's own calendar connector or a calendar export file in the vault.
 
 ## Security model
 
@@ -113,6 +115,10 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM (server side only; never in the repository). |
 | `LINEAR_API_KEY` | no | a Linear personal API key | The task manager, for `task_list` and `task_create` (server side only; never in the repository). Without it those two tools say "not configured". |
 | `LINEAR_TEAM_KEY` | no | `ENG` | Your Linear team's issue prefix (`ENG` for `ENG-123`). Same settings as in `~/.harold/env`. |
+| `GOOGLE_CLIENT_ID` | no | from the Google OAuth client | The calendars, for `calendar_list` and `calendar_events` (server side only). Without it those two tools say "not configured". See "Optional: the calendars (Google)" below. |
+| `GOOGLE_CLIENT_SECRET` | no | from the Google OAuth client | The calendars (server side only; never in the repository). |
+| `ALLOWED_GOOGLE_EMAILS` | no | `you@example.com` | The only Google accounts the calendar connect flow will bind, comma-separated. Required with the pair above. |
+| `GOOGLE_REFRESH_TOKEN` | no | the sealed value `/google/callback` shows once | The calendars. Without it the two tools say "not configured". |
 
 Set `HAROLD_TZ`: otherwise "today", the chat-log file name and note dates are UTC dates. To replace a single secret later on Vercel: `vercel env rm GITHUB_CLIENT_SECRET production`, `vercel env add GITHUB_CLIENT_SECRET production`, then redeploy.
 
@@ -199,11 +205,23 @@ Use it as a header, for example `claude mcp add --transport http harold <PUBLIC_
 - **Revoke all of them:** rotate `TOKEN_KEY` (this also signs every OAuth client out).
 - Treat a token like a password: it can read and write Harold until it expires. The connector refuses to write one into the knowledge base.
 
+### Optional: the calendars (Google)
+
+The connector can hold its own Google Calendar access, configured once, so every connected tool reads the same calendars - including chat apps with no calendar connector of their own. Read-only scopes only; there are no calendar write tools.
+
+1. **Create a Google OAuth client** (console.cloud.google.com: APIs & Services - Credentials - Create OAuth client ID - Web application). Add `<PUBLIC_BASE_URL>/google/callback` under Authorized redirect URIs, and enable the Google Calendar API in the same project.
+2. **Publish the consent screen** (APIs & Services - OAuth consent screen - Publish app). A consent screen left in "Testing" status issues refresh tokens that expire after 7 days, which would mean a weekly re-connect. The requested scopes are read-only (`calendar.readonly` and `calendar.calendarlist.readonly`).
+3. **Set the variables** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ALLOWED_GOOGLE_EMAILS` (your own Google email) in Production.
+4. **Connect the account:** open `<PUBLIC_BASE_URL>/google/authorize` in a browser and approve. Google redirects back to the connector; the callback refuses any Google account whose email is not in `ALLOWED_GOOGLE_EMAILS`, then shows the sealed refresh token once. Store it as `GOOGLE_REFRESH_TOKEN` (Production) and redeploy.
+
+The sealed token is encrypted with `TOKEN_KEY` and useless without it; rotating `TOKEN_KEY` revokes it (connect again the same way).
+
 ## Limits
 
 - **Boot and close do not run through the connector.** No hook runs there, so `bin/harold boot` does not load context and `bin/harold close` does not check filing. The tools file directly (a chat log line, a note, a lesson, a CRM record), and the next workspace session's boot and close see whatever landed in the repository. Heavy work on Harold itself still belongs in a session in the workspace.
 - **Search lags.** `harold_search` uses GitHub code search, which indexes the repository's default branch and can be a few minutes behind recent commits (including the connector's own). `harold_read` always returns the branch head.
 - **No deletes**, by design. Remove things in a workspace session.
+- **The Google calendar token lives in the environment.** The connector has no database: if the Google grant is revoked or rotated, re-run `/google/authorize` and update `GOOGLE_REFRESH_TOKEN`. A durable token store is a possible follow-up, deliberately not built in - it would make the CRM database a hard dependency of calendar reads.
 - **Stateless sign-in.** An authorization code is refused on reuse only within the same server instance (PKCE still binds it to the client that started the flow); refresh tokens stay valid until they expire. To end every session at once, change `TOKEN_KEY` or revoke the OAuth App's grant on GitHub. Personal access tokens cannot be listed, only revoked by id or all together.
 - **Optional `HAROLD_NO_LOG_TYPES`.** When set, `crm_log_interaction` refuses contacts whose CRM type, or whose vault card's `type` (or older `category`), is listed. Records can still be created and updated; those cards are not freshened by CRM writes.
 
@@ -238,5 +256,7 @@ Local server: `PORT=8787 npm run dev` with the variables from `.env.example` and
 - `src/graph.ts`: `harold_related`, a port of `bin/harold related` over `harold/graph.json`. `src/stale.ts`: `crm_stale`. `src/pulse.ts`: `harold_pulse`, the same procedure as `bin/harold pulse` (`test/unit/pulse-fixture.json` is shared with the workspace's Python tests, so both give the same text for the same repository). `src/morning.ts`: the critical lessons, housekeeping notes and Step 0 in `harold_today`.
 - `src/tasks.ts`: `task_list` and `task_create`, Linear's GraphQL API as `bin/harold-linear` calls it.
 - `src/crm.ts`: the CRM, ported from `tools/harold-mcp/server.js` against the same schema. `src/config.ts`: every setting.
+- `src/google.ts`: the connector's own Google sign-in for calendar access (`/google/authorize`, `/google/callback`). `src/calendar.ts`: `calendar_list` and `calendar_events`.
 
 Library note: `mcp-handler` 2.x is built on the MCP TypeScript SDK v2 (`@modelcontextprotocol/server`). The tests connect with both the 1.31 client (`@modelcontextprotocol/sdk`) and the v2 client (`@modelcontextprotocol/client`).
+

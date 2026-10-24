@@ -13,6 +13,10 @@ export interface Config {
   /** Optional narrowing of redirect targets; null (the default) means any https host. See redirects.ts. */
   allowedRedirectHosts: RedirectHosts;
   publicBaseUrl: string;
+  googleClientId: string;
+  googleClientSecret: string;
+  /** The only Google accounts the calendar connect flow will bind (lowercase emails). */
+  allowedGoogleEmails: string[];
 }
 // HAROLD_REPO / HAROLD_BRANCH are read by repoConfig() and the CRM variables by crm.supabaseFromEnv(),
 // where the tools use them; sign-in does not depend on them, so a missing HAROLD_REPO surfaces as a
@@ -41,6 +45,9 @@ export function config(): Config {
     allowedGithubId: id,
     allowedRedirectHosts: redirectHostsFromEnv(),
     publicBaseUrl: required("PUBLIC_BASE_URL").replace(/\/+$/, ""),
+    googleClientId: (process.env.GOOGLE_CLIENT_ID || "").trim(),
+    googleClientSecret: (process.env.GOOGLE_CLIENT_SECRET || "").trim(),
+    allowedGoogleEmails: (process.env.ALLOWED_GOOGLE_EMAILS || "").split(",").map(e => e.trim().toLowerCase()).filter(Boolean),
   };
 }
 
@@ -97,3 +104,4 @@ export function commitAuthor(): { name: string; email: string } {
 }
 
 export const MAX_RESULT_CHARS = 100_000;
+

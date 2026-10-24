@@ -12,6 +12,8 @@ import { CATEGORIES, SEVERITIES } from "./learnings.js";
 import * as pulse from "./pulse.js";
 import * as stale from "./stale.js";
 import * as tasks from "./tasks.js";
+import * as calendar from "./calendar.js";
+import { googleFromEnv, type GoogleConfig } from "./google.js";
 import type { FetchLike } from "./identity.js";
 import { localParts, truncate } from "./text.js";
 
@@ -23,6 +25,10 @@ export interface ToolDeps {
   linear?: () => tasks.LinearConfig | null;
   /** fetch for the task manager's API; injected in tests. */
   linearFetch?: FetchLike;
+  /** The calendars (Google); default: GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET + GOOGLE_REFRESH_TOKEN from the environment. */
+  google?: () => GoogleConfig | null;
+  /** fetch for Google's APIs; injected in tests. */
+  googleFetch?: FetchLike;
 }
 
 export function githubTokenFrom(ctx: ServerContext): string {
@@ -53,6 +59,8 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
   const now = () => (deps.now ? deps.now() : new Date());
   const linear = () => (deps.linear || tasks.linearFromEnv)();
   const linearFetch: FetchLike = deps.linearFetch || ((i, init) => fetch(i, init));
+  const google = () => (deps.google || googleFromEnv)();
+  const googleFetch: FetchLike = deps.googleFetch || ((i, init) => fetch(i, init));
   const withSb = async (fn: (sb: crm.Sb) => Promise<crm.CrmResult>) => { const sb = deps.supabase(); return sb ? fn(sb) : crm.NOT_CONFIGURED; };
 
   // After a CRM write about a person: freshen their vault card (Harold's filing rule, CRM + vault together).
@@ -368,10 +376,32 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     }),
     annotations: TASK_WRITE,
   }, async (args) => guard(() => tasks.createTask(linearFetch, linear(), args)));
+
+  // ───────────── the calendars ─────────────
+
+  server.registerTool("calendar_list", {
+    title: "Calendar: list calendars",
+    description: "List the calendars the connector's own Google Calendar access can read: name, id, whether primary, access role and time zone. This access belongs to the connector, so it works the same from every connected tool. Read-only. Says plainly when no calendar is configured.",
+    inputSchema: z.object({}),
+    annotations: TASK_READ,
+  }, async () => guard(() => calendar.listCalendars(googleFetch, google())));
+
+  server.registerTool("calendar_events", {
+    title: "Calendar: events",
+    description: "Read events from the owner's Google calendars for a date range (default: today through the next 7 days), as a day-by-day table in the owner's time zone (HAROLD_TZ): Time | Event | Calendar | Location / Link | Attendees. All calendars by default; pass calendar to narrow to one (name or id). All-day and multi-day events are labeled; recurring events are expanded per day; cancelled events are omitted (say so if asked). Read-only, for the morning brief, meeting prep and scheduling questions - not something to re-check every turn. A calendar outside Google is not included: read its export file in the vault, if there is one, and state its timestamp. Says plainly when no calendar is configured.",
+    inputSchema: z.object({
+      from: z.string().optional().describe("YYYY-MM-DD, default today in the owner's time zone"),
+      to: z.string().optional().describe("YYYY-MM-DD, inclusive, default from + 6 days; at most a 31-day span"),
+      calendar: z.string().max(200).optional().describe("Only calendars whose name contains this text, or an exact calendar id"),
+    }),
+    annotations: TASK_READ,
+  }, async (args) => guard(() => calendar.listEvents(googleFetch, google(), args, now())));
 }
 
 export const TOOL_NAMES = [
   "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
   "harold_capture", "harold_note", "harold_update", "harold_learning", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
   "task_list", "task_create",
+  "calendar_list", "calendar_events",
 ];
+
