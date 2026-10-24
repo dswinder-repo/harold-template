@@ -140,3 +140,119 @@ export async function listEvents(fetchImpl: FetchLike, cfg: GoogleConfig | null,
   const failNote = failures.length ? `\n\nCould not read: ${failures.join("; ")}.` : "";
   return { text: header + failNote + `\n\n${sections.join("\n\n")}` };
 }
+
+// ───────────── event writes (create / edit / cancel) ─────────────
+// These call the Calendar write endpoints. They need the calendar.events scope, which the
+// connector's OAuth client does not request yet; until that grant exists Google answers 403
+// and the error text says so. Sharing calendars and deleting calendars are out of scope by design.
+
+const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+
+export interface EventWriteArgs {
+  calendar?: string;            // calendar id or name substring; default: the primary calendar
+  summary?: string;             // event title
+  start?: string;               // YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (owner's zone)
+  end?: string;                 // same shape as start
+  location?: string;
+  description?: string;
+  attendees?: string[];         // email addresses
+  eventId?: string;             // for update/cancel
+}
+
+interface EventBody {
+  summary?: string; location?: string; description?: string;
+  start?: { date?: string; dateTime?: string; timeZone?: string };
+  end?: { date?: string; dateTime?: string; timeZone?: string };
+  attendees?: { email: string }[];
+}
+
+/** A start/end string becomes an all-day date or a zoned dateTime, never a naive instant. */
+function whenParam(v: string, zone: string): { date?: string; dateTime?: string; timeZone?: string } {
+  if (DATE_RE.test(v)) return { date: v };
+  if (DATETIME_RE.test(v)) return { dateTime: v.length === 16 ? `${v}:00` : v, timeZone: zone };
+  throw new Error(`Time "${v}" must be YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (24h, owner's zone).`);
+}
+
+/** Resolve the target calendar: the one named, else the primary. */
+async function writeCalendar(fetchImpl: FetchLike, cfg: GoogleConfig, name?: string): Promise<CalendarEntry> {
+  const items = await listCalendarEntries(fetchImpl, cfg);
+  if (!items.length) throw new Error("The connected Google account can see no calendars.");
+  if (!name) {
+    const primary = items.find(c => c.primary);
+    if (!primary) throw new Error("No primary calendar found; pass calendar to pick one by name or id.");
+    return primary;
+  }
+  const q = name.toLowerCase();
+  const hits = items.filter(c => c.id.toLowerCase() === q || c.summary.toLowerCase().includes(q));
+  if (!hits.length) throw new Error(`No calendar matches "${name}". The connector can read: ${items.map(c => c.summary).join(", ")}.`);
+  if (hits.length > 1 && !hits.some(c => c.id.toLowerCase() === q)) throw new Error(`"${name}" matches several calendars (${hits.map(c => c.summary).join(", ")}); use the exact id from calendar_list.`);
+  return hits.find(c => c.id.toLowerCase() === q) || hits[0];
+}
+
+function writeBody(args: EventWriteArgs, zone: string, partial: boolean): EventBody {
+  const body: EventBody = {};
+  if (args.summary !== undefined) body.summary = args.summary;
+  if (args.location !== undefined) body.location = args.location;
+  if (args.description !== undefined) body.description = args.description;
+  if (args.attendees !== undefined) body.attendees = args.attendees.map(email => ({ email }));
+  if (args.start !== undefined) body.start = whenParam(args.start, zone);
+  if (args.end !== undefined) body.end = whenParam(args.end, zone);
+  if (!partial) {
+    if (!body.summary) throw new Error("summary is required (the event title).");
+    if (!body.start || !body.end) throw new Error("start and end are required (YYYY-MM-DD or YYYY-MM-DDTHH:MM).");
+  }
+  return body;
+}
+
+async function writeCall(fetchImpl: FetchLike, cfg: GoogleConfig, method: string, url: string, body?: EventBody): Promise<Response> {
+  const at = await accessToken(fetchImpl, cfg);
+  const r = await fetchImpl(url, {
+    method,
+    headers: { authorization: `Bearer ${at}`, "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (r.status === 403) throw new Error("Google refused the write (HTTP 403): the connector's grant is read-only. Widening it needs the calendar.events scope, which is not approved yet.");
+  return r;
+}
+
+function eventLine(j: { id?: string; summary?: string; start?: { date?: string; dateTime?: string }; htmlLink?: string }): string {
+  const when = j.start?.date || j.start?.dateTime || "?";
+  return `"${j.summary || "(no title)"}" (${when})${j.htmlLink ? ` - ${j.htmlLink}` : ""}`;
+}
+
+export async function createEvent(fetchImpl: FetchLike, cfg: GoogleConfig | null, args: EventWriteArgs): Promise<CalendarResult> {
+  if (!cfg) return NOT_CONFIGURED;
+  const zone = tz();
+  const cal = await writeCalendar(fetchImpl, cfg, args.calendar);
+  const body = writeBody(args, zone, false);
+  const r = await writeCall(fetchImpl, cfg, "POST", `${CALENDAR_API}/calendars/${encodeURIComponent(cal.id)}/events`, body);
+  const j = await r.json().catch(() => ({})) as { id?: string; summary?: string; start?: { date?: string; dateTime?: string }; htmlLink?: string; error?: { message?: string } };
+  if (!r.ok) throw new Error(`Google Calendar answered HTTP ${r.status}${j.error?.message ? ` (${j.error.message})` : ""}`);
+  return { text: `Created ${eventLine(j)} on ${cal.summary}. Times are ${zone}; all-day when given dates only. No invitation emails are sent by the connector (Google's default for API creates).` };
+}
+
+export async function updateEvent(fetchImpl: FetchLike, cfg: GoogleConfig | null, args: EventWriteArgs): Promise<CalendarResult> {
+  if (!cfg) return NOT_CONFIGURED;
+  if (!args.eventId) throw new Error("eventId is required (from calendar_events or the event's link).");
+  const zone = tz();
+  const cal = await writeCalendar(fetchImpl, cfg, args.calendar);
+  const body = writeBody(args, zone, true);
+  if (!Object.keys(body).length) throw new Error("Nothing to change: pass at least one of summary, start, end, location, description, attendees.");
+  const r = await writeCall(fetchImpl, cfg, "PATCH", `${CALENDAR_API}/calendars/${encodeURIComponent(cal.id)}/events/${encodeURIComponent(args.eventId)}`, body);
+  const j = await r.json().catch(() => ({})) as { id?: string; summary?: string; start?: { date?: string; dateTime?: string }; htmlLink?: string; error?: { message?: string } };
+  if (!r.ok) throw new Error(`Google Calendar answered HTTP ${r.status}${j.error?.message ? ` (${j.error.message})` : ""}`);
+  return { text: `Updated ${eventLine(j)} on ${cal.summary}. Only the passed fields changed; recurring series edits apply to the single instance unless the series id was passed.` };
+}
+
+export async function cancelEvent(fetchImpl: FetchLike, cfg: GoogleConfig | null, args: EventWriteArgs): Promise<CalendarResult> {
+  if (!cfg) return NOT_CONFIGURED;
+  if (!args.eventId) throw new Error("eventId is required (from calendar_events or the event's link).");
+  const cal = await writeCalendar(fetchImpl, cfg, args.calendar);
+  const r = await writeCall(fetchImpl, cfg, "DELETE", `${CALENDAR_API}/calendars/${encodeURIComponent(cal.id)}/events/${encodeURIComponent(args.eventId)}`);
+  if (r.status === 404 || r.status === 410) return { text: `Event ${args.eventId} is already gone from ${cal.summary}.` };
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({})) as { error?: { message?: string } };
+    throw new Error(`Google Calendar answered HTTP ${r.status}${j.error?.message ? ` (${j.error.message})` : ""}`);
+  }
+  return { text: `Cancelled event ${args.eventId} on ${cal.summary}: it no longer appears in calendar_events. The calendar itself is untouched; cancelling an event never deletes or shares a calendar.` };
+}

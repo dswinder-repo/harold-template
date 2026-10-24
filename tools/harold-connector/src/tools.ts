@@ -415,12 +415,55 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     }),
     annotations: TASK_READ,
   }, async (args) => guard(() => calendar.listEvents(googleFetch, google(), args, now())));
+
+  // ───────────── event writes (review only: not deployed, scope not granted) ─────────────
+
+  server.registerTool("calendar_event_create", {
+    title: "Calendar: create event",
+    description: "Create an event on one of the owner's Google calendars (default: the primary calendar). Times are the owner's zone; dates alone make an all-day event. Attendees are email addresses; Google sends its own invitations by default. Needs the calendar write grant, which is not enabled on the deployed connector yet (Google answers 403 until it is). Never shares or deletes a calendar.",
+    inputSchema: z.object({
+      summary: z.string().max(300).describe("Event title"),
+      start: z.string().describe("YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (24h, owner's zone)"),
+      end: z.string().describe("Same shape as start"),
+      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
+      location: z.string().max(300).optional(),
+      description: z.string().max(2000).optional(),
+      attendees: z.array(z.string().email()).max(50).optional().describe("Attendee email addresses"),
+    }),
+    annotations: TASK_WRITE,
+  }, async (args) => guard(() => calendar.createEvent(googleFetch, google(), args)));
+
+  server.registerTool("calendar_event_update", {
+    title: "Calendar: edit event",
+    description: "Edit an existing event: pass eventId (from calendar_events or the event link) plus only the fields to change. Times are the owner's zone; dates alone make an all-day event. Editing one instance of a recurring series changes that instance unless the series id is passed. Needs the calendar write grant, which is not enabled on the deployed connector yet (Google answers 403 until it is). Never shares or deletes a calendar.",
+    inputSchema: z.object({
+      eventId: z.string().max(300).describe("The event id to edit"),
+      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
+      summary: z.string().max(300).optional(),
+      start: z.string().optional().describe("YYYY-MM-DD (all-day) or YYYY-MM-DDTHH:MM (24h, owner's zone)"),
+      end: z.string().optional().describe("Same shape as start"),
+      location: z.string().max(300).optional(),
+      description: z.string().max(2000).optional(),
+      attendees: z.array(z.string().email()).max(50).optional().describe("Full replacement attendee list (emails)"),
+    }),
+    annotations: TASK_WRITE,
+  }, async (args) => guard(() => calendar.updateEvent(googleFetch, google(), args)));
+
+  server.registerTool("calendar_event_cancel", {
+    title: "Calendar: cancel event",
+    description: "Cancel (delete) one event by eventId; it stops appearing in calendar_events. This cancels an EVENT only: it never deletes, shares, or changes a calendar. Needs the calendar write grant, which is not enabled on the deployed connector yet (Google answers 403 until it is).",
+    inputSchema: z.object({
+      eventId: z.string().max(300).describe("The event id to cancel"),
+      calendar: z.string().max(200).optional().describe("Calendar name substring or exact id (default: primary)"),
+    }),
+    annotations: TASK_WRITE,
+  }, async (args) => guard(() => calendar.cancelEvent(googleFetch, google(), args)));
 }
 
 export const TOOL_NAMES = [
   "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
   "harold_capture", "harold_note", "harold_update", "harold_learning", "harold_person_create", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
   "task_list", "task_create",
-  "calendar_list", "calendar_events",
+  "calendar_list", "calendar_events", "calendar_event_create", "calendar_event_update", "calendar_event_cancel",
 ];
 

@@ -222,3 +222,78 @@ describe("googleFromEnv", () => {
     delete process.env.GOOGLE_REFRESH_TOKEN;
   });
 });
+
+describe("calendar event writes", () => {
+  class FakeWrite {
+    calls: { method: string; url: string; body: any }[] = [];
+    forbid = false;
+    fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const method = (init?.method || "GET").toUpperCase();
+      if (url === TOKEN_URL) return new Response(JSON.stringify({ access_token: "at-value", expires_in: 3599 }), { status: 200 });
+      if (url.startsWith(`${API}/calendar/v3/users/me/calendarList`)) {
+        return new Response(JSON.stringify({ items: [
+          { id: "owner@example.com", summary: "Owner", primary: true, accessRole: "owner", timeZone: "America/Chicago" },
+          { id: "fam@group.calendar.google.com", summary: "Family", accessRole: "writer" },
+        ] }), { status: 200 });
+      }
+      if (this.forbid) return new Response(JSON.stringify({ error: { message: "Request had insufficient authentication scopes." } }), { status: 403 });
+      this.calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (method === "DELETE") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ id: "ev-new", summary: this.calls.at(-1)?.body?.summary || "?", start: this.calls.at(-1)?.body?.start, htmlLink: "https://calendar.google.com/event?eid=ev-new" }), { status: 200 });
+    };
+  }
+
+  it("creates a timed event on the primary calendar by default", async () => {
+    const g = new FakeWrite();
+    const out = await calendar.createEvent(g.fetch, CFG, { summary: "Dentist", start: "2026-10-27T14:00", end: "2026-10-27T15:00" });
+    expect(out.text).toContain("Created");
+    expect(out.text).toContain("Dentist");
+    const call = g.calls[0];
+    expect(call.method).toBe("POST");
+    expect(call.url).toContain("/calendars/owner%40example.com/events");
+    expect(call.body.start).toEqual({ dateTime: "2026-10-27T14:00:00", timeZone: "America/Chicago" });
+  });
+
+  it("creates an all-day event from dates only", async () => {
+    const g = new FakeWrite();
+    await calendar.createEvent(g.fetch, CFG, { summary: "Off", start: "2026-11-02", end: "2026-11-03", calendar: "family" });
+    expect(g.calls[0].url).toContain("fam%40group.calendar.google.com");
+    expect(g.calls[0].body.start).toEqual({ date: "2026-11-02" });
+  });
+
+  it("rejects a bad time shape before any write", async () => {
+    const g = new FakeWrite();
+    await expect(calendar.createEvent(g.fetch, CFG, { summary: "X", start: "next tuesday", end: "2026-10-27" })).rejects.toThrow(/YYYY-MM-DD/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("patches only the passed fields", async () => {
+    const g = new FakeWrite();
+    const out = await calendar.updateEvent(g.fetch, CFG, { eventId: "ev-1", location: "Zoom" });
+    expect(out.text).toContain("Updated");
+    expect(g.calls[0].method).toBe("PATCH");
+    expect(g.calls[0].url).toContain("/events/ev-1");
+    expect(g.calls[0].body).toEqual({ location: "Zoom" });
+  });
+
+  it("refuses an update with nothing to change", async () => {
+    const g = new FakeWrite();
+    await expect(calendar.updateEvent(g.fetch, CFG, { eventId: "ev-1" })).rejects.toThrow(/Nothing to change/);
+    expect(g.calls.length).toBe(0);
+  });
+
+  it("cancels an event without touching the calendar", async () => {
+    const g = new FakeWrite();
+    const out = await calendar.cancelEvent(g.fetch, CFG, { eventId: "ev-9" });
+    expect(out.text).toContain("Cancelled event ev-9");
+    expect(out.text).toContain("never deletes or shares a calendar");
+    expect(g.calls[0].method).toBe("DELETE");
+  });
+
+  it("says the grant is read-only when Google answers 403", async () => {
+    const g = new FakeWrite();
+    g.forbid = true;
+    await expect(calendar.createEvent(g.fetch, CFG, { summary: "X", start: "2026-10-27", end: "2026-10-28" })).rejects.toThrow(/read-only.*calendar\.events/s);
+  });
+});
