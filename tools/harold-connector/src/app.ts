@@ -9,6 +9,7 @@ import { checkTokenIdentityOnce, type FetchLike } from "./identity.js";
 import { PAT_PREFIX, verifyPat } from "./pat.js";
 import { instructions } from "./instructions.js";
 import * as oauth from "./oauth.js";
+import * as google from "./google.js";
 import { registerTools, defaultDeps, type ToolDeps } from "./tools.js";
 
 export interface AppOptions { fetch?: FetchLike; tools?: ToolDeps; now?: () => number; lookup?: oauth.LookupLike }
@@ -75,6 +76,14 @@ export function createApp(opts: AppOptions = {}) {
   app.get("/github/callback", c => oauth.githubCallback(c.req.raw, deps));
   app.post("/token", c => oauth.token(c.req.raw, deps));
 
+  // The connector's own Google sign-in for calendar access (owner-facing, browser navigation).
+  app.get("/google/authorize", c => {
+    const cfg = config();
+    if (!cfg.googleClientId) return c.text("Google is not configured on this connector (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set).", 501);
+    return c.redirect(google.authorize(cfg.publicBaseUrl, cfg.googleClientId));
+  });
+  app.get("/google/callback", c => google.callback(c.req.raw, fetchImpl));
+
   const authed = (req: Request) => withMcpAuth(mcp, verifyAccessToken(fetchImpl), {
     required: true,
     resourceMetadataPath: "/.well-known/oauth-protected-resource/mcp",
@@ -87,3 +96,4 @@ export function createApp(opts: AppOptions = {}) {
   app.onError((e, c) => { console.error("harold-connector error:", e instanceof Error ? e.message : e); return c.text("Internal error", 500); });
   return app;
 }
+
