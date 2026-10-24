@@ -23,9 +23,12 @@ import type { FetchLike } from "./identity.js";
 export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 export const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
+// Read scopes plus event edits. Sharing calendars and deleting whole calendars live under
+// broader scopes (calendar.acls / full calendar) that this connector deliberately never requests.
 export const SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
 ];
 
 export interface GoogleConfig { clientId: string; clientSecret: string; /** sealed (purpose "google") refresh token */ sealedToken: string }

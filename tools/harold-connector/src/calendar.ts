@@ -193,9 +193,9 @@ export async function listEvents(fetchImpl: FetchLike, cfgs: GoogleConfig[], arg
 }
 
 // ───────────── event writes (create / edit / cancel) ─────────────
-// These call the Calendar write endpoints. They need the calendar.events scope, which the
-// connector's OAuth client does not request yet; until that grant exists Google answers 403
-// and the error text says so. Sharing calendars and deleting calendars are out of scope by design.
+// These call the Calendar write endpoints. They need the calendar.events scope: an account
+// connected before that scope was added holds a read-only grant, Google answers 403 on a write,
+// and the error text says to reconnect. Sharing calendars and deleting calendars are out of scope by design.
 
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
@@ -304,7 +304,7 @@ async function writeCall(fetchImpl: FetchLike, cfg: GoogleConfig, method: string
     const reason = j.error?.errors?.[0]?.reason || "";
     const gmsg = j.error?.message || "";
     if (reason === "insufficientPermissions") {
-      throw new Error("Google refused the write: the connected grant has no calendar write permission (insufficientPermissions). Widening it needs the calendar.events scope and a re-connect, which is not approved yet.");
+      throw new Error("Google refused the write: the connected grant has no calendar write permission (insufficientPermissions). Reconnect the account so the grant includes event editing (calendar.events).");
     }
     if (/quota|rateLimit/i.test(reason)) {
       throw new Error(`Google refused the write: usage limit (${reason})${gmsg ? ` - ${gmsg}` : ""}. Try again later.`);
