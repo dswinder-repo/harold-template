@@ -279,9 +279,12 @@ Sessions that involve heavy building frequently hit context limits.
 
 ## Error Capture Rule (MANDATORY)
 
-**When the operator corrects an error, pushes back, or says something was wrong, record a lesson IMMEDIATELY, before continuing with any other work.**
+**When the operator corrects something, first decide which kind of correction it is. Act on it in the same turn, before any other work.**
 
-Do not wait until session end. Do not just acknowledge verbally. The lesson must be written in the same turn the error is identified, so future sessions inherit it.
+1. **A record fix: just make the fix.** A misspelled name, a wrong title, a date, a detail about a person, company or project. Correct it wherever it is wrong (the vault card, the CRM record, `harold/facts.md`, the note) and move on. **It is not a lesson and is never filed as one.** The lessons file is not a list of corrected facts.
+2. **A lesson: Harold did something the wrong way.** "You did X; the right way is Y", about how Harold works, and it applies beyond this case. Write the right way into the rule it belongs to (`AGENTS.md`, the owning playbook, or the project's own instructions) and file the lesson, both in this turn. Do not wait until session end, and do not just acknowledge it verbally.
+
+The test: would a session working on something unrelated behave differently because of it? If not, it is a record fix.
 
 **How to capture.** One command. Do not hand-edit `harold/learnings.jsonl`, and never pick the ID yourself:
 
@@ -291,7 +294,6 @@ bin/harold file learning '{"severity":"critical","project":"global","category":"
 
 It assigns the next ID under a lock and appends the entry. Choosing the ID by reading the file first is what this replaces: two sessions filing at the same time would both read the same highest number and both write it, and `bin/harold check` refuses to boot on duplicate IDs (`bin/harold file learning --repair` renumbers them).
 
-- **a fact correction is not a learning.** A wrong name, title, date or project detail is fixed in place: the vault card, the CRM record, the note that was wrong. File nothing. A learning is a lesson about how Harold works that applies beyond the case at hand.
 - **severity**: `critical` only for a system-wide rule not yet written into `AGENTS.md` or a playbook, and for a repeat of one. `warning` for a project-scoped lesson (it loads when a session works on that project) or a process slip; `info` for a preference or a one-off.
 - **admission**: before filing, ask whether the lesson's real home is the rule itself. A lasting instruction belongs in `AGENTS.md`, the owning playbook or the project's own instructions: edit it there in the same turn and file the learning at `warning`/`info` with "(folded into <file>)". Boot shows critical learnings one line each within a fixed budget (`bin/harold learnings` prints them in full), and `bin/harold check` warns past 15: a growing critical list means rules are not being folded.
 - **project**: `global` if broadly applicable, otherwise the project slug
