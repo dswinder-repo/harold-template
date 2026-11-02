@@ -14,6 +14,13 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${GROK_WORKSPACE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" gate --via=grok", "timeout": 10 }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

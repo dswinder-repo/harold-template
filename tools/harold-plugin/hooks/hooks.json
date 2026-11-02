@@ -1,14 +1,50 @@
 {
-  "description": "Harold: boot on session start, enforce filing on stop. Uses ${CLAUDE_PLUGIN_ROOT}, never relative paths.",
+  "description": "Harold: boot on session start, gate tools until an oversized boot is read, enforce filing on stop. Uses ${CLAUDE_PLUGIN_ROOT}, never relative paths.",
   "hooks": {
     "SessionStart": [
-      { "matcher": "startup|resume|clear|compact", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/boot.sh\"", "timeout": 60 } ] }
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/boot.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/close.sh\"", "timeout": 240 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/close.sh\"",
+            "timeout": 240
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/close.sh\" --final", "timeout": 240 } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/close.sh\" --final",
+            "timeout": 240
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

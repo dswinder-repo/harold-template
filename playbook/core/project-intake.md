@@ -16,6 +16,8 @@ Watch every message for a body of work that will produce files and needs a home:
 - A deliverable that fits no existing folder (a memo, model, deck or tool for something unmapped)
 - A name the operator uses for a project that `bin/harold where` cannot resolve
 
+**Still triggered (never a reason to skip):** the idea is exploratory, nothing is agreed, a partner has not said yes, or the name is provisional. Status `active` with the open points in `notes` is the right entry. A body of work that already produced a deliverable (a concept doc, a memo) is a project.
+
 **Not triggered by:**
 - A one-off question with no follow-on work
 - Personal topics with no work output

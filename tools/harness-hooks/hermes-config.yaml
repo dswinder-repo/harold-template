@@ -7,6 +7,8 @@
 #   pre_verify           close, blocking: it fires when the agent changed files in the turn, and {"decision": "block"}
 #                        keeps the agent going (at most agent.max_verify_nudges times, default 3).
 #   on_session_end       close at the end of every turn (commit and push; cannot block).
+#   pre_tool_call        gate: while a boot too large for one read is still unread (bin/harold context), exit 2 holds
+#                        the tool with the reason on stderr. Fails open on anything it cannot read.
 #   on_session_finalize  close --final when the session is torn down (/new, quitting), detached.
 # Source: NousResearch/hermes-agent, website/docs/user-guide/features/hooks.md (Shell Hooks) and agent/shell_hooks.py.
 hooks:
@@ -22,6 +24,12 @@ hooks:
         [ -x "$r/bin/harold" ] && [ -f "$r/AGENTS.md" ] || { echo "{}"; exit 0; };
         exec "$r/bin/harold" close --via=hermes'
       timeout: 240
+  pre_tool_call:
+    - command: >-
+        sh -c 'r="${HAROLD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}";
+        [ -x "$r/bin/harold" ] && [ -f "$r/AGENTS.md" ] || exit 0;
+        exec "$r/bin/harold" gate --via=hermes'
+      timeout: 10
   on_session_end:
     - command: >-
         sh -c 'r="${HAROLD_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}";

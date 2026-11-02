@@ -64,14 +64,16 @@ test('update: unedited machinery is updated, new files added, removed ones remov
   const pb = 'playbook/core/' + fs.readdirSync(U('playbook/core')).filter(f => f.endsWith('.md') && f !== 'README.md')[0];
   write(U(pb), read(U(pb)) + '\nStarter v2 step.\n');
   write(U('AGENTS.md'), read(U('AGENTS.md')) + '\nStarter v2 rule.\n');
-  write(U('memory/CLAUDE.md'), 'starter content that must never reach a workspace\n');
+  // The working-memory file: memory/working-memory.md, or memory/CLAUDE.md in a starter made before the rename.
+  const MEM = fs.existsSync(U('memory/working-memory.md')) ? 'memory/working-memory.md' : 'memory/CLAUDE.md';
+  write(U(MEM), 'starter content that must never reach a workspace\n');
   write(U('harold/learnings.jsonl'), '');
   write(U('bin/harold-index'), read(U('bin/harold-index')));
   const v2 = s.commitUp('v2');
   // The operator's own edits and content.
   write(P(pb), read(P(pb)) + '\nMy own step.\n');
   write(P('AGENTS.md'), read(P('AGENTS.md')).replace('[YOUR NAME]', 'Pat Doe'));
-  const memBefore = read(P('memory/CLAUDE.md')), learnBefore = read(P('harold/learnings.jsonl'));
+  const memBefore = read(P(MEM)), learnBefore = read(P('harold/learnings.jsonl'));
   s.g('commit', '-qam', 'my edits');
 
   const dry = harold(s.ws, s.home, ['update', '--dry-run', '--from', s.bare]);
@@ -98,7 +100,7 @@ test('update: unedited machinery is updated, new files added, removed ones remov
   assert.match(read(P('AGENTS.md.upstream')), /Starter v2 rule\./);
   assert.match(r.out, /AGENTS\.md is yours and never overwritten/);
   // Content is never touched, whatever the starter did to its own copy.
-  assert.strictEqual(read(P('memory/CLAUDE.md')), memBefore);
+  assert.strictEqual(read(P(MEM)), memBefore);
   assert.strictEqual(read(P('harold/learnings.jsonl')), learnBefore);
   // The record: the starter commit applied; url and ref stay as configured (--from is a one-off).
   const rec = JSON.parse(read(P('harold/upstream.json')));
