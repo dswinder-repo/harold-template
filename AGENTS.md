@@ -14,6 +14,8 @@ bin/harold boot
 
 It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit, or output starting `⛔ HAROLD BOOT REFUSED`), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. The operator never types it.
 
+**The context gate.** A harness passes hook output to the model only up to a size limit (Claude Code shows a 2 KB preview of anything over about 10 KB). When boot's context is larger than `HAROLD_HOOK_BUDGET` (default 9000 characters), boot prints a short digest instead: the always-on monitors, the scheduled work, the exit condition and a `⛔ CONTEXT GATE` line. It writes the full context as parts. **Run `bin/harold context` until it says every part is read, before anything else.** Until then the pre-tool hook (`bin/harold gate`) holds every tool except `bin/harold` commands and the session file, and close blocks the turn. The gate runs in Claude Code, the Cowork plugin, Codex, Gemini CLI, Qwen Code, Cursor, Copilot CLI, Grok Build, Kimi Code and Hermes Agent; everywhere else close enforces it. It fails open: input it cannot read never blocks a tool.
+
 Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Every harness with lifecycle hooks is wired, so boot and close run on their own; these are the files (sources and setup: README, "Every harness with lifecycle hooks is wired"):
 
 | Harness | Wiring | Session start → boot | End of every turn → close | Session end → close --final |
@@ -42,7 +44,7 @@ If boot's output is already in your context, it ran: do not run it again. **In a
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
-At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed, that due scheduled work was recorded, and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
+At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed, that due scheduled work was recorded, that every boot context part was read, and that new work belongs to a project (a new `vault/intel/` or `vault/decisions/` note carries `project:` frontmatter naming a project in `harold/projects.md`, or `project: global`; a new top-level folder has a project-map entry), and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
 
 ---
 
@@ -130,7 +132,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 3. **Read `dashboard/status.md`** — current state, projects, deadlines, intel
 4. **Check `harold/alerts.md`** — urgent items and time-sensitive flags. **If its `Last updated:` date is more than a day old, say so and rebuild the Current Alerts section from the task manager + `harold/blockers.md` + `harold/events.md` before proceeding.** Alerts is a derived view that must be regenerated from source, never hand-maintained.
 5. **Check `harold/blockers.md`** — active blockers and dependencies
-6. **Load learnings** — boot prints every `critical` entry of `harold/learnings.jsonl`; also read the `warning`/`info` entries matching the current session's project. These are lessons from past corrections. They are binding.
+6. **Load learnings** — boot lists the `critical` entries of `harold/learnings.jsonl` one line each; `bin/harold learnings --project <slug>` prints the current project's entries in full. These are lessons from past corrections. They are binding.
 7. **Search the knowledge base** (`bin/harold search "<query>"`) — pull today's and yesterday's daily notes from `vault/daily/` and search for the people and companies relevant to today's agenda, then `bin/harold related` to follow their links.
 8. **Run `playbook/core/pre-flight-verification.md`** before presenting ANY output
 9. **If the morning brief is triggered** → follow `playbook/core/morning-brief.md` EXACTLY (3-step sequence, do not improvise)
@@ -277,9 +279,12 @@ Sessions that involve heavy building frequently hit context limits.
 
 ## Error Capture Rule (MANDATORY)
 
-**When the operator corrects an error, pushes back, or says something was wrong, record a lesson IMMEDIATELY, before continuing with any other work.**
+**When the operator corrects something, first decide which kind of correction it is. Act on it in the same turn, before any other work.**
 
-Do not wait until session end. Do not just acknowledge verbally. The lesson must be written in the same turn the error is identified, so future sessions inherit it.
+1. **A record fix: just make the fix.** A misspelled name, a wrong title, a date, a detail about a person, company or project. Correct it wherever it is wrong (the vault card, the CRM record, `harold/facts.md`, the note) and move on. **It is not a lesson and is never filed as one.** The lessons file is not a list of corrected facts.
+2. **A lesson: Harold did something the wrong way.** "You did X; the right way is Y", about how Harold works, and it applies beyond this case. Write the right way into the rule it belongs to (`AGENTS.md`, the owning playbook, or the project's own instructions) and file the lesson, both in this turn. Do not wait until session end, and do not just acknowledge it verbally.
+
+The test: would a session working on something unrelated behave differently because of it? If not, it is a record fix.
 
 **How to capture.** One command. Do not hand-edit `harold/learnings.jsonl`, and never pick the ID yourself:
 
@@ -289,7 +294,8 @@ bin/harold file learning '{"severity":"critical","project":"global","category":"
 
 It assigns the next ID under a lock and appends the entry. Choosing the ID by reading the file first is what this replaces: two sessions filing at the same time would both read the same highest number and both write it, and `bin/harold check` refuses to boot on duplicate IDs (`bin/harold file learning --repair` renumbers them).
 
-- **severity**: `critical` for a factual or identity error, or any repeat; `warning` for a process or scope error; `info` for a preference
+- **severity**: `critical` only for a system-wide rule not yet written into `AGENTS.md` or a playbook, and for a repeat of one. `warning` for a project-scoped lesson (it loads when a session works on that project) or a process slip; `info` for a preference or a one-off.
+- **admission**: before filing, ask whether the lesson's real home is the rule itself. A lasting instruction belongs in `AGENTS.md`, the owning playbook or the project's own instructions: edit it there in the same turn and file the learning at `warning`/`info` with "(folded into <file>)". Boot shows critical learnings one line each within a fixed budget (`bin/harold learnings` prints them in full), and `bin/harold check` warns past 15: a growing critical list means rules are not being folded.
 - **project**: `global` if broadly applicable, otherwise the project slug
 - **category**: `names`, `titles`, `tools`, `process`, `scope`, `filing`, `facts` or `context`
 - **repeats**: if this repeats an existing lesson, file it again as `critical` and say "(repeat of Lxxx)" in the lesson text

@@ -273,9 +273,11 @@ test('size budgets: a startup file over budget is a warning; housekeeping.json c
   const x = workspace();
   const env = { HAROLD_TZ: 'UTC', HAROLD_NOW: '2026-10-02T09:00:00' };
   assert.ok(!JSON.parse(harold(x, ['check', '--json'], env).out).warnings.some(m => /over its/.test(m)), 'the starter is under budget');
-  fs.appendFileSync(path.join(x.ws, 'memory/CLAUDE.md'), '\n' + 'x'.repeat(12000) + '\n');
-  assert.ok(JSON.parse(harold(x, ['check', '--json'], env).out).warnings.some(m => /memory\/CLAUDE\.md is \d+k chars, over its 10k budget/.test(m)));
+  // The working-memory file: memory/working-memory.md, or memory/CLAUDE.md in a starter made before the rename.
+  const mem = fs.existsSync(path.join(x.ws, 'memory/working-memory.md')) ? 'memory/working-memory.md' : 'memory/CLAUDE.md';
+  fs.appendFileSync(path.join(x.ws, mem), '\n' + 'x'.repeat(12000) + '\n');
+  assert.ok(JSON.parse(harold(x, ['check', '--json'], env).out).warnings.some(m => m.startsWith(mem) && / is \d+k chars, over its 10k budget/.test(m)));
   const cfg = path.join(x.ws, 'harold/housekeeping.json');
-  fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, 'utf8')), size_budgets: { 'memory/CLAUDE.md': 20000 } }));
+  fs.writeFileSync(cfg, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfg, 'utf8')), size_budgets: { 'memory/working-memory.md': 20000 } }));
   assert.ok(!JSON.parse(harold(x, ['check', '--json'], env).out).warnings.some(m => /over its/.test(m)));
 });

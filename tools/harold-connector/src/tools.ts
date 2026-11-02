@@ -250,7 +250,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("harold_learning", {
     title: "Harold: record a lesson",
-    description: "Record a lesson in harold/learnings.jsonl with the next free id (Lnnn, as `bin/harold file learning` assigns it), whenever the owner corrects a mistake or states a lasting preference, so future sessions inherit it. severity: critical for a factual or identity error or any repeat, warning for a process or scope error, info for a preference.",
+    description: "Record a lesson in harold/learnings.jsonl with the next free id (Lnnn, as `bin/harold file learning` assigns it), when the owner says Harold did something the wrong way and names the right way, about how Harold works and applying beyond the case at hand, so future sessions inherit it. A corrected fact (a name, a title, a date, a detail of a person, company or project) is NOT a lesson: fix it in its record instead. severity: critical only for a system-wide rule not yet written into AGENTS.md or a playbook, or a repeat of one; warning for a project-scoped lesson or a process slip; info for a preference or a one-off.",
     inputSchema: z.object({
       lesson: z.string().min(10).max(3000).describe("The lesson, stated so a future session can act on it"),
       severity: z.enum(SEVERITIES),

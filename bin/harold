@@ -341,8 +341,13 @@ function closeReply(hook, kind, text) {
 }
 
 // ───────────────────────── knowledge loaders ─────────────────────────
+// The working-memory file: memory/working-memory.md, or memory/CLAUDE.md in workspaces made before the rename.
+function memoryFile(root) {
+  return !fs.existsSync(path.join(root, 'memory/working-memory.md')) && fs.existsSync(path.join(root, 'memory/CLAUDE.md')) ? 'memory/CLAUDE.md' : 'memory/working-memory.md';
+}
+function coreFiles(root) { return CORE.map(rel => rel === 'memory/working-memory.md' ? memoryFile(root) : rel); }
 const CORE = [
-  'AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md',
+  'AGENTS.md', 'memory/working-memory.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md',
   'harold/alerts.md', 'harold/blockers.md', 'harold/facts.md', 'harold/learnings.jsonl', 'harold/projects.md', 'harold/sync-map.md', 'playbook/README.md',
 ];
 
@@ -353,13 +358,38 @@ function loadPlaybooks(root) {
   const items = files.map(f => {
     const r = tryRead(path.join(dir, f));
     const purpose = r.ok ? (r.text.match(/\*\*Purpose:\*\*\s*(.+)/) || r.text.match(/^#\s+(.+)/m) || [null, ''])[1].trim() : '';
-    return { name: f, ok: r.ok, err: r.err, bytes: r.text.length, purpose: purpose.slice(0, 110) };
+    return { name: f, ok: r.ok, err: r.err, bytes: r.text.length, purpose: purpose.length > 80 ? purpose.slice(0, 77) + '...' : purpose };
   });
   const readme = tryRead(path.join(dir, 'README.md'));
   const indexed = new Set((readme.text.match(/^\|\s*`([a-z0-9\/-]+\.md)`/gm) || []).map(s => s.replace(/^\|\s*`|`$/g, '')));
   return { items, notIndexed: files.filter(f => !indexed.has(f)), indexedMissing: [...indexed].filter(f => !files.includes(f)) };
 }
 
+// Boot shows each critical learning on one line, within HAROLD_LEARNINGS_BUDGET characters; `harold learnings` prints
+// them in full. A ledger that outgrows the budget is a signal to fold lessons into their rules (knowledge-base-health.md
+// Step 12), never a reason to grow boot.
+const LEARNINGS_BUDGET = Number(process.env.HAROLD_LEARNINGS_BUDGET) || 4000;
+const LEARNINGS_CRITICAL_MAX = 15;
+function learningLines(rows, budget, cli) {
+  const out = []; let used = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const l = rows[i]; const one = String(l.lesson || '').replace(/\s+/g, ' ');
+    const line = `- ${l.id} [${l.project}/${l.category}] ${one.length > 220 ? one.slice(0, 217) + '...' : one}`;
+    if (used + line.length > budget) { out.push(`- ... ${rows.length - i} more: ${cli} learnings`); break; }
+    out.push(line); used += line.length + 1;
+  }
+  return out;
+}
+function cmdLearnings(root, argv) {
+  const rows = loadLearnings(root).rows;
+  const val = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
+  const project = val('--project'), sev = val('--severity');
+  const pick = rows.filter(l => (argv.includes('--all') || sev ? (!sev || l.severity === sev) : l.severity === 'critical' || (project && l.severity !== 'info'))
+    && (!project || l.project === project || l.project === 'global'));
+  if (!pick.length) { console.log(`harold learnings: none match (${rows.length} in harold/learnings.jsonl)`); return 0; }
+  pick.forEach(l => console.log(`${l.id} [${l.severity} ${l.project}/${l.category}] ${l.date || ''}\n  ${l.lesson}\n`));
+  return 0;
+}
 function loadLearnings(root) {
   const { rows, errors } = readJsonl(path.join(root, 'harold/learnings.jsonl'));
   const seen = new Set(), dupes = [];
@@ -389,6 +419,21 @@ function loadAlerts(root, today) {
   return { ok: r.ok, updated, never: !updated && /Last updated:\s*never/i.test(r.text), age: updated ? daysBetween(updated, today.iso) : null, current: cur ? cur[0].trim() : '' };
 }
 
+// Alerts in boot: the section headings and one line per alert (its title cell), not the whole tables.
+function compactAlerts(text) {
+  const out = [];
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t || /^\*.*\*$/.test(t)) continue;                                   // blank, italic provenance notes
+    if (/^\|/.test(t)) {
+      const cells = t.split('|').slice(1, -1).map(x => x.trim());
+      if (!cells.length || /^:?-{2,}/.test(cells[0]) || /^alert$/i.test(cells[0].replace(/\*/g, ''))) continue;  // header rows
+      out.push(`- ${cells[0].replace(/\*\*/g, '')}`);
+    } else out.push(t);
+    if (out.length >= 40) { out.push('- ...'); break; }
+  }
+  return out;
+}
 function loadBlockers(root, today) {
   const r = tryRead(path.join(root, 'harold/blockers.md'));
   const section = r.text.split(/##\s*Resolved/i)[0] || '';
@@ -558,10 +603,13 @@ function readHousekeeping(root) { try { const j = JSON.parse(readFull(path.join(
 // boot notes it, and the monthly full audit moves stale sections into an archive file beside it
 // (searchable with harold search, not loaded at startup). Nothing is deleted. Override per file in
 // harold/housekeeping.json → "size_budgets".
-const SIZE_BUDGETS = { 'AGENTS.md': 36000, 'memory/CLAUDE.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
+const SIZE_BUDGETS = { 'AGENTS.md': 36000, 'memory/working-memory.md': 10000, 'dashboard/status.md': 10000, 'dashboard/processes.md': 15000, 'harold/alerts.md': 8000 };
 function sizeBudgets(root) {
   const o = readHousekeeping(root).size_budgets; const b = { ...SIZE_BUDGETS };
   if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (Number.isFinite(+v) && +v > 0) b[k] = +v;
+  // Either name of the working-memory file budgets the one this workspace has.
+  const mem = memoryFile(root), other = mem === 'memory/CLAUDE.md' ? 'memory/working-memory.md' : 'memory/CLAUDE.md';
+  if (b[other] !== undefined) { if (!(o && o[mem])) b[mem] = b[other]; delete b[other]; }
   return b;
 }
 
@@ -619,7 +667,7 @@ function archiveStaleSessions(root, nowMs) {
 // ───────────────────────── check (the contract) ─────────────────────────
 function runCheck(root, today) {
   const failures = [], warnings = [];
-  for (const rel of CORE) { const r = tryRead(path.join(root, rel)); if (!r.ok) failures.push(`core file unreadable: ${rel} (${r.err})`); }
+  for (const rel of coreFiles(root)) { const r = tryRead(path.join(root, rel)); if (!r.ok) failures.push(`core file unreadable: ${rel} (${r.err})`); }
   const pb = loadPlaybooks(root);
   pb.items.filter(i => !i.ok).forEach(i => failures.push(`playbook unreadable: playbook/${i.name} (${i.err})`));
   if (!pb.items.length) failures.push('no playbooks found in playbook/');
@@ -634,7 +682,7 @@ function runCheck(root, today) {
   const lr = loadLearnings(root);
   lr.errors.forEach(e => failures.push(`learnings.jsonl parse error ${e}`));
   if (lr.dupes.length) failures.push(`duplicate learning ids: ${lr.dupes.join(', ')} — fix with: bin/harold file learning --repair (renumbers the later copy; never edit the file by hand)`);
-  if (!lr.critical.length) warnings.push('no critical learnings loaded');
+  if (lr.critical.length > LEARNINGS_CRITICAL_MAX) warnings.push(`${lr.critical.length} critical learnings (more than ${LEARNINGS_CRITICAL_MAX}): fold settled ones into their rules and archive them (playbook/core/knowledge-base-health.md Step 12); critical is only for system-wide rules not yet written into one`);
   const pj = loadProjects(root);
   if (!pj.ok) failures.push(`project map unreadable: harold/projects.md (${pj.err})`);
   else { const noFolder = pj.projects.filter(p => p.folder && !fs.existsSync(path.join(root, p.folder))); if (noFolder.length) warnings.push(`project map folders missing on disk: ${noFolder.map(p => p.name + ' → ' + p.folder).join('; ')}`); }
@@ -724,7 +772,10 @@ function cmdPulse(root, argv) {
 }
 function pulseBootLines(root) {
   const r = haroldIndex(root, ['pulse', '--boot'], 30000);
-  if (r.status === 0 && (r.stdout || '').trim()) return r.stdout.trimEnd().split('\n');
+  if (r.status === 0 && (r.stdout || '').trim()) {
+    const lines = r.stdout.trimEnd().split('\n'), items = lines.slice(1);
+    return items.length > 8 ? [lines[0], ...items.slice(0, 8), `- ... ${items.length - 8} more: ${CLI(root)} pulse`] : lines;
+  }
   return [`## Project pulse: unavailable (${((r.stderr || '').trim().split('\n').pop() || (r.error && r.error.message) || 'harold-index pulse failed').slice(0, 160)})`];
 }
 
@@ -864,18 +915,21 @@ function cmdBoot(root, today, opts, hook) {
   if (hkNew.length) L.push(`Housekeeping notes: ${hkNew.length} new under "## New" in ${P(HK_NOTES)} (left by unattended jobs). The next morning brief shows them once, then moves them under "## Shown".`);
   L.push('');
   L.push('## Constitution and core files (all verified readable this boot)');
-  CORE.forEach(rel => L.push(`- ${P(rel)}`));
-  L.push('Read memory/CLAUDE.md, dashboard/index.md and dashboard/status.md now, per AGENTS.md. The Context Engine (dashboard/processes.md) is always on: playbooks fire on what the operator says, never on commands.');
+  L.push(coreFiles(root).join(', '));
+  L.push(`Read ${memoryFile(root)}, dashboard/index.md and dashboard/status.md now, per AGENTS.md. The Context Engine (dashboard/processes.md) is always on: playbooks fire on what the operator says, never on commands.`);
   L.push('');
   L.push(`## Playbooks — ${c.playbooks.items.length}/${c.playbooks.items.length} readable at ${P('playbook')}/`);
-  c.playbooks.items.forEach(i => L.push(`- ${i.name} (${i.bytes}b)${i.purpose ? ' — ' + i.purpose : ''}`));
+  c.playbooks.items.forEach(i => L.push(`- ${i.name}${i.purpose ? ' — ' + i.purpose : ''}`));
   L.push('');
-  L.push(`## Critical learnings (${c.learnings.critical.length} of ${c.learnings.rows.length}; all binding — full file: ${P('harold/learnings.jsonl')})`);
-  c.learnings.critical.forEach(l => L.push(`- ${l.id} [${l.project}/${l.category}] ${l.lesson}`));
+  // Learnings orient, they do not accumulate into boot: one line each, within a fixed budget, the rest on demand.
+  L.push(`## Critical learnings (${c.learnings.critical.length} of ${c.learnings.rows.length}; all binding — in full: ${CLI(root)} learnings; this session's project: ${CLI(root)} learnings --project <slug>)`);
+  L.push(...learningLines(c.learnings.critical, LEARNINGS_BUDGET, CLI(root)));
   L.push('');
   const act = c.projects.projects.filter(p => p.status === 'active');
   L.push(`## Project map — ${c.projects.projects.length} entries, ${act.length} active (${P('harold/projects.md')}; resolve folders with: ${CLI(root)} where <topic>)`);
-  c.projects.projects.forEach(p => L.push(`- ${p.name} [${p.status}] → ${p.folder}${p.aliasList.length ? '  aliases: ' + p.aliasList.slice(0, 5).join(', ') : ''}${p.aliasesTodo ? '  (ALIASES: TODO — learn them from how the operator talks, never ask)' : ''}`));
+  act.forEach(p => L.push(`- ${p.name} → ${p.folder}${p.aliasList.length ? ' (' + p.aliasList.slice(0, 2).join(', ') + ')' : ''}${p.aliasesTodo ? ' (aliases TODO: learn them from how the operator talks, never ask)' : ''}`));
+  const rest = c.projects.projects.filter(p => p.status !== 'active');
+  if (rest.length) L.push(`Not active: ${rest.map(p => `${p.name} [${p.status.split(' ')[0].replace(/[^a-z]/gi, '')}]`).join(', ')}`);
   L.push('');
   L.push(...pulseBootLines(root));
   L.push('');
@@ -883,7 +937,7 @@ function cmdBoot(root, today, opts, hook) {
   c.ctx.blockers.rows.forEach(b => L.push(`- ${b.id} (${b.age ?? '?'}d, raised ${b.raised || b.raisedRaw}) ${b.what} — waiting on: ${b.waitingOn}`));
   L.push('');
   L.push(`## Alerts — last rebuilt ${c.ctx.alerts.updated || 'unknown'} (${c.ctx.alerts.age ?? '?'} days ago) — ${P('harold/alerts.md')}`);
-  if (c.ctx.alerts.current) L.push(c.ctx.alerts.current.split('\n').slice(0, 40).join('\n'));
+  if (c.ctx.alerts.current) { L.push(...compactAlerts(c.ctx.alerts.current)); L.push(`(Context and suggested actions for each: read ${P('harold/alerts.md')}.)`); }
   L.push('');
   const lin = linearSummary(root);
   L.push(`## Linear (task layer, via bin/harold-linear) — ${lin.live ? `live, ${lin.total} open` : lin.none ? 'UNAVAILABLE: ' + lin.err : `no API key here; committed snapshot ${lin.ageH}h old (${P('harold/linear-snapshot.md')})`}`);
@@ -905,12 +959,127 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers)${noLogTypes().size ? `; conversations with contact types in HAROLD_NO_LOG_TYPES (${[...noLogTypes()].join(', ')}) are never logged` : ''}. harold close verifies these and commits + pushes the repo.`);
   if (opts.full) {
     L.push('\n\n# FULL CONTEXT DUMP (--full)\n');
-    ['AGENTS.md', 'memory/CLAUDE.md', 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
+    ['AGENTS.md', memoryFile(root), 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
     c.playbooks.items.forEach(i => { L.push(`\n\n===== playbook/${i.name} =====\n`); L.push(readFull(P('playbook/' + i.name))); });
     L.push('\n\n===== harold/learnings.jsonl =====\n'); L.push(readFull(P('harold/learnings.jsonl')));
   }
-  emit(L.join('\n'));
+  const full = L.join('\n');
+  // Context gate. A harness shows hook output to the model only up to a size limit; past it Claude Code saves the
+  // output to a file and the model sees a 2 KB preview, so boot "loaded" nothing (2026-11-02: an 80 KB boot reached
+  // the model as its first 25 lines, and a whole session ran without the Context Engine or the critical learnings).
+  // Over budget, boot splits the context into parts, hands the model a short digest, and gates the session until
+  // each part has been read with `harold context`: `harold gate` (PreToolUse) blocks other tools, close blocks the turn.
+  // An agent running boot itself for a harness that hides start output (adopted) reads it through a shell tool,
+  // which truncates too, so it is split the same way, and the hook's session points at these parts (contextOf).
+  if ((hook || adopted) && !opts.full && full.length > HOOK_BUDGET) {
+    const parts = splitParts(full, CONTEXT_PART);
+    st.contextParts = parts.length; st.contextRead = []; st.contextBytes = full.length;
+    parts.forEach((t, i) => fs.writeFileSync(contextPartPath(root, id, i + 1), t));
+    saveState(root, id, st);
+    if (adopted) { const a = loadState(root, adopted.id) || adopted; a.contextOf = id; saveState(root, adopted.id, a); }
+    emit(contextDigest(root, today, L, c, parts.length, full.length));
+    return 0;
+  }
+  if (hook || adopted) { st.contextParts = 0; st.contextRead = []; saveState(root, id, st); }
+  emit(full);
   return 0;
+}
+
+// The largest hook output that reaches the model whole (Claude Code saves anything over ~10 KB to a file and shows a
+// preview). Override with HAROLD_HOOK_BUDGET. Each part `harold context` prints stays under the shell tool's limit.
+const HOOK_BUDGET = Number(process.env.HAROLD_HOOK_BUDGET) || 9000;
+const CONTEXT_PART = Math.max(2000, Number(process.env.HAROLD_CONTEXT_PART) || 24000);
+function splitParts(text, max) {
+  const out = []; let cur = '';
+  for (const line of text.split('\n')) {
+    for (let piece = line; ;) {
+      const room = max - cur.length - 1;
+      if (piece.length <= room) { cur += (cur ? '\n' : '') + piece; break; }
+      if (cur) { out.push(cur); cur = ''; continue; }
+      out.push(piece.slice(0, max)); piece = piece.slice(max);
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+function contextPartPath(root, id, k) { return statePath(root, id).replace(/\.json$/, `.context-${k}.md`); }
+// The always-on monitors from dashboard/processes.md, inline: the one table no session may work without.
+const MONITORS = [
+  'ALWAYS-ON MONITORS (dashboard/processes.md). Run EVERY operator message through these, in the same turn, before the deliverable:',
+  '  • New venture / project / client / workstream that `harold where` cannot resolve → playbook/core/project-intake.md (folder, map entry, card, Linear project). Exploratory or not yet agreed is never a reason to skip.',
+  '  • New name with business context → playbook/core/contact-intake.md (CRM + vault card; a thin entry with TODOs beats none).',
+  '  • Task signal or commitment ("I want to talk to him this week") → Linear task with a due date and a project.',
+  '  • New intel → playbook/core/analyst.md. Research synthesis from 3+ sources → filed under its project.',
+  '  • Before ANY output → playbook/core/pre-flight-verification.md (names, dates, never invent a name).',
+  '  • Deliverables go TO the operator: inline, an artifact, or a sent file. Never a repo path.',
+];
+function contextDigest(root, today, L, c, n, bytes) {
+  const D = [];
+  D.push(...L.slice(0, 4));
+  D.push('');
+  D.push(`⛔ CONTEXT GATE: this boot is ${Math.round(bytes / 1024)} KB, more than the harness passes to the model, so it is split into ${n} part(s).`);
+  D.push(`Your FIRST actions, before any other tool or any answer: run ${CLI(root)} context  (repeat until it says all ${n} parts are read).`);
+  D.push(`Until then every tool except ${CLI(root)} is blocked (PreToolUse gate) and close blocks the turn. The parts hold the critical learnings, project map, alerts and Linear.`);
+  D.push(`Then read ${memoryFile(root)}, dashboard/index.md and dashboard/status.md, per AGENTS.md.`);
+  D.push('');
+  D.push(...MONITORS);
+  D.push('');
+  const due = [...c.triggers.due.map(d => `DUE ${d.id}`), ...c.triggers.overdue.map(d => `OVERDUE ${d.id} (say it out loud)`)];
+  D.push(`Scheduled work: ${due.length ? due.join(', ') : 'nothing due'}. Critical learnings: ${c.learnings.critical.length}. Active projects: ${c.projects.projects.filter(p => p.status === 'active').length}. Blockers: ${c.ctx.blockers.rows.length}.`);
+  D.push(L[L.length - 1]);
+  return D.join('\n');
+}
+// The session whose context is being read: the harness's id, else the newest state with unread parts, else the last boot.
+function contextSession(root, hook) {
+  const id = explicitSessionId(hook);
+  if (id) return contextState(root, loadState(root, id));  // a harness session with no boot state of its own is never gated by another's
+  const dir = path.join(root, STATE_DIR); let rows = [];
+  try { rows = fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => { try { return JSON.parse(readFull(path.join(dir, f))); } catch (_) { return null; } }).filter(Boolean); } catch (_) {}
+  const open = rows.filter(s => s.contextParts && (s.contextRead || []).length < s.contextParts && Date.now() - (s.bootedAtMs || 0) < 12 * 3600000).sort((a, b) => b.bootedAtMs - a.bootedAtMs)[0];
+  if (open) return open;
+  const lb = readLastBoot(root); return lb ? contextState(root, loadState(root, lb.id)) : null;
+}
+// A session whose boot context lives in another session's state (adopted by an agent-run boot) follows contextOf.
+function contextState(root, st) { return st && st.contextOf ? (loadState(root, st.contextOf) || st) : st; }
+function contextUnread(st) { return st && st.contextParts && Date.now() - (st.bootedAtMs || 0) < 12 * 3600000 ? Array.from({ length: st.contextParts }, (_, i) => i + 1).filter(k => !(st.contextRead || []).includes(k)) : []; }
+function cmdContext(root, args) {
+  const st = contextSession(root, null);
+  if (!st || !st.contextParts) { console.log('harold context: this session\'s boot fitted in the hook output; nothing to read.'); return 0; }
+  const unread = contextUnread(st);
+  const k = args[0] ? Number(args[0]) : (unread[0] || 1);
+  if (!(k >= 1 && k <= st.contextParts)) { console.error(`harold context: part ${args[0]} does not exist (1-${st.contextParts})`); return 2; }
+  let text; try { text = readFull(contextPartPath(root, st.id, k)); } catch (e) { console.error(`harold context: part ${k} missing (${e.message}); run ${CLI(root)} boot --full`); return 2; }
+  st.contextRead = [...new Set([...(st.contextRead || []), k])].sort((a, b) => a - b); saveState(root, st.id, st);
+  const left = contextUnread(st);
+  console.log(`===== Harold boot context, part ${k} of ${st.contextParts} =====\n${text}\n===== end of part ${k}. ${left.length ? `Still unread: ${left.join(', ')}. Run ${CLI(root)} context again.` : 'All parts read: the gate is open. Now apply it: the monitors, the critical learnings, the exit condition.'} =====`);
+  return 0;
+}
+// The tool call in a pre-tool hook's input: its name, its input, and the shell command when it runs one.
+function toolCall(h) {
+  const name = h.tool_name || h.toolName;
+  let input = h.tool_input || h.toolArgs || h.toolInput || h.args;
+  if (typeof input === 'string') { try { input = JSON.parse(input); } catch (_) { input = { command: input }; } }
+  if (!name && !input) return null;
+  input = input && typeof input === 'object' ? input : {};
+  return { name: String(name || ''), input, command: String(input.command || input.cmd || '') };
+}
+// PreToolUse: while boot context is unread, only `harold` runs. Fails open on anything unexpected: a broken gate
+// must never stop the operator's work.
+function cmdGate(root, hook) {
+  try {
+    const call = hook && toolCall(hook);
+    if (!call) return 0;  // not a tool call this gate understands: never block on what it cannot read
+    const st = contextSession(root, hook);
+    const unread = contextUnread(st);
+    if (!unread.length) return 0;
+    const ti = call.input, cmd = call.command;
+    // Any bin/harold command (context, boot, file, search ...), and `harold context` on a PATH install.
+    if (/(^|[\s\/"'])bin\/harold(["']?)(\s|$)/.test(cmd) || /(^|[\s"'])harold\s+context\b/.test(cmd)) return 0;
+    if (ti.file_path && String(ti.file_path).includes('/.state/') && /\.context-\d+\.md$/.test(String(ti.file_path))) return 0;
+    if (ti.file_path && /harold\/active-sessions\/[^/]+\.json$/.test(String(ti.file_path))) return 0;  // the session file update AGENTS.md asks for first
+    console.error(`⛔ Harold context gate: ${unread.length} of ${st.contextParts} boot context part(s) unread (${unread.join(', ')}). The boot was too large for the hook output, so you have not seen the critical learnings, project map or alerts. Run ${CLI(root)} context until all parts are read, then retry this tool.`);
+    return 2;
+  } catch (_) { return 0; }
 }
 
 // Commit trailers name the agent that did the work. Scheduled jobs say which one in HAROLD_AGENT; a hook says
@@ -1345,6 +1514,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   if (!st) notes.push('no boot record in this workspace (boot did not run) — only uncommitted changes from the last 6h count');
   // A harness that never shows session-start output to the model (HARNESSES[].noStartContext): until the agent has
   // run boot itself, it is working without its instructions.
+  { const unread = contextUnread(contextState(root, st ? (loadState(root, id) || st) : null)); if (unread.length) problems.push(`Harold's boot context is unread: it was too large for the hook output, so it was split into parts and parts ${unread.join(', ')} have not been read. Run ${CLI(root)} context until all are read, then check this turn's work against them (the always-on monitors, critical learnings and project map) before you finish.`); }
   if (hook && (HARNESSES[hook._harness] || {}).noStartContext && st && st.contextDelivered === false && !st.adoptedAt) problems.push(`Harold's context is not loaded: ${hook._harness} does not pass session-start hook output to the model. Run ${CLI(root)} boot now, read what it prints, and check your work against it before you finish.`);
 
   // 1. session file → sleeping (final: session=false). Deterministic, never a block.
@@ -1361,6 +1531,25 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   const kbDirs = knowledgeDirs(root);
   const sinceBase = gitChangedSet(root, baseCommit);
   const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/graph.json' && !f.endsWith('search.db') && (!sinceBase || sinceBase.has(f)));
+  // 2a. new work must belong to a project. A synthesis note or decision filed this session names its project in
+  // frontmatter (`project: <name, alias or folder from harold/projects.md>`, or `project: global`), and a new
+  // top-level folder must be a project's folder. Without this a venture lived for days as a person card plus a loose
+  // intel note, with no folder, map entry or card (seen 2026-10-29 to 11-02).
+  if (sinceBase && baseCommit) {
+    const pj = loadProjects(root).projects || [];
+    const resolves = v => { const q = String(v || '').trim().replace(/^\[\[|\]\]$/g, '').toLowerCase(); if (!q) return false; if (q === 'global') return true;
+      return pj.some(p => [p.name, p.folder, path.basename(p.folder || ''), path.basename(p.card || '', '.md'), ...(p.aliasList || [])].some(x => String(x || '').toLowerCase() === q)); };
+    const isNew = f => git(root, ['cat-file', '-e', `${baseCommit}:${f}`]).code !== 0;
+    const fresh = [...sinceBase].filter(f => fs.existsSync(path.join(root, f)) && isNew(f));
+    const orphanNotes = fresh.filter(f => /^vault\/(intel|decisions)\/[^/]+\.md$/.test(f)).filter(f => {
+      const fm = (readFull(path.join(root, f)).match(/^---\n([\s\S]*?)\n---/) || [])[1] || '';
+      const m = fm.match(/^project:\s*(.+)$/m); return !(m && m[1].split(',').every(resolves));
+    });
+    if (orphanNotes.length) problems.push(`new note(s) not tied to a project: ${orphanNotes.join(', ')}. Add \`project: <name or folder from harold/projects.md>\` (or \`project: global\`) to the frontmatter. If the project is not in the map, run playbook/core/project-intake.md first (folder, map entry, card, Linear project): exploratory or not yet agreed is never a reason to skip it.`);
+    const tops = [...new Set(fresh.map(f => f.split('/')[0]).filter(t => fresh.some(f => f.startsWith(t + '/'))))].filter(t => git(root, ['cat-file', '-e', `${baseCommit}:${t}`]).code !== 0);
+    const unmapped = tops.filter(t => !pj.some(p => (p.folder || '').split('/')[0] === t));
+    if (unmapped.length) problems.push(`new top-level folder(s) with no project in harold/projects.md: ${unmapped.join(', ')}. Run playbook/core/project-intake.md (map entry, card, Linear project) or move the files under an existing project's folder.`);
+  }
   const dailyDir = path.join(root, 'vault/daily');
   const todaysNotes = fs.existsSync(dailyDir) ? fs.readdirSync(dailyDir).filter(f => f.startsWith(today.iso)) : [];
   const freshNote = todaysNotes.some(f => fs.statSync(path.join(dailyDir, f)).mtimeMs >= sinceMs);
@@ -2252,7 +2441,7 @@ function main() {
   const via = ((argv.find(a => a.startsWith('--via=')) || '').slice(6) || '').toLowerCase() || null;
   const opts = { json: argv.includes('--json'), full: argv.includes('--full'), final: argv.includes('--final'), repair: argv.includes('--repair'), dryRun: argv.includes('--dry-run'), detach: argv.includes('--detach'), via };
   const args = argv.slice(1).filter(a => !a.startsWith('--'));
-  const hook = (cmd === 'boot' || cmd === 'close') ? hookContext(readStdinJson(), via) : null;
+  const hook = (cmd === 'boot' || cmd === 'close' || cmd === 'gate') ? hookContext(readStdinJson(), via) : null;
   const root = findRoot();
   const now = nowDate();
   const today = todayParts(now);
@@ -2294,6 +2483,9 @@ function main() {
   switch (cmd) {
     case 'boot': code = cmdBoot(root, today, opts, hook); break;
     case 'check': code = cmdCheck(root, today, opts); break;
+    case 'context': code = cmdContext(root, args); break;
+    case 'learnings': code = cmdLearnings(root, argv.slice(1)); break;
+    case 'gate': code = cmdGate(root, hook); break;
     case 'close': code = cmdClose(root, today, opts, hook); break;
     case 'file': code = cmdFile(root, today, args, opts); break;
     case 'where': code = cmdWhere(root, args); break;
@@ -2306,7 +2498,9 @@ function main() {
     case 'update': code = cmdUpdate(root, today, argv.slice(1)); break;
     case 'root': console.log(root); break;
     default:
-      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+      console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  learnings [--project <slug>] [--severity <s>] [--all]   print learnings in full (default: the critical ones; with
+                     --project, that project's critical and warning entries plus global ones)
+  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

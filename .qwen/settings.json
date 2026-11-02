@@ -33,6 +33,17 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${QWEN_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/bin/harold\" gate --via=qwen",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "$version": 4

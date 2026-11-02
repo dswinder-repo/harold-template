@@ -238,8 +238,8 @@ test('The global (user-level) snippets for Kimi and Hermes do nothing outside a 
   const yaml = fs.readFileSync(path.join(SRC, 'tools/harness-hooks/hermes-config.yaml'), 'utf8');
   const hermesCmds = [...yaml.matchAll(/command: >-\n((?:\s{8}.*\n)+)/g)].map(m => m[1].split('\n').map(l => l.trim()).filter(Boolean).join(' '))
     .map(c => c.replace(/^sh -c '(.*)'$/, '$1'));
-  assert.strictEqual(kimiCmds.length, 3);
-  assert.strictEqual(hermesCmds.length, 4);
+  assert.strictEqual(kimiCmds.length, 4);  // boot, close, close --final, gate
+  assert.strictEqual(hermesCmds.length, 5);
   for (const c of [...kimiCmds, ...hermesCmds]) {
     const r = spawnSync('/bin/sh', ['-c', c], { cwd: elsewhere, encoding: 'utf8', input: '{}', env: cleanEnv(w) });
     assert.strictEqual(r.status, 0, c);
