@@ -1067,10 +1067,11 @@ function toolCall(h) {
 // name their model. Returns 2 to block, 0 to allow; fails open. HAROLD_MODEL_GATE=off turns it off.
 function modelGate(root, hook) {
   try {
+    if (/^(off|0|false|no)$/i.test(setting('HAROLD_MODEL_GATE') || '')) return 0;
     const script = path.join(root, 'bin', 'harold-model-gate');
     if (!fs.existsSync(script)) return 0;
-    const r = spawnSync(process.execPath, [script], { input: JSON.stringify(hook), encoding: 'utf8', timeout: 10000, env: { ...process.env, HAROLD_MODEL_GATE: setting('HAROLD_MODEL_GATE') || process.env.HAROLD_MODEL_GATE || '', HAROLD_ROOT: root } });
-    if (r.status === 2) { console.error((r.stderr || '').trim()); return 2; }
+    const why = require(script).check(hook);  // in process: no extra Node start on every tool call
+    if (why) { console.error(why); return 2; }
   } catch (_) {}
   return 0;
 }
