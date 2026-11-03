@@ -1070,7 +1070,8 @@ function modelGate(root, hook) {
     if (/^(off|0|false|no)$/i.test(setting('HAROLD_MODEL_GATE') || '')) return 0;
     const script = path.join(root, 'bin', 'harold-model-gate');
     if (!fs.existsSync(script)) return 0;
-    const why = require(script).check(hook);  // in process: no extra Node start on every tool call
+    const gate = require(script);  // in process: no extra Node start on every tool call
+    const why = gate.check(hook, gate.config ? gate.config(setting) : undefined);  // this workspace's settings
     if (why) { console.error(why); return 2; }
   } catch (_) {}
   return 0;

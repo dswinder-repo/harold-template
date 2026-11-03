@@ -1,17 +1,25 @@
 #!/usr/bin/env node
 /*
- * harold-model-gate: PreToolUse hook that makes spawned sessions and subagents name their model.
+ * harold-model-gate: PreToolUse hook that makes spawned sessions and helper agents name their model.
  * Standalone, zero dependencies: copy this one file into any repo and run it as a PreToolUse hook.
  * Source of truth: the Harold starter (bin/harold-model-gate). `bin/harold gate` calls it too.
  *
- * Why: create_session and the Agent tool inherit the CALLER's model when none is given, so a manager on Opus
- * silently runs every worker on Opus. A rule in prose did not stop that; this does.
+ * Why: in harnesses where a spawned session or helper inherits the caller's model when none is named, one
+ * session on a costly model silently runs every worker on that model. A rule in prose did not stop that.
+ *
+ * Model-agnostic. Nothing here names a vendor or a model; the workspace says which models are costly:
+ *   HAROLD_EXPENSIVE_MODELS  comma-separated substrings of model names that need a deliberate opt-in (default: none)
+ *   HAROLD_EXPENSIVE_TAG     the session tag that is that opt-in (default: allow-expensive)
+ *   HAROLD_WORKER_MODEL      the model to suggest for workers in the block message (optional)
+ *   HAROLD_MODEL_GATE=off    turns the gate off
+ * Read from the environment, ~/.harold/env, then harold/settings.env.
  *
  * Rules (exit 2 with the reason on stderr blocks the tool; exit 0 allows):
- *   1. A tool named *create_session from claude-code-remote: model required; an Opus model needs the tag "allow-opus".
- *   2. The subagent tool (Agent or Task): model required, unless subagent_type is "fork". Opus is fine when named.
+ *   1. A session-spawning tool (today: a *create_session tool from claude-code-remote): a model must be named;
+ *      a model matching HAROLD_EXPENSIVE_MODELS needs the HAROLD_EXPENSIVE_TAG tag.
+ *   2. A helper-agent tool (Agent or Task): a model must be named, unless it is a fork (forks always run on the
+ *      caller's model). Any named model is allowed: a costly helper for a short judgment call is a choice.
  *   3. Anything else, and anything unparseable: allowed (fails open).
- * Off switch: HAROLD_MODEL_GATE=off (environment, ~/.harold/env, or harold/settings.env). Default on.
  */
 'use strict';
 const fs = require('fs');
@@ -30,31 +38,40 @@ function setting(name) {
   for (const f of files) { try { const s = settingFrom(fs.readFileSync(f, 'utf8'), name); if (s) return s; } catch (_) {} }
   return '';
 }
+function config(get = setting) {
+  return {
+    expensive: get('HAROLD_EXPENSIVE_MODELS').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+    tag: get('HAROLD_EXPENSIVE_TAG') || 'allow-expensive',
+    worker: get('HAROLD_WORKER_MODEL'),
+  };
+}
 
 // Returns a block reason, or '' to allow.
-function check(hook) {
+function check(hook, cfg = config()) {
   if (!hook || typeof hook !== 'object') return '';
   const name = String(hook.tool_name || hook.toolName || '');
   let input = hook.tool_input || hook.toolArgs || hook.toolInput || hook.args;
   if (typeof input === 'string') { try { input = JSON.parse(input); } catch (_) { return ''; } }
   if (!input || typeof input !== 'object') input = {};
   const model = typeof input.model === 'string' ? input.model.trim() : '';
+  const suggest = cfg.worker ? `Name the worker model ("${cfg.worker}")` : 'Name the model it should run on';
   if (/claude-code-remote/.test(name) && /create_session$/.test(name)) {
-    if (!model) return '⛔ Harold model gate: create_session without a model inherits this session\'s model (Opus runs cost about $150 each). Pass model "claude-sonnet-5-5" (or a Haiku model for mechanical work). For a short judgment session that really needs Opus, add the tag "allow-opus" to tags.';
-    if (/opus/i.test(model)) {
+    if (!model) return `⛔ Harold model gate: this new session names no model, so it would inherit this session's. ${suggest}.`;
+    const hit = cfg.expensive.find(e => model.toLowerCase().includes(e));
+    if (hit) {
       const tags = Array.isArray(input.tags) ? input.tags.map(String) : [];
-      if (!tags.includes('allow-opus')) return `⛔ Harold model gate: model "${model}" is Opus. Workers run on "claude-sonnet-5-5" (or a Haiku model for mechanical work). For a short judgment session that needs Opus, add the tag "allow-opus" to tags.`;
+      if (!tags.includes(cfg.tag)) return `⛔ Harold model gate: "${model}" is on this workspace's costly list (HAROLD_EXPENSIVE_MODELS). ${suggest}, or add the tag "${cfg.tag}" if this short session needs it.`;
     }
     return '';
   }
   if (name === 'Agent' || name === 'Task') {
     if (String(input.subagent_type || '') === 'fork') return '';
-    if (!model) return '⛔ Harold model gate: this subagent has no model, so it inherits the parent\'s (often Opus). Name one: "sonnet" or "haiku" for most work; "opus" only when named on purpose. A fork (subagent_type "fork") is exempt.';
+    if (!model) return `⛔ Harold model gate: this helper names no model, so it would inherit this session's. ${suggest}. (A fork is exempt.)`;
   }
   return '';
 }
 
-module.exports = { check };
+module.exports = { check, config };
 if (require.main === module) {
   try {
     if (/^(off|0|false|no)$/i.test(setting('HAROLD_MODEL_GATE'))) process.exit(0);
