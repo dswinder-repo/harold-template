@@ -1063,12 +1063,24 @@ function toolCall(h) {
   input = input && typeof input === 'object' ? input : {};
   return { name: String(name || ''), input, command: String(input.command || input.cmd || '') };
 }
+// Model gate (bin/harold-model-gate, standalone so other repos can vendor it): spawned sessions and subagents must
+// name their model. Returns 2 to block, 0 to allow; fails open. HAROLD_MODEL_GATE=off turns it off.
+function modelGate(root, hook) {
+  try {
+    const script = path.join(root, 'bin', 'harold-model-gate');
+    if (!fs.existsSync(script)) return 0;
+    const r = spawnSync(process.execPath, [script], { input: JSON.stringify(hook), encoding: 'utf8', timeout: 10000, env: { ...process.env, HAROLD_MODEL_GATE: setting('HAROLD_MODEL_GATE') || process.env.HAROLD_MODEL_GATE || '', HAROLD_ROOT: root } });
+    if (r.status === 2) { console.error((r.stderr || '').trim()); return 2; }
+  } catch (_) {}
+  return 0;
+}
 // PreToolUse: while boot context is unread, only `harold` runs. Fails open on anything unexpected: a broken gate
 // must never stop the operator's work.
 function cmdGate(root, hook) {
   try {
     const call = hook && toolCall(hook);
     if (!call) return 0;  // not a tool call this gate understands: never block on what it cannot read
+    const mg = modelGate(root, hook); if (mg) return mg;  // runs whether or not the context gate is open
     const st = contextSession(root, hook);
     const unread = contextUnread(st);
     if (!unread.length) return 0;

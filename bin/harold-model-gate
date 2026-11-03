@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+/*
+ * harold-model-gate: PreToolUse hook that makes spawned sessions and subagents name their model.
+ * Standalone, zero dependencies: copy this one file into any repo and run it as a PreToolUse hook.
+ * Source of truth: the Harold starter (bin/harold-model-gate). `bin/harold gate` calls it too.
+ *
+ * Why: create_session and the Agent tool inherit the CALLER's model when none is given, so a manager on Opus
+ * silently runs every worker on Opus. A rule in prose did not stop that; this does.
+ *
+ * Rules (exit 2 with the reason on stderr blocks the tool; exit 0 allows):
+ *   1. A tool named *create_session from claude-code-remote: model required; an Opus model needs the tag "allow-opus".
+ *   2. The subagent tool (Agent or Task): model required, unless subagent_type is "fork". Opus is fine when named.
+ *   3. Anything else, and anything unparseable: allowed (fails open).
+ * Off switch: HAROLD_MODEL_GATE=off (environment, ~/.harold/env, or harold/settings.env). Default on.
+ */
+'use strict';
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function settingFrom(text, name) {
+  const m = String(text).match(new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(?:"([^"\\n]*)"|'([^'\\n]*)'|([^\\s#\\n]*))`, 'm'));
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '').trim() : '';
+}
+function setting(name) {
+  const v = process.env[name];
+  if (v !== undefined && v.trim() !== '') return v.trim();
+  const files = [process.env.HAROLD_ENV_FILE || path.join(os.homedir(), '.harold/env')];
+  for (const base of [process.env.HAROLD_ROOT, process.env.CLAUDE_PROJECT_DIR, process.cwd()].filter(Boolean)) files.push(path.join(base, 'harold/settings.env'));
+  for (const f of files) { try { const s = settingFrom(fs.readFileSync(f, 'utf8'), name); if (s) return s; } catch (_) {} }
+  return '';
+}
+
+// Returns a block reason, or '' to allow.
+function check(hook) {
+  if (!hook || typeof hook !== 'object') return '';
+  const name = String(hook.tool_name || hook.toolName || '');
+  let input = hook.tool_input || hook.toolArgs || hook.toolInput || hook.args;
+  if (typeof input === 'string') { try { input = JSON.parse(input); } catch (_) { return ''; } }
+  if (!input || typeof input !== 'object') input = {};
+  const model = typeof input.model === 'string' ? input.model.trim() : '';
+  if (/claude-code-remote/.test(name) && /create_session$/.test(name)) {
+    if (!model) return '⛔ Harold model gate: create_session without a model inherits this session\'s model (Opus runs cost about $150 each). Pass model "claude-sonnet-5-5" (or a Haiku model for mechanical work). For a short judgment session that really needs Opus, add the tag "allow-opus" to tags.';
+    if (/opus/i.test(model)) {
+      const tags = Array.isArray(input.tags) ? input.tags.map(String) : [];
+      if (!tags.includes('allow-opus')) return `⛔ Harold model gate: model "${model}" is Opus. Workers run on "claude-sonnet-5-5" (or a Haiku model for mechanical work). For a short judgment session that needs Opus, add the tag "allow-opus" to tags.`;
+    }
+    return '';
+  }
+  if (name === 'Agent' || name === 'Task') {
+    if (String(input.subagent_type || '') === 'fork') return '';
+    if (!model) return '⛔ Harold model gate: this subagent has no model, so it inherits the parent\'s (often Opus). Name one: "sonnet" or "haiku" for most work; "opus" only when named on purpose. A fork (subagent_type "fork") is exempt.';
+  }
+  return '';
+}
+
+module.exports = { check };
+if (require.main === module) {
+  try {
+    if (/^(off|0|false|no)$/i.test(setting('HAROLD_MODEL_GATE'))) process.exit(0);
+    let raw = ''; try { raw = fs.readFileSync(0, 'utf8'); } catch (_) {}
+    let hook = null; try { hook = JSON.parse(raw); } catch (_) {}
+    const why = check(hook);
+    if (why) { console.error(why); process.exit(2); }
+  } catch (_) {}
+  process.exit(0);
+}
