@@ -43,15 +43,19 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 4. **Set up the CRM (Supabase).**
 
-   **a. The database: Harold's tools work from here.** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Then:
+   **a. The database, whichever tools reach it.** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Two sets of tools reach the same database:
+   - **The hosted connector — the standard way.** One deployment of `tools/harold-connector` (step 6) gives every harness, chat app and scheduled job the CRM tools, with the credentials held on its host. If you will deploy it, skip 4b.
+   - **harold-mcp — the local alternative.** A tool server that runs on the same computer as a workspace session, with the credentials in `~/.harold/env` on that computer. Nothing to deploy; it works on that computer only.
+
+   **b. The local alternative: harold-mcp.** Skip this if the connector covers your tools:
    ```bash
    bin/harold-setup-crm                       # stores SUPABASE_URL + service_role key in ~/.harold/env, tests the connection
    (cd tools/harold-mcp && npm install)
    cp .mcp.example.json .mcp.json             # Claude Code: then put the absolute path to bin/harold-mcp in it
    ```
-   Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored.
+   Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored. These credentials also let boot and close apply the offline CRM queue (`harold/crm-queue.jsonl`).
 
-   **b. Optional: the web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
+   **c. Optional: the web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
    - In the SQL editor, run `tools/harold-crm/supabase/migrations/002` to `007` in order (`001` is the schema you already ran).
    - Deploy it on Vercel or any Next.js host: import this repository with **Root Directory** `tools/harold-crm`, and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the publishable key, never the service role key).
    - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
@@ -59,7 +63,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 5. **Optional: tasks in Linear.** Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on. Action items become tasks automatically: paste call notes or a transcript, or forward an email, and every commitment in it (yours, or something someone owes you) becomes a task without you asking, with its ID written into the meeting note's `## Action items`. From a chat app, set the same two variables on the connector (`task_list`, `task_create`).
 
-6. **The connector and the scheduled jobs.** The hosted connector lets any MCP client (a chat app on your phone or in a browser, a coding agent, a scheduled job) read and write Harold without the workspace folder ([below](#from-any-chat-app-the-hosted-connector)); you deploy it once. The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
+6. **The connector and the scheduled jobs.** The hosted connector is the standard way every tool reaches Harold: any MCP client (a chat app on your phone or in a browser, a coding agent, a scheduled job) reads and writes the knowledge base and the CRM through it, with or without the workspace folder ([below](#from-any-chat-app-the-hosted-connector)). You deploy it once. The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
 
 7. **Start a session and say good morning**, in whichever harness you use. Most harnesses run boot and close from the hook files and plugins already in this repository (some ask you to trust them once); Kimi Code and Hermes Agent need a snippet copied into your user config, and OpenClaw a plugin install. Where a harness has no hooks, the first instruction in `AGENTS.md` has the agent run them. Details below.
 
@@ -78,7 +82,7 @@ Any model the harness offers works; Harold doesn't depend on a particular one, b
 1. **Instructions.** If it reads `AGENTS.md`, nothing to do. Otherwise add one line to its own rules file: read and follow `AGENTS.md` at the start of every session.
 2. **With hooks.** From the workspace root, run `bin/harold boot` at session start, `bin/harold close` at the end of every turn and `bin/harold close --final` at session end, with no `--via` flag (that flag is only for the harnesses below). If the hook passes input on stdin, add `< /dev/null` so Harold answers in plain text. Boot prints the context to hand the agent and exits 0, or prints `⛔ HAROLD BOOT REFUSED` and exits 2. Close exits 0 when everything is filed and pushed, 2 with the list of what is missing on stderr (send it back to the agent, which fixes it and closes again), or 1 when only the push failed.
 3. **Without hooks.** Nothing to wire: `AGENTS.md` tells the agent to run boot first and close at the end of every turn. Every command also works by hand in a terminal.
-4. **MCP.** Add `bin/harold-mcp` as a local (command) MCP server, with its absolute path. It reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
+4. **MCP.** Add the hosted connector as a remote MCP server (the standard way: one deployment serves every tool), or `bin/harold-mcp` as a local (command) MCP server, with its absolute path (the local alternative). The local server reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
 5. **Scheduled jobs.** Any harness with a headless mode can run them: on a schedule, with `harold/brief-prompt.md` (the morning brief) or `harold/housekeeping-prompt.md` (weekly scan, full audit, month-end review) as the prompt. Each prompt runs its own `start` gate and `finish` step. In the starter's workflows, set `HAROLD_AGENT` to one of the presets, or to `custom` with your CLI's command ([Scheduled jobs in the cloud](#scheduled-jobs-in-the-cloud)); the gate before it and the finish step after it stay the same.
 
 ### Every harness with lifecycle hooks is wired
@@ -130,6 +134,8 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 - **OpenClaw.** `openclaw plugins install --link tools/openclaw-plugin`, `openclaw plugins enable harold`, then in `openclaw.json` set `plugins.entries.harold.hooks.allowConversationAccess: true` (and `config.root` if the agent's workspace is not the Harold workspace). See `tools/openclaw-plugin/README.md`.
 
 ### MCP tools and scheduled jobs
+
+Every harness below that supports remote MCP servers can use the hosted connector instead: add `<your deployment>/mcp` once and the same CRM tools are available there, with no per-computer setup. The middle column configures the local alternative, harold-mcp.
 
 | Harness | Harold's MCP tools (CRM) | Scheduled jobs (`HAROLD_AGENT`) |
 |---|---|---|
@@ -366,7 +372,7 @@ The job ends with `bin/harold housekeeping finish`, which checks that the job wa
 
 ## From any chat app: the hosted connector
 
-Sessions in a workspace harness are where Harold does its full work. To reach it from somewhere without the workspace folder, such as a chat app on your phone or in a browser, deploy the connector in `tools/harold-connector`: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed ("CRM Filing Protocol" in `AGENTS.md`).
+Sessions in a workspace harness are where Harold does its full work. The connector in `tools/harold-connector` is the standard way every tool reaches the knowledge base and the CRM, and the only way from somewhere without the workspace folder, such as a chat app on your phone or in a browser: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed ("CRM Filing Protocol" in `AGENTS.md`).
 
 ## Keeping Harold up to date
 
@@ -392,3 +398,4 @@ bin/harold update             # do it; review with git diff, harold close commit
 ## License and credit
 
 Harold was built and documented at [harold.works](https://harold.works). Adapt this starter freely for your own use.
+
