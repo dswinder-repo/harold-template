@@ -7,7 +7,7 @@ A hosted remote MCP server. It lets any AI tool that supports remote MCP servers
 
 You deploy it once, to a host you control, and add its URL in each tool ([Connect your tool](#connect-your-tool)). Nothing in it is tied to one computer: it runs wherever you deploy it, and every write is a commit to your repository.
 
-- **Transport:** MCP Streamable HTTP at `/mcp` (2026-07-28 protocol and 2025-era clients).
+- **Transport:** MCP Streamable HTTP at `/mcp` (2026-07-28 protocol and 2025-era clients). Stateless: each request is answered and closed, with no long-lived streams (the server does not advertise `tools.listChanged` and refuses `subscriptions/listen`), so it stays inside Vercel's free tier.
 - **Sign-in:** a small OAuth 2.1 server in the same deployment, with GitHub as the identity provider. Any MCP client can sign in; exactly one GitHub account is accepted. Tools that cannot do OAuth use a personal access token.
 - **Runtime:** Node.js 22 or later. A Hono app (`server.ts`) that runs on Vercel with zero configuration, or on any Node host through `local.ts`.
 

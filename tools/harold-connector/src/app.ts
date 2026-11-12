@@ -42,6 +42,12 @@ export function createApp(opts: AppOptions = {}) {
   const mcp = createMcpHandler(server => registerTools(server, tools), {
     serverInfo: { name: "harold", version: "0.1.0" },
     instructions: instructions(),
+    // Every request must finish as soon as its answer is sent: on Vercel, memory is billed for as long as a
+    // connection stays open. The tool list never changes while the server runs, so do not advertise
+    // tools.listChanged (clients then never open a long-lived `subscriptions/listen` stream), and refuse such a
+    // stream outright (maxSubscriptions: 0) if a client asks anyway.
+    capabilities: { tools: { listChanged: false } },
+    maxSubscriptions: 0,
   });
 
   const app = new Hono();
