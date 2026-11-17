@@ -3,7 +3,8 @@
  * Tests for how bin/harold close saves: it must never print "nothing to push" over commits that did not
  * reach the remote. A branch with no upstream is published with -u to origin under its own name; anything
  * that cannot be pushed is reported as NOT PUSHED with the reason (exit 1). The cloud path (routines,
- * Actions) pushes to the default branch and must say so too when origin cannot be reached.
+ * Actions) pushes to the default branch and must say so too when origin cannot be reached; on a named
+ * feature branch it pushes to that branch instead, so unreviewed work never lands on the default branch.
  *
  *   node --test tests/close-push.test.js
  *
@@ -44,9 +45,9 @@ function workspace(origin = 'bare') {
   const g = (...a) => spawnSync('git', a, { cwd: ws, encoding: 'utf8' });
   g('init', '-q', '-b', 'main'); g('config', 'user.email', 'test@example.com'); g('config', 'user.name', 'Test');
   g('add', '-A'); g('commit', '-qm', 'init');
-  if (origin !== 'gone') spawnSync('git', ['init', '-q', '--bare', bare]);
+  if (origin !== 'gone') spawnSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
   g('remote', 'add', 'origin', bare);
-  if (origin === 'bare') { g('push', '-q', '-u', 'origin', 'main'); g('fetch', '-q', 'origin'); }
+  if (origin === 'bare') { g('push', '-q', '-u', 'origin', 'main'); g('fetch', '-q', 'origin'); g('remote', 'set-head', 'origin', 'main'); } // as a clone would
   const w = { dir, ws, home, bare, g };
   const chk = JSON.parse(run(w, ['check', '--json']).out);
   for (const d of [...chk.triggers.due, ...chk.triggers.overdue]) run(w, ['file', 'trigger', d.id, 'ran', 'test']);
@@ -120,5 +121,51 @@ test('cloud runner: an empty origin gets the default branch created', () => {
   const r = run(w, ['close'], env);
   assert.strictEqual(r.code, 0, r.out + r.err);
   assert.match(r.out, /pushed \d+ commit\(s\) to new branch main/);
+  assert.strictEqual(onOrigin(w, 'refs/heads/main'), head(w));
+});
+
+test('cloud runner on a feature branch pushes to that branch, never to the default branch', () => {
+  const env = { CLAUDE_CODE_REMOTE: 'true' };
+  const w = workspace();
+  const mainBefore = onOrigin(w, 'refs/heads/main');
+  w.g('checkout', '-q', '-b', 'feature/z');
+  fs.writeFileSync(path.join(w.ws, 'feature.txt'), 'unreviewed change\n');
+  w.g('add', 'feature.txt'); w.g('commit', '-qm', 'feature work');
+  work(w, env);
+  const r = run(w, ['close'], env);
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  assert.match(r.out, /pushed \d+ commit\(s\) to feature\/z \(a feature branch/);
+  assert.strictEqual(onOrigin(w, 'refs/heads/main'), mainBefore, 'the default branch on origin must not move');
+  assert.strictEqual(onOrigin(w, 'refs/heads/feature/z'), head(w));
+});
+
+test('cloud runner on a feature branch that moved on origin replays onto it and pushes there', () => {
+  const env = { CLAUDE_CODE_REMOTE: 'true' };
+  const w = workspace();
+  const mainBefore = onOrigin(w, 'refs/heads/main');
+  w.g('checkout', '-q', '-b', 'feature/w'); w.g('push', '-q', 'origin', 'feature/w');
+  // Another writer adds a commit to origin's feature/w.
+  const other = path.join(w.dir, 'other');
+  spawnSync('git', ['clone', '-q', '-b', 'feature/w', w.bare, other]);
+  fs.writeFileSync(path.join(other, 'other.txt'), 'x\n');
+  spawnSync('git', ['-C', other, 'add', 'other.txt']);
+  spawnSync('git', ['-C', other, '-c', 'user.email=o@example.com', '-c', 'user.name=O', 'commit', '-qm', 'other']);
+  spawnSync('git', ['-C', other, 'push', '-q', 'origin', 'feature/w']);
+  work(w, env);
+  const r = run(w, ['close'], env);
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  assert.match(r.out, /to feature\/w \(a feature branch/);
+  assert.strictEqual(onOrigin(w, 'refs/heads/feature/w'), head(w));
+  assert.ok(fs.existsSync(path.join(w.ws, 'other.txt')), 'replayed onto the other writer\'s commit');
+  assert.strictEqual(onOrigin(w, 'refs/heads/main'), mainBefore);
+});
+
+test('cloud runner on the default branch still pushes to it', () => {
+  const env = { CLAUDE_CODE_REMOTE: 'true' };
+  const w = workspace();
+  work(w, env);
+  const r = run(w, ['close'], env);
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  assert.match(r.out, /pushed \d+ commit\(s\) to main/);
   assert.strictEqual(onOrigin(w, 'refs/heads/main'), head(w));
 });
