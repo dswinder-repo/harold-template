@@ -92,7 +92,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("harold_read", {
     title: "Harold: read a file",
-    description: "Read one text file from the Harold repository by its path relative to the repo root, e.g. 'vault/people/Jane Doe.md', 'harold/blockers.md', 'memory/CLAUDE.md'. Binary files are refused; very long files are truncated with a note.",
+    description: "Read one text file from the Harold repository by its path relative to the repo root, e.g. 'vault/people/Jane Doe.md', 'harold/blockers.md', 'memory/working-memory.md'. Binary files are refused; very long files are truncated with a note.",
     inputSchema: z.object({ path: z.string().min(1).max(400).describe("Repo-relative path") }),
     annotations: READ,
   }, async ({ path }, ctx) => guard(() => kb.read(deps.repoFor(ctx), path)));

@@ -21,7 +21,7 @@ ROOT="${HAROLD_ROOT:-${CLAUDE_PROJECT_DIR:-$HOME/Documents/Harold}}"; [ -x "$ROO
 
 ## Read what it prints. Then follow it.
 
-The output is the session's loaded context: today's real date, the absolute workspace root, the session file to update, every playbook confirmed readable, the critical learnings (binding), the project map, active blockers, current alerts, and the scheduled work that is due or overdue. After boot, read `memory/CLAUDE.md`, `dashboard/index.md`, `dashboard/status.md` by absolute path under the printed root, exactly as `AGENTS.md` says.
+The output is the session's loaded context: today's real date, the absolute workspace root, the session file to update, every playbook confirmed readable, the critical learnings (binding), the project map, active blockers, current alerts, and the scheduled work that is due or overdue. After boot, read `memory/working-memory.md`, `dashboard/index.md`, `dashboard/status.md` by absolute path under the printed root, exactly as `AGENTS.md` says.
 
 **Always use absolute paths under the printed root.** Relative reads like `playbook/core/x.md` silently return nothing in a sandbox. That silence is the failure this plugin exists to remove.
 

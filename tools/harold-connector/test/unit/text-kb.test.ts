@@ -166,7 +166,7 @@ describe("knowledge-base writes (fake GitHub)", () => {
     const t = gh.files.get("vault/people/Jane Doe.md")!;
     expect(frontmatter(t)).toMatchObject({ warmth: "Warm", last_updated: "2026-09-30" });
     expect(t).toContain("- old\n- **Sep 30:** new\n");
-    for (const p of ["harold/learnings.jsonl", "AGENTS.md", "bin/harold", "tools/x/README.md", ".github/workflows/a.md", "memory/CLAUDE.md", "vault/../AGENTS.md", "vault/people/Nobody.md"]) {
+    for (const p of ["harold/learnings.jsonl", "AGENTS.md", "bin/harold", "tools/x/README.md", ".github/workflows/a.md", "memory/working-memory.md", "vault/../AGENTS.md", "vault/people/Nobody.md"]) {
       const bad = await kb.update(repo, p, { append_text: "x" }, NOON);
       expect(bad.isError, p).toBe(true);
     }
