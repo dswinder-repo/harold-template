@@ -24,7 +24,7 @@ Expedition HQ is a small zero-dependency Node server at `tools/visualizer/serve.
 
 3. **Verify your session is visible**
    - Confirm the current session's JSON file exists in `harold/active-sessions/` and `/api/sessions` lists it.
-   - If it is missing, write it per the Dashboard State Protocol in `playbook/core/session-file.md`.
+   - If it is missing, create it as `playbook/core/session-file.md` describes.
 
 4. **Open it in a browser**
    - Go to `http://localhost:3210`.

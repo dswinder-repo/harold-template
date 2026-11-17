@@ -9,7 +9,7 @@
 
 ## The session file
 
-Every session has a file in `harold/active-sessions/` so it appears in the live Expedition HQ visualizer (`tools/visualizer/`). `bin/harold boot` creates it for you (`session-<date>-<time>-<id>.json`) and prints its path. If boot did not run in this harness, create one yourself, named with a kebab-case slug of the task (e.g. `investor-outreach.json`), using the schema below with every activity `"sleeping"`.
+Every session has a file in `harold/active-sessions/` so it appears in the live Expedition HQ visualizer (`tools/visualizer/`). `bin/harold boot` creates it for you (`session-<date>-<time>-<id>.json`) and prints its path. If boot did not run in this harness, create one yourself, named with a kebab-case slug of the task (e.g. `client-proposal.json`), using the schema below with every activity `"sleeping"`.
 
 Then set whichever activity you're starting with to `"working"` with a `"task"`, `"progress"` (0-100) and `"started"` (ISO timestamp).
 

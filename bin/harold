@@ -35,7 +35,8 @@
  *                      in HAROLD_TZ; add Z or an offset for an absolute instant).
  *
  * Lives at bin/harold because harold/ (the state directory) already owns the
- * name at repo root. Zero dependencies. Node >= 18. Works from any cwd: it
+ * name at repo root. Zero dependencies. Runs on Node 18 or newer (the starter
+ * asks for Node 22+, which its other tools need). Works from any cwd: it
  * resolves the workspace from its own location, then HAROLD_ROOT, then by
  * walking up from cwd.
  */
@@ -103,9 +104,9 @@ function resolveTz() {
   const raw = setting('HAROLD_TZ');
   if (raw && validTz(raw)) return { tz: raw, source: 'HAROLD_TZ' };
   if (raw) return { tz: sys, source: 'system', warning: `HAROLD_TZ "${raw}" is not an IANA time zone name (e.g. America/Chicago, Europe/London); using this machine's zone, ${sys}` };
-  if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set HAROLD_TZ="America/Chicago" (your zone) in harold/settings.env, or as the repository variable HAROLD_TZ (Settings → Secrets and variables → Actions → Variables)` };
-  if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ="America/Chicago" (your zone) in harold/settings.env, which every session and job reads` };
-  return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this machine's zone (${sys}). Set your own zone in harold/settings.env (committed, so every machine and scheduled job reads it), e.g. HAROLD_TZ="America/Chicago"` };
+  if (process.env.GITHUB_ACTIONS) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this GitHub Actions runner's zone (${sys}). Set HAROLD_TZ="America/Chicago" (your zone) in harold/settings.env, or as the repository variable HAROLD_TZ (Settings → Secrets and variables → Actions → Variables). The warning stops once it is set` };
+  if (process.env.CLAUDE_CODE_REMOTE) return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates follow this cloud session's zone (${sys}). Set HAROLD_TZ="America/Chicago" (your zone) in harold/settings.env, which every session and job reads. The warning stops once it is set` };
+  return { tz: sys, source: 'system', warning: `HAROLD_TZ is not set, so dates and the brief time follow this machine's zone (${sys}). Set your own zone in harold/settings.env (committed, so every machine and scheduled job reads it), e.g. HAROLD_TZ="America/Chicago". The warning stops once it is set` };
 }
 const TZ_INFO = resolveTz();
 const TZ = TZ_INFO.tz;
@@ -939,7 +940,7 @@ function cmdBoot(root, today, opts, hook) {
   L.push('');
   const lin = linearSummary(root);
   L.push(`## Linear (task layer, via bin/harold-linear) — ${lin.live ? `live, ${lin.total} open` : lin.none ? 'UNAVAILABLE: ' + lin.err : `no API key here; committed snapshot ${lin.ageH}h old (${P('harold/linear-snapshot.md')})`}`);
-  if (lin.none) L.push(`No task manager is set up here, so action items cannot become tasks yet. Tell the operator once, and offer the two ways: Linear (LINEAR_API_KEY and LINEAR_TEAM_KEY in ~/.harold/env; README, step 5), or any other task manager through its own MCP server in this AI tool.`);
+  if (lin.none) L.push(`No task manager is set up here, so action items cannot become tasks yet. Tell the operator once, and offer the two ways: Linear (LINEAR_API_KEY and LINEAR_TEAM_KEY in ~/.harold/env; see "Optional: tasks in Linear" in the README quick start), or any other task manager through its own MCP server in this AI tool.`);
   if (lin.live) {
     const row = i => `- ${i.identifier} [${i.state.name}${i.dueDate ? ', due ' + i.dueDate : ''}] ${i.title}${i.project ? ' (' + i.project.name + ')' : ''}`;
     L.push(`Overdue ${lin.overdue.length} · due today ${lin.dueToday.length} · due this week ${lin.dueWeek.length} · in progress ${lin.inProg.length}. Full table: ${P('harold/linear-snapshot.md')}. Update state with: ${path.join(root, 'bin/harold-linear')} done|start <id>`);

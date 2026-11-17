@@ -132,7 +132,7 @@ When external sources conflict with the knowledge base:
    - The file the wrong value came from (project doc, `dashboard/status.md`, `harold/events.md`, etc.).
    - `harold/facts.md` if it is a discrete fact (`harold_fact`, or edit the file).
    - **For a person:** the CRM contact record comes first (`crm_upsert_contact` / `harold_upsert_contact` with the corrected title/company/name), then `vault/people/<name>.md` (fix the field, bump `last_updated`). A correction is not an interaction: do not call `crm_log_interaction` / `harold_log_interaction` for it. If the CRM is unreachable, queue the update: `bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{...}}'`.
-   - If the error came from something Harold introduced (misheard, assumed, mis-transcribed) or the operator corrected it, file a lesson immediately: `bin/harold file learning '{"severity":"critical","project":"global","category":"facts","lesson":"..."}'` (use category `names` or `titles` where that fits).
+   - A wrong fact is a record fix: correcting it everywhere, as above, is the whole job. If the error shows that Harold works the wrong way (for example, it took names from a transcript without checking them), that is a lesson: write the right way into the rule it belongs to and file it with `bin/harold file learning`, as the Error Capture Rule in `AGENTS.md` describes.
 4. **Update the document** with the correct information.
 5. **Note the fix** in today's daily note: `bin/harold file daily <slug> "Document QC: corrected [X] to [Y] in [files], source [citation]"`.
 
@@ -244,7 +244,7 @@ This playbook runs **after** content creation and **before** distribution:
 - [ ] Key facts verified against external sources, with sources recorded
 - [ ] Unverified items listed in the clearance report (never silently passed)
 - [ ] Discrepancies resolved; KB files, `harold/facts.md`, CRM record and vault profile corrected together (or CRM queued with `bin/harold file crm`)
-- [ ] Lesson filed with `bin/harold file learning` if Harold introduced the error
+- [ ] Lesson written into its rule and filed with `bin/harold file learning` if the error came from a wrong way of working
 - [ ] Fix recorded in today's `vault/daily/` note
 - [ ] Skeptical review passed
 - [ ] Clearance report given to the operator; nothing sent without their yes

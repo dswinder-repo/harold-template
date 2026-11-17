@@ -3,7 +3,7 @@
 **Purpose:** Route each task to the cheapest model tier that handles it well; save the top tier for work that needs it.
 **Trigger:** Consulted automatically on every request, and when writing priority prompts in the morning brief. The operator never has to invoke it.
 
-**How it works:** Harold reads intent from the operator's request, consults the routing table below, and either (a) handles it directly in the current session, or (b) delegates to a subagent at the appropriate tier (via whatever your harness calls subagent delegation, e.g. an Agent/Task tool with a `model` parameter).
+**How it works:** Harold reads intent from the operator's request, consults the routing table below, and either (a) handles it directly in the current session, or (b) delegates to a subagent at the appropriate tier, through whatever subagent or delegation feature the harness offers, naming the model explicitly.
 
 ---
 
@@ -96,12 +96,9 @@ Do it directly in the current session, even if the current session is top tier a
 **Use when:** the task is token-heavy, can run in the background, or does not need an immediate answer.
 
 ```
-# Token-heavy structured task: delegate to save cost
-Agent(
-  subagent_type="general-purpose",
-  model="<your mid-tier model>",
-  prompt="[Full context: the email to draft, the playbook instructions, contact details, template]"
-)
+Delegate (in your harness's own syntax):
+  model:  <your mid-tier model>
+  prompt: [full context: the email to draft, the playbook instructions, contact details, template]
 ```
 
 **Why:** subagents save money on tasks that consume many tokens (long drafts, bulk file processing, research compilation) where the latency is acceptable.

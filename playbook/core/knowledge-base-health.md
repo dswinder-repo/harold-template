@@ -292,7 +292,7 @@ When a new spelling or consistency error is found:
 
 1. Add the correct and incorrect forms to the table in Part 2, Step 2.
 2. Search for and fix every existing instance (`bin/harold search`, `grep`), including the CRM.
-3. If the operator had to point it out, record it: `bin/harold file learning '{"severity":"critical","project":"global","category":"names","lesson":"..."}'`.
+3. A misspelling is a record fix, not a lesson. If the same kind of error keeps coming back (names from transcripts, say), add a check to `playbook/core/pre-flight-verification.md` so the fix becomes structural.
 
 ---
 
