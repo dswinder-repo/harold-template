@@ -186,19 +186,21 @@ Generate a ready-to-paste prompt for each confirmed priority. Each prompt includ
 - A recommended model tier
 
 **Model tier** (see `playbook/core/model-routing.md`):
-- Strategic judgment, synthesis, or complex writing → **[STRONGEST MODEL]**
-- An established playbook with known inputs → **[MID-TIER MODEL]**
-- Purely mechanical (batch updates, lookups) → **[FASTEST MODEL]**, or bundle it into another session
+- Strategic judgment, synthesis, or complex writing → **[TOP]**
+- An established playbook with known inputs → **[MID]**
+- Purely mechanical (batch updates, lookups) → **[FAST]**, or bundle it into another session
+
+The tags name tiers, not models: `playbook/core/model-routing.md` maps each tier to the models your provider offers.
 
 Format:
 ```
-**Priority 1: [Name]** [STRONGEST MODEL]
+**Priority 1: [Name]** [TOP]
 [Full prompt with context, deliverables, file paths, tasks]
 
-**Priority 2: [Name]** [MID-TIER MODEL]
+**Priority 2: [Name]** [MID]
 [Full prompt]
 
-**Priority 3: [Name]** [MID-TIER MODEL]
+**Priority 3: [Name]** [MID]
 [Full prompt]
 ```
 

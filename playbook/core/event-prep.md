@@ -19,7 +19,7 @@
 
 - **Prep Status:** `Not Started`, `In Progress` or `Complete`.
 - **Debrief Due:** end date + 2 days.
-- Past events move out of `## Upcoming Events` once the debrief is done (to a `## Past Events` section or archive).
+- Past events move out of `## Upcoming Events` to `## Completed Events` once the debrief is done.
 
 Every session, `bin/harold boot` checks this table against the system date. Any event less than 10 days out whose Prep Status is not `Complete` fires this playbook as `event-prep:<event name>`.
 
@@ -129,7 +129,7 @@ Harold's job on event days is to make capture cheap:
 
 ### Trigger
 - "Debrief [event]", or the operator says the event is over.
-- An event's Debrief Due date (in `harold/events.md`; usually the end date plus a day or two) has passed and its Debrief Status is still open. Boot does not compute this one: the session that rebuilds alerts sees it in the Upcoming Events table (the "event ended, no debrief" rule in `harold/alerts.md`) and offers the debrief.
+- An event's Debrief Due date (in `harold/events.md`; the end date plus 2 days) has passed and its Debrief Status is still open. Boot does not compute this one: the session that rebuilds alerts sees it in the Upcoming Events table (the "event ended, no debrief" rule in `harold/alerts.md`) and offers the debrief.
 
 ### Steps
 
@@ -152,7 +152,7 @@ Harold's job on event days is to make capture cheap:
 
 6. **Write the debrief note** to `vault/meetings/YYYY-MM-DD-<event>-debrief.md` using the template below.
 
-7. **Close it out** in `harold/events.md`: set Debrief Status to done and move the row out of `## Upcoming Events`.
+7. **Close it out** in `harold/events.md`: set Debrief Status to done and move the row from `## Upcoming Events` to `## Completed Events`.
 
 ### Post-event debrief template
 
@@ -231,4 +231,4 @@ Harold's job on event days is to make capture cheap:
 - [ ] Follow-up tasks created in the task manager
 - [ ] Debrief note written to `vault/meetings/`
 - [ ] Intel and facts filed
-- [ ] Debrief Status closed and row moved out of `## Upcoming Events`
+- [ ] Debrief Status closed and row moved to `## Completed Events`

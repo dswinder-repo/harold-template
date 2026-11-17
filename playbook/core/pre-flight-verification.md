@@ -176,10 +176,13 @@ Example:
 
 ## Where errors are recorded
 
-When an error slips through and the operator corrects it, record the lesson in the same turn, before any other work:
+When an error slips through and the operator corrects it, act in the same turn, before any other work, as the Error Capture Rule in `AGENTS.md` describes:
+
+- **A wrong fact** (a name, a title, a date, a detail about a person or company) is a record fix. Correct it everywhere it appears, the CRM record first for a contact, and add the misspelling to the Terminology table in `harold/facts.md`. It is not filed as a lesson.
+- **A wrong way of working** (a skipped lookup, a wrong process) is a lesson. Write the right way into the rule it belongs to, then file it:
 
 ```bash
-bin/harold file learning '{"severity":"critical","project":"global","category":"names","lesson":"..."}'
+bin/harold file learning '{"severity":"warning","project":"global","category":"process","lesson":"... (folded into <file>)"}'
 ```
 
 Use `category` `names`, `titles`, `facts`, `context`, `filing`, `process`, `scope` or `tools` as fits. Never hand-edit `harold/learnings.jsonl` and never choose the id yourself. If the same kind of error recurs, add a check to this playbook so the fix becomes structural.
@@ -195,4 +198,4 @@ Use `category` `names`, `titles`, `facts`, `context`, `filing`, `process`, `scop
 - [ ] Location and availability claims checked against `harold/events.md`, `harold/alerts.md` and recent daily notes
 - [ ] Filing location resolved through `harold/projects.md`
 - [ ] Drafts checked against "Your style rules"
-- [ ] Any correction from the operator filed with `bin/harold file learning` in the same turn
+- [ ] Any correction from the operator acted on in the same turn (record fix in place; lesson written into its rule and filed)

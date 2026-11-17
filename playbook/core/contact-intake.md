@@ -43,12 +43,12 @@ Watch every message for names with business significance:
 
 ### Type (exactly one)
 
-Every contact has **exactly one type**, chosen from **your own short list**. Define the list once in `memory/CLAUDE.md` and keep it short (five or so). The CRM stores it in the `category` column. An example list:
+Every contact has **exactly one type**, chosen from **your own short list**. Define the list once in `dashboard/people.md` (Your Contact Types) and keep it short (five or so). The CRM stores it in the `category` column. An example list:
 
 | Type | Indicators |
 |------|------------|
 | **investor** | Deploys capital: VC, angel, family office, fund, PE |
-| **partner** | Ongoing collaboration: co-delivery, channel, program partner, chamber of commerce, trade or economic-development office, government counterpart |
+| **partner** | Ongoing collaboration: co-delivery, channel or distribution, program partner, industry body, public-sector counterpart |
 | **founder** | Runs or is starting a company, whatever else they are |
 | **team** | Your own colleagues |
 | **other** | Advisor, introducer, prospect, general business contact |
@@ -120,7 +120,7 @@ All of these, together, for every new contact:
 ### Additions by type (adapt to your list)
 
 - **investor** — record firm and investor style (VC / angel / family office / PE) in notes. If you run a raise, add them to that project's tracker (`bin/harold where <raise>`) and let the raise's own playbook take over research and outreach. Run `playbook/core/analyst.md`: does their portfolio, thesis or network create an angle? Surface them in the next morning brief's pipeline health if they're in the pipeline.
-- **partner** — add a label when it helps you find them later (e.g. `government` for trade offices and public bodies, `advisor` for someone who also advises you). If they're tied to a project, update that project's card or README. Run the analyst playbook: any recent news about their organization or region?
+- **partner** — add a label when it helps you find them later (e.g. `public-sector` for a government body, `advisor` for someone who also advises you). If they're tied to a project, update that project's card or README. Run the analyst playbook: any recent news about their organization or region?
 - **founder** — record what the company does. Create or link a `vault/companies/` card if the company matters. Pipeline only if something is in motion (an investment, a partnership, a piece of work). Analyst playbook: what does this company change about anything you're doing?
 - **team** — update `dashboard/people.md` if they change operational context (new role, new reporting line). Onboarding checklist task if needed.
 - **other** — default warmth `Cold` or unset, status `pending`. **Watch for reclassification:** if investor, partner or founder context appears later, change the type with `crm_upsert_contact` / `harold_upsert_contact` and run that type's additions.
@@ -182,10 +182,10 @@ Date added:  [today, from bin/harold boot, never inferred]
 4. Pipeline: only if the call established a purpose ("considering the seed round") — then `crm_pipeline add` / `harold_pipeline add` with that purpose, stage In Conversation.
 5. Confirm: "Added Jane Doe (Globex Ventures) as investor, Warm. Follow-up task created. Pipeline: Raising the seed round, In Conversation."
 
-### Trade-office partner
-**Operator:** "Got a reply from Sam Lee at the regional trade office."
+### Public-sector partner
+**Operator:** "Got a reply from Sam Lee at the city's small-business office."
 1. Duplicate check.
-2. Type `partner`, label `government`.
+2. Type `partner`, label `public-sector`.
 3. Cascade. Pipeline only if you're actually working something with them; otherwise the record is enough.
 
 ### Ambiguous

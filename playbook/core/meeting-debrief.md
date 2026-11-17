@@ -94,7 +94,7 @@ If the contact belongs to a project, also update that project's folder or `vault
 |-----------|---------|---------|
 | Preferences | "Prefers morning calls", "Email, not chat" | Preferences |
 | Commitments | "Will send the intro by Friday" | Commitments |
-| Relationships | "Knows Sam Lee at Globex", "Introduced by Jane Doe" | Relationships |
+| Relationships | "Knows Sam Lee at Globex", "Introduced by Jane Doe" | Not in facts.md: the person's `vault/people/` card (Context and Related) |
 | Constraints | "Doesn't do pre-revenue", "Budget frozen until Q3" | Constraints |
 | Numbers | "Fund is $50M", "Team of 40" | Numbers |
 | Terminology | Correct spelling of a name, title, company | Terminology |
