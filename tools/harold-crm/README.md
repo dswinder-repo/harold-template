@@ -124,7 +124,6 @@ from creating accounts at all.
    | `NEXT_PUBLIC_SUPABASE_URL` | Project URL, from Project Settings > API |
    | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key (or the legacy anon key) |
    | `GEMINI_API_KEY` | Optional. Turns on research, enrichment and meeting prep (see [AI features](#ai-features-free-gemini-key)) |
-   | `NEXT_PUBLIC_HAROLD_NO_LOG_TYPES` | Optional. Contact types whose conversations you never log (see [Using it with Harold](#using-it-with-harold)) |
 
 3. Deploy, then in Supabase **Authentication > URL Configuration** set the Site
    URL to your deployment's URL.
@@ -182,11 +181,6 @@ chat shows up in the app, live, and the other way round.
   attributed: a change Harold makes appears under the last app editor (or under
   no one, for a contact never edited in the app). Logging an interaction from
   Harold updates `last_contacted_at` like the app does.
-- Optional: if you never log conversations with some contact types (some people
-  choose this for their own team), list them in `HAROLD_NO_LOG_TYPES` for Harold
-  (see "CRM Filing Protocol" in the workspace's `AGENTS.md`) and in
-  `NEXT_PUBLIC_HAROLD_NO_LOG_TYPES` for the app, whose warmth decay then skips
-  them. Both are empty by default.
 
 ## Bug reports
 

@@ -79,8 +79,7 @@ for (const now of ['2026-10-12T09:00:00', '2026-10-30T09:00:00', '2026-12-01T09:
     assert.strictEqual(c.code, 0, c.out + c.err);
     assert.match(c.out, /git: pushed 1 commit/);
     const msg = w.git('log', '-1', '--format=%B');
-    assert.match(msg, /Recorded-By: bin\/harold/, 'a terminal close names no AI tool');
-    assert.doesNotMatch(msg, /Co-Authored-By: Claude/);
+    assert.doesNotMatch(msg, /^(?:[\w-]+-By|Harold-Agent|[\w-]+-Session):/im, 'a close commit carries no attribution trailer of any kind');
     const f = run(w, ['close', '--final'], env);
     assert.strictEqual(f.code, 0, f.out + f.err);
     assert.match(w.remoteLog(), /chore\(session\)/);

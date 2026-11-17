@@ -9,6 +9,18 @@ Resolve the project folder with `bin/harold where <project>`; never hard-code a 
 
 ---
 
+## Standing rules (always apply)
+
+`AGENTS.md` (Git & GitHub Workflow) keeps the identity and the short form; these are the full rules.
+
+- Every project is a git repo with a GitHub remote. The workspace itself is a **private** repo.
+- Never `git add .` blindly. Check for secrets first. Stage specific files. (`bin/harold close` stages the workspace with its own secret scan.)
+- One logical change per commit. Prefix: `feat:`, `fix:`, `docs:`, `refactor:`, `style:`, `chore:`, `test:`.
+- **Live projects** (listed in `AGENTS.md`, and marked in `harold/projects.md`) use branches + PRs. Direct-to-main only for experiments and prototypes.
+- A new project that needs code gets its own repository (step 4), never a folder or branch inside another project's repo.
+
+---
+
 ## 0. Pre-flight: Check what you are about to commit
 
 ```bash
@@ -36,19 +48,14 @@ git diff --stat
 git add src/components/NewFeature.tsx src/utils/helper.ts
 git commit -m "$(cat <<'EOF'
 feat: add contact merge UI with duplicate detection
-
-Co-Authored-By: [AI CO-AUTHOR TRAILER]
 EOF
 )"
 ```
-
-`[AI CO-AUTHOR TRAILER]` is whatever attribution line your AI tool asks for (name and noreply address). Set it once in `AGENTS.md` and use it on every commit.
 
 **Commit message rules:**
 - Conventional prefixes: `feat:`, `fix:`, `docs:`, `refactor:`, `style:`, `chore:`, `test:`
 - First line: what was done, imperative mood, under 72 characters
 - If needed, a blank line and a body explaining WHY
-- Always include the Co-Authored-By trailer
 
 **Bad examples:**
 - `update files` — says nothing
@@ -144,8 +151,6 @@ git status                # review: nothing secret, nothing generated
 git add <files>           # stage deliberately
 git commit -m "$(cat <<'EOF'
 feat: initial build — <description>
-
-Co-Authored-By: [AI CO-AUTHOR TRAILER]
 EOF
 )"
 
@@ -224,7 +229,7 @@ Record what shipped in today's daily note: `bin/harold file daily <slug> "Shippe
 - [ ] Project folder resolved with `bin/harold where <project>`
 - [ ] `git status` reviewed; no secrets or generated files staged
 - [ ] Files staged specifically (no blind `git add .`)
-- [ ] One logical change per commit, conventional prefix, Co-Authored-By trailer
+- [ ] One logical change per commit, with a conventional prefix
 - [ ] Live projects: branch + PR, merged only with the operator's yes
 - [ ] Pushed; `git log @{u}..HEAD` is empty
 - [ ] Deploy verified with curl or a browser (if the project deploys)

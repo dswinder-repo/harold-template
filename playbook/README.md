@@ -15,6 +15,7 @@ Standard operating procedures: plain markdown files that say exactly how Harold 
 | `core/compile.md` | Turn raw sources in `raw/` into structured vault knowledge, or re-synthesize one topic from everything known. | "/compile", "compile", "process raw sources", "/compile [topic]", "recompile [topic]". Boot flags uncompiled `raw/`… |
 | `core/contact-intake.md` | File a new or changed contact into the CRM, vault and tasks, with a duplicate check first. | Runs passively whenever a name with business significance appears; also "add [name] to the CRM", "met [name]", "new… |
 | `core/content-production.md` | Turn an idea or hook into a published post, thread or newsletter in your own voice, then log how it did. | "Draft content on [topic]", "write a thread about [topic]", "newsletter draft on [topic]", or a news/intel sweep… |
+| `core/crm-filing.md` | File every contact interaction into the CRM and the vault, all three places together. | Any interaction with a contact (meeting, call, email, message); any correction to a contact's details; the CRM sweep at session close. |
 | `core/document-qc.md` | Fact-check a final document before it leaves the building, and fix the knowledge base wherever it was wrong. | The operator signals a document is final: "this is final", "ready to send", "lock it in", "good to go", "send this… |
 | `core/event-prep.md` | Prepare for events before they arrive, capture well on the day, and debrief afterwards so nothing is lost. | Boot lists an event in `harold/events.md` less than 10 days out with Prep Status not Complete (trigger id… |
 | `core/expedition-hq.md` | Start the Expedition HQ live dashboard so you can watch every session's activity in a browser. | "Open Expedition HQ", "start the visualizer", "show me the dashboard", or at session start when live monitoring is… |
@@ -25,7 +26,10 @@ Standard operating procedures: plain markdown files that say exactly how Harold 
 | `core/pre-flight-verification.md` | Catch wrong names, dates, facts and filing before any output reaches the operator. | Before presenting any brief, research, email draft, meeting prep or filing decision; any output with names, dates,… |
 | `core/preview-deploys.md` | Test every change on a preview link before it reaches production, and verify every deploy before calling it live. | Any change to a project that deploys (website, app, API, serverless function); "deploy this", "ship to prod", "is it… |
 | `core/project-intake.md` | Give every new project a folder, a `harold/projects.md` entry and a vault card so sessions can find it. | Runs passively whenever the operator mentions a project, client, engagement, venture or workstream that `bin/harold… |
+| `core/session-close.md` | Close a session properly: CRM sweep, vault daily note, task check, scheduled work recorded, then `bin/harold close --final`. | "done", "wrap", "wrap up", "end session", "that's it", "close out", "/done". |
+| `core/session-file.md` | Keep this session's file in `harold/active-sessions/` current so the live Expedition HQ visualizer shows what is happening. | Every session, every turn: boot creates the file, the first tool call of each user message updates it, close puts it to sleep. |
 | `core/ship-to-github.md` | Commit, push and (for live projects) open a PR at the end of every coding session, without leaking secrets. | End of any coding session; "push this", "ship it", "commit and push"; starting a new project that needs a repo. |
+| `core/status.md` | Give the operator a concise dashboard summary: projects, quiet projects, flags, stale relationships and upcoming deadlines. | "status", "what's happening", "where are we", "dashboard", "/status". |
 
 ## Rules for writing a playbook
 

@@ -6,9 +6,8 @@
  *
  * 1. One schema, one source: the web app's first migration is a byte-for-byte copy of
  *    tools/harold-mcp/schema.sql.
- * 2. HAROLD_NO_LOG_TYPES is optional and off by default: with it empty, a contact of any type is
- *    filed like everyone else; with it set, `harold file crm` refuses interactions for those types
- *    (records can still be updated) and `harold close` does not ask for them to be filed.
+ * 2. Every contact is filed the same way, whatever its type: `harold file crm` queues an interaction
+ *    for a contact of any type, and `harold close` asks for every touched contact to be filed.
  *
  * Each workspace is a throwaway copy of this repository (its own git repo, no remote), with HOME
  * pointed at an empty directory so no real ~/.harold/env or CRM credentials are read.
@@ -26,7 +25,7 @@ const SKIP = new Set(['.git', 'node_modules', '.next', 'search.db', '.brief-job.
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
-const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'CURSOR_PROJECT_DIR', 'CURSOR_VERSION', 'HAROLD_NO_LOG_TYPES', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'CURSOR_PROJECT_DIR', 'CURSOR_VERSION', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
 function run(w, args, input, env = {}) {
   const clean = { ...process.env };
   STRIP.forEach(k => delete clean[k]);
@@ -64,7 +63,7 @@ test('the web app migration 001 is a byte-for-byte copy of tools/harold-mcp/sche
   assert.ok(schema.equals(copy), 'they differ: edit tools/harold-mcp/schema.sql, then copy it over tools/harold-crm/supabase/migrations/001_harold_core.sql');
 });
 
-test('HAROLD_NO_LOG_TYPES empty (the default): file crm queues an interaction for a contact of any type', () => {
+test('file crm queues an interaction for a contact of any type', () => {
   const w = workspace();
   teamCard(w, 'Sam Lee');
   const r = run(w, ['file', 'crm', JSON.stringify({ contact: 'Sam Lee', action: 'log_interaction', payload: { type: 'meeting', subject: 'Release plan' } })]);
@@ -72,35 +71,13 @@ test('HAROLD_NO_LOG_TYPES empty (the default): file crm queues an interaction fo
   assert.match(r.out, /queued log_interaction for Sam Lee/);
 });
 
-test('HAROLD_NO_LOG_TYPES set: file crm refuses the interaction but still queues a record update', () => {
-  const w = workspace();
-  teamCard(w, 'Sam Lee');
-  const env = { HAROLD_NO_LOG_TYPES: 'Team, advisor' };
-  const refused = run(w, ['file', 'crm', JSON.stringify({ contact: 'Sam Lee', action: 'log_interaction', payload: { type: 'meeting', subject: 'Release plan' } })], undefined, env);
-  assert.strictEqual(refused.code, 3);
-  assert.match(refused.err, /REFUSED: Sam Lee is type: team/);
-  const upsert = run(w, ['file', 'crm', JSON.stringify({ contact: 'Sam Lee', action: 'upsert_contact', payload: { role: 'Engineer' } })], undefined, env);
-  assert.strictEqual(upsert.code, 0, upsert.err);
-  assert.match(upsert.out, /queued upsert_contact for Sam Lee/);
-});
-
-test('close asks for a touched contact to be filed unless its type is in HAROLD_NO_LOG_TYPES', () => {
+test('close asks for a touched contact to be filed, whatever its type', () => {
   const w = workspace();
   assert.strictEqual(run(w, ['boot', '--via=claude'], start('crm-1')).code, 0);
   teamCard(w, 'Sam Lee');
   const blocked = JSON.parse(run(w, ['close', '--via=claude'], stop('crm-1')).out);
-  assert.strictEqual(blocked.decision, 'block', 'by default a team contact is filed like anyone else');
+  assert.strictEqual(blocked.decision, 'block', 'a team contact is filed like anyone else');
   assert.match(blocked.reason, /contact touched but not fully filed: Sam Lee/);
-
-  const w2 = workspace();
-  const env = { HAROLD_NO_LOG_TYPES: 'team' };
-  const b = run(w2, ['boot', '--via=claude'], start('crm-2'), env);
-  assert.strictEqual(b.code, 0, b.err);
-  assert.match(b.out, /HAROLD_NO_LOG_TYPES \(team\) are never logged/);
-  teamCard(w2, 'Sam Lee');
-  const r = run(w2, ['close'], undefined, env);
-  assert.strictEqual(r.code, 0, `${r.out}\n${r.err}`);
-  assert.match(r.out, /Sam Lee: type team is in HAROLD_NO_LOG_TYPES/);
 });
 
 // Focus Area is retired. Nothing in the starter reads, writes or mentions it, except the migration that
@@ -166,14 +143,14 @@ test('harold-mcp cadence rule: open pipeline entries only; skip types match the 
     { id: '6', name: 'Lukewarm Recent', category: 'partner', warmth: 'Lukewarm', interactions: [{ occurred_at: ago(20), type: 'note' }] },
     { id: '7', name: 'Lukewarm Old', category: 'partner', warmth: 'Lukewarm', interactions: [{ occurred_at: ago(30), type: 'note' }] },
   ];
-  const skipTypes = cadenceSkipTypes(undefined, ['team']);
-  assert.deepStrictEqual(skipTypes, ['other', 'team']);
+  const skipTypes = cadenceSkipTypes(undefined);
+  assert.deepStrictEqual(skipTypes, ['other']);
   const names = staleFromRows(rows, stages, { skipTypes, now }).map(c => c.name).sort();
   assert.deepStrictEqual(names, ['Investor Labelled Other', 'Lukewarm Old', 'Open Entry']);
   const open = staleFromRows(rows, stages, { skipTypes, now }).find(c => c.name === 'Open Entry');
   assert.strictEqual(open.threshold, 7); assert.match(open.basis, /stage Reached Out, weekly/);
   assert.deepStrictEqual(staleFromRows(rows, stages, { skipTypes, now, type: 'partner' }).map(c => c.name), ['Lukewarm Old']);
-  assert.deepStrictEqual(cadenceSkipTypes('', []), [], 'HAROLD_NO_CADENCE_TYPES set empty tracks every type');
+  assert.deepStrictEqual(cadenceSkipTypes(''), [], 'HAROLD_NO_CADENCE_TYPES set empty tracks every type');
   // harold-mcp's server reads the rule from this module and asks for closed_at.
   const server = fs.readFileSync(path.join(SRC, 'tools/harold-mcp/server.js'), 'utf8');
   assert.match(server, /from "\.\/cadence\.js"/);

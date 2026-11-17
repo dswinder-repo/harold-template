@@ -27,10 +27,7 @@
  *   SUPABASE_URL                https://<project-ref>.supabase.co
  *   SUPABASE_SERVICE_ROLE_KEY   the service_role key (never commit it)
  *   HAROLD_ROOT / HAROLD_BASE   workspace root (default: two levels above this file)
- *   HAROLD_NO_LOG_TYPES         optional: contact types whose conversations are never logged
- *                               (harold_log_interaction refuses them). Empty by default.
  *   HAROLD_NO_CADENCE_TYPES     contact types that never get staleness alerts (default: other).
- *                               Types in HAROLD_NO_LOG_TYPES are skipped too.
  * Database: tools/harold-mcp/schema.sql creates exactly the tables and columns this file uses.
  */
 
@@ -58,12 +55,8 @@ const CRM_NOT_CONFIGURED = `Error: CRM not configured — ${CRM_MISSING.join(" a
 if (CRM_MISSING.length) {
   console.error("\n" + "!".repeat(78) + "\n!! harold-mcp: CRM DISABLED. Missing: " + CRM_MISSING.join(", ") + "\n!! Set them in ~/.harold/env (bin/harold-setup-crm) and start the server via bin/harold-mcp.\n" + "!".repeat(78) + "\n");
 }
-// Optional, off by default: contact types whose conversations are never logged as interactions
-// (for example, some people choose never to log conversations with their own team). Their records
-// are still kept current; harold_log_interaction refuses them.
-const typeList = v => (v || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 // A setting from the environment, else the workspace's committed harold/settings.env (non-secret HAROLD_* only),
-// so a rule such as HAROLD_NO_LOG_TYPES holds however this server was launched.
+// so a rule such as HAROLD_NO_CADENCE_TYPES holds however this server was launched.
 function haroldSetting(name) {
   const v = (process.env[name] || "").trim();
   if (v || !/^HAROLD_[A-Z0-9_]+$/.test(name) || /KEY|TOKEN|SECRET|PASSWORD|AUTH/.test(name)) return v;
@@ -72,10 +65,8 @@ function haroldSetting(name) {
     return m ? (m[1] ?? m[2] ?? m[3] ?? "").trim() : "";
   } catch (_) { return ""; }
 }
-const NO_LOG_TYPES = typeList(haroldSetting("HAROLD_NO_LOG_TYPES"));
-// Contact types that never get staleness alerts: HAROLD_NO_CADENCE_TYPES (default: other), plus the
-// no-log types, whose last-contact date would otherwise look stale forever.
-const NO_CADENCE_TYPES = cadenceSkipTypes(haroldSetting("HAROLD_NO_CADENCE_TYPES"), NO_LOG_TYPES);
+// Contact types that never get staleness alerts: HAROLD_NO_CADENCE_TYPES (default: other).
+const NO_CADENCE_TYPES = cadenceSkipTypes(haroldSetting("HAROLD_NO_CADENCE_TYPES"));
 
 let _supabase = null;
 function getSupabase() {
@@ -89,7 +80,7 @@ function getSupabase() {
  * Query the CRM for contacts whose relationship is going stale: contacts we HAVE a relationship with
  * (warmth Lukewarm or warmer) but have not engaged recently. The rule itself lives in ./cadence.js and is
  * the same as the hosted connector's crm_stale: open pipeline entries only (closed_at null) for the stage
- * cadence, and the skip types (HAROLD_NO_CADENCE_TYPES, HAROLD_NO_LOG_TYPES) match the contact's ONE type,
+ * cadence, and the skip types (HAROLD_NO_CADENCE_TYPES) match the contact's ONE type,
  * never its labels.
  *
  * @param {number} staleDays - Base threshold for freshness (default 14)
@@ -399,9 +390,9 @@ server.tool(
 // ── Tool: harold_alert ────────────────────────────────────────────
 server.tool(
   "harold_alert",
-  "Add, update, or resolve an alert in Harold alerts (alerts.md). Use when a status changes, a new warning needs to surface, or an alert is resolved.",
+  "Add, update, or resolve an alert in Harold alerts (alerts.md). Use when a status changes, a new warning needs to surface, or an alert is resolved. A resolved alert moves to the Alert History in alerts-archive.md.",
   {
-    action: z.enum(["add", "update", "resolve"]).describe("add = new alert, update = modify existing, resolve = move to history"),
+    action: z.enum(["add", "update", "resolve"]).describe("add = new alert, update = modify existing, resolve = move to the history in alerts-archive.md"),
     severity: z.enum(["urgent", "warning", "watch"]).describe("Alert severity: urgent (🔴), warning (🟠), or watch (🟡)"),
     alert_name: z.string().describe("Short name identifying the alert (used for matching on update/resolve)"),
     context: z.string().describe("Full context/description of the alert"),
@@ -418,25 +409,29 @@ server.tool(
       const severityLabel = { urgent: "URGENT", warning: "WARNING", watch: "WATCH" };
 
       if (action === "resolve") {
-        // Remove from current alerts and add to history
+        // Remove it from the current alerts.
         const lines = content.split("\n");
         const filtered = lines.filter(line => !line.includes(alert_name));
         content = filtered.join("\n");
 
-        // Add to Alert History
+        // Add it to the Alert History in alerts-archive.md, newest first. Resolved alerts never go back into
+        // alerts.md: every boot loads that file, and it has a size budget.
+        const archivePath = path.join(HAROLD_DIR, "alerts-archive.md");
         const historySection = "## Alert History";
-        const historyIdx = content.indexOf(historySection);
-        if (historyIdx !== -1) {
-          const tableStart = content.indexOf("|---", historyIdx);
-          if (tableStart !== -1) {
-            const endOfSep = content.indexOf("\n", tableStart) + 1;
-            const historyRow = `| ${today()} | ${alert_name} | ${resolution || "Resolved"} |\n`;
-            content = content.slice(0, endOfSep) + historyRow + content.slice(endOfSep);
-          }
-        }
+        const emptyHistory = `${historySection}\n\n| Date | Alert | Resolution |\n|------|-------|------------|\n`;
+        let archive = readFile(archivePath) || `# Harold Alert History\n\n*Resolved alerts, newest first. Moved here from harold/alerts.md so that file stays small.*\n\n${emptyHistory}`;
+        if (!archive.includes(historySection)) archive = `${archive.trimEnd()}\n\n${emptyHistory}`;
+        const historyIdx = archive.indexOf(historySection);
+        const tableStart = archive.indexOf("|---", historyIdx);
+        if (tableStart === -1) archive = `${archive.trimEnd()}\n\n| Date | Alert | Resolution |\n|------|-------|------------|\n`;
+        const sep = archive.indexOf("|---", historyIdx);
+        const endOfSep = archive.indexOf("\n", sep) + 1 || archive.length;
+        const historyRow = `| ${today()} | ${alert_name} | ${resolution || "Resolved"} |\n`;
+        archive = archive.slice(0, endOfSep) + historyRow + archive.slice(endOfSep);
 
         writeFile(alertsPath, content);
-        return { content: [{ type: "text", text: `Resolved alert: "${alert_name}" → moved to history` }] };
+        writeFile(archivePath, archive);
+        return { content: [{ type: "text", text: `Resolved alert: "${alert_name}" → moved to the Alert History in harold/alerts-archive.md` }] };
 
       } else if (action === "add") {
         // Find the right severity section and add the row
@@ -1148,19 +1143,6 @@ server.tool(
         if (resolved.multiple) return resolved.multiple;
         resolvedId = resolved.id;
         resolvedName = resolved.name;
-      }
-
-      // Optional HAROLD_NO_LOG_TYPES: conversations with these contact types are never logged.
-      if (NO_LOG_TYPES.length) {
-        const { data: who, error: whoErr } = await supabase.from("contacts").select("name, category").eq("id", resolvedId).single();
-        if (whoErr) throw whoErr;
-        const type = String(who?.category || "").toLowerCase();
-        // A label counts too (a contact typed "partner" but labelled "team" is still team).
-        const { data: labels } = await supabase.from("contact_categories").select("category_name").eq("contact_id", resolvedId);
-        const label = (labels || []).map(l => String(l.category_name || "").toLowerCase()).find(l => NO_LOG_TYPES.includes(l));
-        if (NO_LOG_TYPES.includes(type) || label) {
-          return { content: [{ type: "text", text: `Not logged: ${who.name} is ${label ? `labelled "${label}"` : `type "${type}"`}, and HAROLD_NO_LOG_TYPES says conversations with that type are never logged. Keep their record current with harold_upsert_contact instead.` }], isError: true };
-        }
       }
 
       // Insert the interaction

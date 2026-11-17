@@ -1,6 +1,6 @@
 # Playbook: Compile / Recompile Knowledge Base
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Turn raw sources in `raw/` into structured vault knowledge, or re-synthesize one topic from everything known.
 **Trigger:** "/compile", "compile", "process raw sources", "/compile [topic]", "recompile [topic]". Boot flags uncompiled `raw/` items but never compiles them itself.

@@ -29,7 +29,7 @@ build/
 **/oauth_creds.json
 # The env templates are meant to be committed: they hold no values.
 !.env.example
-# Harold's non-secret, committed settings (HAROLD_TZ, HAROLD_NO_LOG_TYPES, ...): read only for HAROLD_* names.
+# Harold's non-secret, committed settings (HAROLD_TZ, HAROLD_BRIEF_TIME, ...): read only for HAROLD_* names.
 !harold/settings.env
 
 # ── Harold runtime state (rebuilt or per-machine) ────────
@@ -45,6 +45,8 @@ harold/.housekeeping-job.json
 harold/.housekeeping-context.md
 harold/.last-boot
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+**/.claude/worktrees/
 
 # ── Obsidian app state (optional viewer; may hold API keys) ──
 vault/.obsidian/

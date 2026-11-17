@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { cadenceSkipTypes, staleContacts, staleText, typeList } from "../../src/stale.js";
+import { cadenceSkipTypes, staleContacts, staleText } from "../../src/stale.js";
 import { FakeSupabase } from "./fakes.js";
 
 const NOW = new Date("2026-10-07T16:00:00Z");
@@ -16,7 +16,6 @@ function contact(id: string, name: string, category: string, warmth: string, las
 
 beforeEach(() => {
   delete process.env.HAROLD_NO_CADENCE_TYPES;
-  delete process.env.HAROLD_NO_LOG_TYPES;
   db = new FakeSupabase();
   db.tables.pipeline_stages.push(
     { stage_name: "Identified", default_cadence: "monthly" }, { stage_name: "Reached Out", default_cadence: "weekly" },
@@ -47,11 +46,11 @@ beforeEach(() => {
   contact("tight", "Tight Twenty", "investor", "Lukewarm", 20);  // Identified 30 and Reached Out 7: the tightest wins
   db.tables.contact_pipelines.push({ id: "e4", contact_id: "tight", stage: "Identified", purpose: "a", closed_at: null }, { id: "e5", contact_id: "tight", stage: "Reached Out", purpose: "b", closed_at: null });
 });
-afterEach(() => { delete process.env.HAROLD_NO_CADENCE_TYPES; delete process.env.HAROLD_NO_LOG_TYPES; });
+afterEach(() => { delete process.env.HAROLD_NO_CADENCE_TYPES; });
 
 describe("crm_stale: the harold_cadence_check rule", () => {
   it("flags exactly the contacts past their cadence", async () => {
-    const r = await staleContacts(sb(), { skipTypes: cadenceSkipTypes(["team"]), now: NOW });
+    const r = await staleContacts(sb(), { skipTypes: ["other", "team"], now: NOW });
     expect(names(r)).toEqual(["Hot Ten", "Labelled Investor", "Luke Thirty", "Pending Hundred", "Pipe Nine", "Tight Twenty", "Warm Never"]);
     expect(r.checked).toBe(db.tables.contacts.filter(c => c.status !== "archived").length);
     const by = Object.fromEntries(r.contacts.map(c => [c.name, c]));
@@ -69,14 +68,13 @@ describe("crm_stale: the harold_cadence_check rule", () => {
     expect(names(r)).toContain("Luke Twenty");  // 20 >= 14
   });
 
-  it("HAROLD_NO_CADENCE_TYPES and HAROLD_NO_LOG_TYPES apply to the contact's type only", async () => {
-    expect(cadenceSkipTypes([])).toEqual(["other"]);
+  it("HAROLD_NO_CADENCE_TYPES applies to the contact's type only", async () => {
+    expect(cadenceSkipTypes()).toEqual(["other"]);
     process.env.HAROLD_NO_CADENCE_TYPES = "";
-    expect(cadenceSkipTypes([])).toEqual([]);
-    expect(names(await staleContacts(sb(), { skipTypes: cadenceSkipTypes([]), now: NOW }))).toEqual(expect.arrayContaining(["Other Hundred", "Team Member"]));
-    process.env.HAROLD_NO_CADENCE_TYPES = "Founder, partner";
-    process.env.HAROLD_NO_LOG_TYPES = "Investor";
-    const skip = cadenceSkipTypes(typeList(process.env.HAROLD_NO_LOG_TYPES));
+    expect(cadenceSkipTypes()).toEqual([]);
+    expect(names(await staleContacts(sb(), { skipTypes: cadenceSkipTypes(), now: NOW }))).toEqual(expect.arrayContaining(["Other Hundred", "Team Member"]));
+    process.env.HAROLD_NO_CADENCE_TYPES = "Founder, partner, Investor";
+    const skip = cadenceSkipTypes();
     expect(skip).toEqual(["founder", "partner", "investor"]);
     const r = await staleContacts(sb(), { skipTypes: skip, now: NOW });
     expect(names(r)).toEqual(["Other Hundred", "Team Member"]);

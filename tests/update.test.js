@@ -23,7 +23,7 @@ const copyFilter = s => !SKIP.has(path.basename(s)) && !/\/harold\/active-sessio
 const dirs = [];
 test.after(() => dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })));
 
-const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'HAROLD_NO_LOG_TYPES', 'HAROLD_TZ', 'HAROLD_JOB', 'HAROLD_BRIEF_TIME', 'HAROLD_UPDATE_CHECK', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
+const STRIP = ['HAROLD_ROOT', 'HAROLD_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'GITHUB_ACTIONS', 'CLAUDE_CODE_REMOTE', 'HAROLD_NOW', 'HAROLD_DETACHED', 'HAROLD_TZ', 'HAROLD_JOB', 'HAROLD_BRIEF_TIME', 'HAROLD_UPDATE_CHECK', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'];
 function gitIn(cwd) { return (...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); return { code: r.status, out: (r.stdout || '').trim(), err: r.stderr || '' }; }; }
 function harold(ws, home, args, env = {}, input = '') {
   const clean = { ...process.env };
@@ -223,34 +223,20 @@ function plainWorkspace() {
   g('init', '-q'); g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('add', '-A'); g('commit', '-qm', 'init');
   return { dir, ws, home, g };
 }
-const teamCard = (ws, name, fm) => write(path.join(ws, 'vault/people', `${name}.md`), `---\ntags: [person]\n${fm}\ncompany: Example Co\nstatus: active\n---\n\n# ${name}\n`);
-const logRow = name => ['file', 'crm', JSON.stringify({ contact: name, action: 'log_interaction', payload: { type: 'meeting', subject: 'Weekly sync' } })];
 
 test('settings.env: committed, and read for HAROLD_* settings; the environment and ~/.harold/env override it', () => {
   const w = plainWorkspace();
   assert.notStrictEqual(w.g('check-ignore', '-q', 'harold/settings.env').code, 0, 'harold/settings.env must not be gitignored (it is a *.env file)');
-  write(path.join(w.ws, 'harold/settings.env'), '# mine\nHAROLD_TZ="Asia/Tokyo"\nexport HAROLD_NO_LOG_TYPES="team"\n');
-  teamCard(w.ws, 'Sam Lee', 'type: team\nlabels: []');
-  assert.match(harold(w.ws, w.home, ['check']).out, /^harold check — .* Asia\/Tokyo$/m);
+  write(path.join(w.ws, 'harold/settings.env'), '# mine\nexport HAROLD_TZ="Asia/Tokyo"\n');
+  assert.match(harold(w.ws, w.home, ['check']).out, /^harold check — .* Asia\/Tokyo$/m, 'settings.env is read with nothing set on the machine');
   assert.match(harold(w.ws, w.home, ['check'], { HAROLD_TZ: 'Europe/London' }).out, /Europe\/London$/m, 'the environment wins');
-  const refused = harold(w.ws, w.home, logRow('Sam Lee'));
-  assert.strictEqual(refused.code, 3, 'HAROLD_NO_LOG_TYPES from settings.env is enforced with nothing set on the machine');
-  assert.match(refused.err, /REFUSED: Sam Lee is type: team/);
-  assert.strictEqual(harold(w.ws, w.home, logRow('Sam Lee'), { HAROLD_NO_LOG_TYPES: 'investor' }).code, 0, 'environment overrides');
-  write(path.join(w.home, 'env'), 'export HAROLD_NO_LOG_TYPES="partner"\n');
-  assert.strictEqual(harold(w.ws, w.home, logRow('Sam Lee'), { HAROLD_ENV_FILE: path.join(w.home, 'env') }).code, 0, '~/.harold/env overrides');
+  write(path.join(w.home, 'env'), 'export HAROLD_TZ="America/Denver"\n');
+  assert.match(harold(w.ws, w.home, ['check'], { HAROLD_ENV_FILE: path.join(w.home, 'env') }).out, /America\/Denver$/m, '~/.harold/env overrides');
 });
 
-test('settings.env: a label counts like a type; credential-like names are never read, and a key there is refused at commit', () => {
+test('settings.env: credential-like names are never read, and a key there is refused at commit', () => {
   const w = plainWorkspace();
-  write(path.join(w.ws, 'harold/settings.env'), 'HAROLD_NO_LOG_TYPES="team"\nSUPABASE_URL="https://x.supabase.co"\nHAROLD_API_KEY="x"\n');
-  teamCard(w.ws, 'Jo Park', 'type: partner\nlabels: [ecosystem, team]');
-  teamCard(w.ws, 'Al Diaz', 'type: partner\nlabels:\n  - team');
-  teamCard(w.ws, 'Ana Ruiz', 'type: partner\nlabels: [ecosystem]');
-  const jo = harold(w.ws, w.home, logRow('Jo Park'));
-  assert.strictEqual(jo.code, 3); assert.match(jo.err, /REFUSED: Jo Park is labelled: team/);
-  assert.strictEqual(harold(w.ws, w.home, logRow('Al Diaz')).code, 3, 'a YAML block list counts');
-  assert.strictEqual(harold(w.ws, w.home, logRow('Ana Ruiz')).code, 0);
+  write(path.join(w.ws, 'harold/settings.env'), 'HAROLD_TZ="UTC"\nSUPABASE_URL="https://x.supabase.co"\nHAROLD_API_KEY="x"\n');
   const c = harold(w.ws, w.home, ['check']);
   assert.match(c.out, /settings\.env is committed, so only non-secret HAROLD_\* settings are read from it; ignored: SUPABASE_URL, HAROLD_API_KEY/);
   // Built at run time, so this file never trips a secret scan itself.

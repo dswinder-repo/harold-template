@@ -1,6 +1,6 @@
 # Playbook: Event Prep & Debrief
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Prepare for events before they arrive, capture well on the day, and debrief afterwards so nothing is lost.
 **Trigger:** Boot lists an event in `harold/events.md` less than 10 days out with Prep Status not Complete (trigger id `event-prep:<event name>`); "prep me for [event]"; "debrief [event]"; an event's end date has passed with the debrief open.
@@ -139,7 +139,6 @@ Harold's job on event days is to make capture cheap:
    - Check the vault and CRM first; don't treat known contacts as new.
    - New people → run `playbook/core/contact-intake.md` (or the intake flow).
    - File all three together: `crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the `vault/people/` profile (warmth, last_updated). If the CRM is unreachable, queue with `bin/harold file crm '{...}'`.
-   - Types listed in the optional `HAROLD_NO_LOG_TYPES` (see `AGENTS.md`) get their record updated, never an interaction.
    - Pipeline: only add a pipeline entry if a conversation established a purpose. Never auto-place someone because you met them.
 
 3. **Create follow-up tasks** in the task manager (Linear by default): thank-you notes within 48 hours, meeting requests within a week.
@@ -228,7 +227,7 @@ Harold's job on event days is to make capture cheap:
 
 **Post-event**
 - [ ] Raw impressions and day-of notes gathered
-- [ ] Contacts filed (log + upsert + vault profile, or queued); `HAROLD_NO_LOG_TYPES` respected
+- [ ] Contacts filed (log + upsert + vault profile, or queued)
 - [ ] Follow-up tasks created in the task manager
 - [ ] Debrief note written to `vault/meetings/`
 - [ ] Intel and facts filed

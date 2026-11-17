@@ -1,7 +1,7 @@
 // The knowledge base: read and write operations on the Harold repository (HAROLD_REPO), shared by the MCP tools.
 // Every write is one commit through the GitHub Contents API (HaroldRepo.commit).
 
-import { isNoLogType, tzInfo } from "./config.js";
+import { tzInfo } from "./config.js";
 import { HaroldRepo, GithubError, cleanPath } from "./github.js";
 import { appendLearning, CATEGORIES, SEVERITIES } from "./learnings.js";
 import { criticalLessons, housekeepingNew, morningStep0 } from "./morning.js";
@@ -164,16 +164,10 @@ export async function personCard(repo: HaroldRepo, name: string): Promise<{ path
   return f ? { path: c[0].path, text: f.text, sha: f.sha, fm: frontmatter(f.text) } : null;
 }
 
-/** A person card's type: `type`, or `category` on older cards (as bin/harold reads it). */
-export const cardType = (fm: Record<string, string>) => String(fm.type || fm.category || "").trim().toLowerCase();
-/** true when HAROLD_NO_LOG_TYPES lists the card's type. Always false when the setting is empty. */
-export const isNoLogCard = (fm: Record<string, string>) => isNoLogType(cardType(fm));
-
 /** Harold's filing rule: a CRM write about a person also freshens their vault card. */
 export async function touchPersonCard(repo: HaroldRepo, name: string, now = new Date()): Promise<string> {
   const card = await personCard(repo, name).catch(() => null);
   if (!card) return `No vault card found for ${name}; nothing to update in vault/people.`;
-  if (isNoLogCard(card.fm)) return `${card.path}: type "${cardType(card.fm)}" is in HAROLD_NO_LOG_TYPES; card not updated.`;
   const iso = localParts(now).iso;
   if (card.fm.last_updated === iso) return `${card.path}: last_updated already ${iso}.`;
   const r = await repo.commit(card.path, cur => {

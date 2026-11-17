@@ -1,9 +1,9 @@
 # Playbook: Morning Brief
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Start the day in three guided steps: intel, then the brief and priorities, then ready-to-run prompts.
-**Trigger:** a start-of-day opener, at any hour: "good morning", "morning", "gm", "let's get started", "let's go", "start the day", "daily brief", or the same idea in other words. **Not a trigger:** a first message that is a request about a project; do the request and do not run or offer the brief. Once the brief has run today, do not re-run it unless asked.
+**Trigger:** a start-of-day opener, at any hour: "good morning", "morning", "gm", "let's get started", "let's go", "let's get going", "start the day", "daily brief", "boot up", or the same idea in other words. **Not a trigger:** a first message that is a request about a project; do the request and do not run or offer the brief. Once the brief has run today, do not re-run it unless asked.
 
 **This is a mandatory playbook. Follow it exactly. Do not improvise, and do not merge the steps.**
 
@@ -38,7 +38,7 @@ Priority-setting is guided, not open-ended. Harold proposes; you confirm, correc
 
 ## STEP 0: Is today's draft already written? (check FIRST, every time)
 
-If you turned on the scheduled morning brief (`.github/workflows/morning-brief.yml`, or a Claude Code routine running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
+If you turned on the scheduled morning brief (`.github/workflows/morning-brief.yml`, or any hosted scheduled agent, such as a Claude Code routine, running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
 
 1. **Find it.** `bin/harold boot` prints a section **"Today's morning brief draft"**; `bin/harold brief status` prints the same thing on demand. It says one of:
    - **READY** (in this checkout) → read that file.
@@ -103,6 +103,8 @@ Everything below is the live procedure, used when there is no draft and as the s
 
    Angles worth catching: anything that changes the outcome, timing or talking points of an item in the relevance set: a move by a company or person in it, a policy or market shift that a project or task depends on, disruption near a trip on the calendar.
 
+   A news story goes into `harold/alerts.md` only when it bears on a live item, and its alert row names that item. World news with no such tie stays in the news sections of the brief.
+
    - *If a news or markets source is unavailable:* drop that section with a one-line note. Analyst mode still runs on whatever intel you do have.
 
 ### → End Step 1 with: "You got anything? What came in overnight?"
@@ -127,10 +129,10 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 1. **Task manager (Linear by default):** overdue tasks, tasks due today, tasks due this week and not started, high-priority tasks. (`bin/harold-linear tasks` if you use the helper.)
 2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 3-7 days = 🟠. A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
 3. **`harold/events.md`:** days until each event. An event fewer than 10 days out with prep not complete fires `event-prep:<event>`.
-4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job has no CRM tool, so the alerts it rebuilds do not include stale relationships; with no CRM tool here either, say so in one line.
+4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job includes them only when its session has a CRM tool. With no CRM tool here, say so in one line.
 5. **Quiet projects:** `bin/harold pulse` (boot already printed them; `harold_pulse` on the connector, and `harold_today` lists them). List each quiet project under 🟡 WATCH next to the stale relationships: name, days quiet, what the last activity was, and its next step. "No next step recorded" goes in as written: it is the gap to close. The scheduled draft job runs `bin/harold`, so its alerts include them.
 6. **Rebuild the "Current Alerts" section** of `harold/alerts.md` from those sources.
-7. Move resolved items to the Alert History section.
+7. Move resolved items to the Alert History section of `harold/alerts-archive.md` (newest first), never back into `harold/alerts.md`: that file is loaded at every boot and has a size budget.
 8. Update the `Last updated: <Month D, YYYY>` line at the bottom of the file.
 9. Record the trigger:
    ```bash
@@ -150,7 +152,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
    | Contact | Purpose | Stage | Last Touch | Days Silent | Flag | Next Action |
    |---------|---------|-------|------------|-------------|------|-------------|
 
-   Staleness: the stage cadence for pipeline entries; otherwise warmth (Hot 7 days, Warm 14, Lukewarm 28). Cold or unset warmth gets no nudge, and neither do the types in `HAROLD_NO_CADENCE_TYPES` (default `other`) or the optional `HAROLD_NO_LOG_TYPES`.
+   Staleness: the stage cadence for pipeline entries; otherwise warmth (Hot 7 days, Warm 14, Lukewarm 28). Cold or unset warmth gets no nudge, and neither do the types in `HAROLD_NO_CADENCE_TYPES` (default `other`).
    - *If the CRM is unreachable:* say so, and fall back to `last_updated` in `vault/people/` profiles for the contacts tied to today's priorities.
 4. **Blockers and flags** — active blockers, deadlines in the next 7 days, overnight additions.
 5. **Scheduled triggers** — anything due today per `AGENTS.md` (weekly-scan on Fridays, full-audit on the 1st, month-end on the last business day). Due means it runs this session; say so here. With cloud housekeeping on (`harold/housekeeping.json`), those three run as scheduled jobs and boot lists them only as notes: do not run them here.

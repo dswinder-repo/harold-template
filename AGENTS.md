@@ -14,7 +14,7 @@ bin/harold boot
 
 It does not think. It gets today's real date from the system, verifies every core file and every playbook body is readable, loads the critical learnings, the project map, alerts, blockers and the scheduled work that is due, registers the session file, and prints all of it. **If it refuses (non-zero exit, or output starting `⛔ HAROLD BOOT REFUSED`), stop and say so.** Do not improvise from memory: an unreadable playbook means the contract is not met. The operator never types it.
 
-**The context gate.** A harness passes hook output to the model only up to a size limit (Claude Code shows a 2 KB preview of anything over about 10 KB). When boot's context is larger than `HAROLD_HOOK_BUDGET` (default 9000 characters), boot prints a short digest instead: the always-on monitors, the scheduled work, the exit condition and a `⛔ CONTEXT GATE` line. It writes the full context as parts. **Run `bin/harold context` until it says every part is read, before anything else.** Until then the pre-tool hook (`bin/harold gate`) holds every tool except `bin/harold` commands and the session file, and close blocks the turn. The gate runs in Claude Code, the Cowork plugin, Codex, Gemini CLI, Qwen Code, Cursor, Copilot CLI, Grok Build, Kimi Code and Hermes Agent; everywhere else close enforces it. It fails open: input it cannot read never blocks a tool.
+**The context gate.** A harness passes hook output to the model only up to a size limit (Claude Code, for example, shows only a 2 KB preview of anything over about 10 KB, and other harnesses set their own limits). When boot's context is larger than `HAROLD_HOOK_BUDGET` (default 9000 characters), boot prints a short digest instead: the always-on monitors, the scheduled work, the exit condition and a `⛔ CONTEXT GATE` line. It writes the full context as parts. **Run `bin/harold context` until it says every part is read, before anything else.** Until then the pre-tool hook (`bin/harold gate`) holds every tool except `bin/harold` commands and the session file, and close blocks the turn. The gate runs in Claude Code, the Cowork plugin, Codex, Gemini CLI, Qwen Code, Cursor, Copilot CLI, Grok Build, Kimi Code and Hermes Agent; everywhere else close enforces it. It fails open: input it cannot read never blocks a tool.
 
 Harold is platform-, model- and harness-agnostic: it works the same in any AI tool that can read this file and run a shell command, with whichever model that tool runs. Every harness with lifecycle hooks is wired, so boot and close run on their own; these are the files (sources and setup: README, "Every harness with lifecycle hooks is wired"):
 
@@ -44,7 +44,7 @@ If boot's output is already in your context, it ran: do not run it again. **In a
 
 The workspace root is wherever `bin/harold root` says it is. All relative paths in this file resolve from there. **Use absolute paths under that root for every read and write** so the same instructions work from any cwd, any sandbox, any machine.
 
-At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed, that due scheduled work was recorded, that every boot context part was read, and that new work belongs to a project (a new `vault/intel/` or `vault/decisions/` note carries `project:` frontmatter naming a project in `harold/projects.md`, or `project: global`; a new top-level folder has a project-map entry), and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
+At the end of every turn `bin/harold close` runs (the Stop hook, or you). It sets the session file to sleeping, verifies that changed knowledge was logged in today's `vault/daily/` note, that touched contacts were filed, that every action item in a meeting note changed this session carries a task, that due scheduled work was recorded, that every boot context part was read, and that new work belongs to a project (a new `vault/intel/` or `vault/decisions/` note carries `project:` frontmatter naming a project in `harold/projects.md`, or `project: global`; a new top-level folder has a project-map entry), and then commits and pushes the repo. It blocks the turn, with the list of what is missing, until filing is done. `/done` runs `bin/harold close --final`.
 
 ---
 
@@ -60,33 +60,10 @@ Do NOT jump to the user's task. Do NOT begin working on a prompt until you have 
 
 ## MANDATORY FIRST ACTION — The Session File
 
-Every session has a file in `harold/active-sessions/` so it appears in the live Expedition HQ visualizer (`tools/visualizer/`). `bin/harold boot` creates it for you (`session-<date>-<time>-<id>.json`) and prints its path. If boot did not run in this harness, create one yourself with this template, named with a kebab-case slug of the task (e.g. `investor-outreach.json`):
-
-```json
-{
-  "session": true,
-  "task": "Brief description of what this session is doing",
-  "activities": {
-    "research": { "status": "sleeping" },
-    "strategy": { "status": "sleeping" },
-    "writing": { "status": "sleeping" },
-    "coding": { "status": "sleeping" },
-    "data": { "status": "sleeping" },
-    "comms": { "status": "sleeping" },
-    "design": { "status": "sleeping" },
-    "ops": { "status": "sleeping" }
-  }
-}
-```
-
-Then set whichever activity you're starting with to `"working"` with a `"task"`, `"progress"` (0-100) and `"started"` (ISO timestamp).
-
-**SESSION FILE UPDATE PROTOCOL:**
-The visualizer polls every few seconds but only shows what's in the file.
-
-- **At the START of processing every user message**, set the right activity to `"working"` with a current `"task"` and `"progress"`, and the others to `"sleeping"`.
-- **At the END of processing every user message**, set all activities back to `"sleeping"` (`bin/harold close` does this for you). Keep `"session": true` and `"task"`.
-- **Also update** when finishing a major phase or starting a new type of work, and when the session ends (`"session": false`, all `"sleeping"`; `bin/harold close --final` does this).
+Every session has a file in `harold/active-sessions/` so it appears in the live Expedition HQ visualizer (`tools/visualizer/`). `bin/harold boot` creates it and prints its path.
+- At the START of processing every user message, before any other work, update it (your first tool call every turn): the current activity `"working"` with a `"task"` and `"progress"`, all others `"sleeping"`.
+- At the END of every turn all activities go back to `"sleeping"`: `bin/harold close` does this; where close does not run, your last tool call does it.
+- If boot did not run in this harness, create the file yourself. Schema, the eight activity categories, the full update protocol and cleanup: `playbook/core/session-file.md`.
 
 ---
 
@@ -150,46 +127,6 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 ---
 
-## Dashboard State Protocol
-
-**Schema** of a session file:
-```json
-{
-  "session": true,
-  "task": "High-level task description",
-  "activities": {
-    "research": { "status": "working", "task": "What the agent is doing", "progress": 50, "started": "ISO-timestamp" },
-    "strategy": { "status": "sleeping" },
-    "writing":  { "status": "sleeping" },
-    "coding":   { "status": "sleeping" },
-    "data":     { "status": "sleeping" },
-    "comms":    { "status": "sleeping" },
-    "design":   { "status": "sleeping" },
-    "ops":      { "status": "sleeping" }
-  }
-}
-```
-
-**Activity categories (8):**
-| Category | Agent | Description |
-|----------|-------|-------------|
-| `research` | ARCHIE | Searches, file reads, web lookups, knowledge-base queries |
-| `strategy` | COMPASS | Planning, prioritizing, analysis, decision support |
-| `writing` | QUILL | Drafting content, prompts, documents |
-| `coding` | BYTE | Backend logic, APIs, data structures, algorithms, non-visual code |
-| `data` | LEDGER | Data analysis, audits, diagnostics, metrics, financial data, research synthesis |
-| `comms` | MERCURY | CRM interactions, outreach, messaging, drafting emails to external contacts |
-| `design` | SKETCH | Frontend/UI code, CSS, visual design, layouts, HTML templates |
-| `ops` | GEARS | File management, deployments, git operations, config, maintenance |
-
-**Activity selection:** when work spans categories, pick the one that best describes the *primary* output. Frontend/UI code is `design`, not `coding`. Analyzing data or auditing systems is `data`, not `research` (research *finds* information, data *analyzes* it). Messages to external people are `comms`, not `writing`.
-
-**Optional field:** `"artifact": "/absolute/path/to/output/file"` — the main output this session is producing, recorded for whoever reads the file. The starter's Expedition HQ page does not display it.
-
-**Cleanup:** `bin/harold boot` and `close` move session files older than 48 hours to `harold/active-sessions/archive/`, so a stuck `"session": true` never shows as live forever. Ended sessions older than 2 hours are hidden by the visualizer.
-
----
-
 ## Key File Locations
 
 | Purpose | Path |
@@ -202,7 +139,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 | **Blockers** | `harold/blockers.md` |
 | **Events** | `harold/events.md` |
 | **Facts & Metrics** | `harold/facts.md` |
-| **Project Map** | `harold/projects.md` (`bin/harold where <topic>`) |
+| **Project Map** | `harold/projects.md` (`bin/harold where <topic>`, `bin/harold pulse`) |
 | **Search index + link graph** | `harold/search.db` (gitignored; `bin/harold search`, `related`, `backlinks`) and its committed copy `harold/graph.json` |
 | **Cross-file cascade rules** | `harold/sync-map.md` |
 | **Lessons** | `harold/learnings.jsonl` (`bin/harold file learning`) |
@@ -228,39 +165,16 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
-- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`). Non-secret settings such as `HAROLD_TZ`, `HAROLD_BRIEF_TIME` and `HAROLD_NO_LOG_TYPES` go in the committed `harold/settings.env`, so every machine and scheduled job has them (`~/.harold/env` or the environment overrides it on one machine). `bin/harold close` refuses to commit anything that looks like a key.
+- **Credentials never live in the repo.** They go in `~/.harold/env` (for example `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`). Non-secret settings such as `HAROLD_TZ` and `HAROLD_BRIEF_TIME` go in the committed `harold/settings.env`, so every machine and scheduled job has them (`~/.harold/env` or the environment overrides it on one machine). `bin/harold close` refuses to commit anything that looks like a key.
 - **Nothing depends on a particular computer being on.** Scheduled work runs in the cloud (GitHub Actions driving any agent with a headless mode, with ready-made presets for Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI, Grok Build, Kimi Code and Qwen Code, a custom command for any other CLI, and the agent's subscription used first wherever there is one; or a hosted scheduled agent such as a Claude Code routine), calendars come through connectors, and anything queued is applied by whichever session next has access.
 - **Synthesis Filing Rule:** when Harold does substantive research or analysis to answer a question (3+ sources, or multi-paragraph synthesis), file the output as a vault artifact (`vault/intel/` or `vault/decisions/`). Real work should compound in the knowledge base.
+- **Rules are edited in place, never appended.** When the way Harold works changes, rewrite the rule where it lives and replace the old wording. Do not add dated "update" sections to the bottom of an instruction file. The history of the change (who decided what, and when) belongs in that day's `vault/daily/` note. A lesson in `harold/learnings.jsonl` is folded into the rule it belongs to and then archived.
+- **Grow the playbooks.** When work recurs, or the operator has to explain a multi-step way of doing something, write it down as a playbook so it never needs explaining twice. Check `playbook/README.md` first and improve an existing playbook where one fits. Keep the playbook short, add one line for it to the index in `playbook/README.md`, and tell the operator in one sentence what was added.
+- **Turn spoken direction into finished writing.** Operators often dictate rather than type, so what they say can arrive unstructured and in fragments. Treat it as raw notes, not as the text to store. Before anything the operator says goes into a rule, a playbook, this constitution or any other document, rewrite it as clear, well-structured prose that keeps their meaning exactly and drops none of their decisions. Never store their raw words as a rule. If the meaning is unclear, ask before writing anything down.
 
-## CRM Filing Protocol (MANDATORY — all three, every time)
+## CRM Filing Protocol (MANDATORY)
 
-For every contact touched, all three happen together. No exceptions. No "I'll do it next." A vault card with `crm: none` is deliberately kept out of the CRM.
-
-*The CRM is the operator's own, spanning their whole working life, not an employer's. Each contact has exactly one type, from the operator's own short list (for example: investor, partner, founder, team, other), any number of labels, and a warmth (Hot, Warm, Lukewarm, Cold, or unset). There is one pipeline; every entry in it states its purpose and sits at one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. Nothing is placed in the pipeline automatically.*
-
-1. **Log the interaction** with the CRM tool: `crm_log_interaction` on the connector, `harold_log_interaction` on harold-mcp
-2. **Update the contact record** (warmth, status, notes): `crm_upsert_contact` on the connector, `harold_upsert_contact` on harold-mcp
-3. **Vault people profile**: update warmth, `last_updated`, context
-
-Use whichever of the two your harness has; they write the same database. **A write made through the connector:** `bin/harold close` can see CRM writes only when this computer holds the CRM credentials (`~/.harold/env`). Without them, record each connector write so close counts the contact as filed (it is never replayed):
-
-```bash
-bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","applied":"connector"}'
-```
-
-That is the normal way to work with the connector and no local credentials. The queue below is only for when the CRM cannot be reached at all.
-
-**Optional: types you never log (`HAROLD_NO_LOG_TYPES`).** Off by default. Set it in `harold/settings.env` to a comma-separated list of contact types whose conversations are never logged as CRM interactions (a contact matches by its type or any of its labels; a hosted connector reads it from its own environment); for example, some people choose never to log conversations with their own team (`HAROLD_NO_LOG_TYPES="team"`). For those contacts the record is still kept current (title, organization, status), but step 1 never happens: the CRM tools (`crm_log_interaction`, `harold_log_interaction`), `bin/harold file crm` and the queue replay refuse their interactions, `bin/harold close` does not ask for them to be filed, and they get no staleness alerts. Before logging, check the contact's `type` against the setting (boot prints it when it is set).
-
-If the CRM is unreachable (no CRM tool works, and no connector), queue the work instead of dropping it, and say that you did:
-
-```bash
-bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro call"}}'
-```
-
-The queue is a fallback for outages, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run on a computer that holds the CRM credentials and can reach it (the starter's scheduled jobs, which hold no CRM credentials, and the connector never replay it), skipping anything already applied and never logging an interaction for a type listed in `HAROLD_NO_LOG_TYPES`. `bin/harold replay --dry-run` shows what would happen.
-
-When corrections are made (warmth change, name fix, any contact detail), the CRM contact record is the most important update. Never correct the vault or the task manager and skip the CRM.
+For every contact touched, all three happen together, every time: log the interaction, update the contact record, update the vault people profile. Every contact is filed the same way, whatever its type. A vault card with `crm: none` is deliberately kept out of the CRM. Full procedure (tools, connector writes, outages, corrections): `playbook/core/crm-filing.md`. When a contact detail is corrected, the CRM record is the most important update: never fix the vault or the task manager and skip the CRM.
 
 ## Deployment Verification (MANDATORY)
 
@@ -295,7 +209,7 @@ bin/harold file learning '{"severity":"critical","project":"global","category":"
 It assigns the next ID under a lock and appends the entry. Choosing the ID by reading the file first is what this replaces: two sessions filing at the same time would both read the same highest number and both write it, and `bin/harold check` refuses to boot on duplicate IDs (`bin/harold file learning --repair` renumbers them).
 
 - **severity**: `critical` only for a system-wide rule not yet written into `AGENTS.md` or a playbook, and for a repeat of one. `warning` for a project-scoped lesson (it loads when a session works on that project) or a process slip; `info` for a preference or a one-off.
-- **admission**: before filing, ask whether the lesson's real home is the rule itself. A lasting instruction belongs in `AGENTS.md`, the owning playbook or the project's own instructions: edit it there in the same turn and file the learning at `warning`/`info` with "(folded into <file>)". Boot shows critical learnings one line each within a fixed budget (`bin/harold learnings` prints them in full), and `bin/harold check` warns past 15: a growing critical list means rules are not being folded.
+- **admission**: before filing, ask whether the lesson's real home is the rule itself. A lasting instruction belongs in `AGENTS.md`, the owning playbook or the project's own instructions: edit it there in the same turn and file the learning at `warning`/`info` with "(folded into <file>)". Boot shows critical learnings one line each within a fixed budget (`bin/harold learnings` prints them in full), and `bin/harold check` warns past 15: a growing critical list means rules are not being folded, and the monthly full audit (`playbook/core/knowledge-base-health.md` Step 12) folds settled entries into their rules and archives them.
 - **project**: `global` if broadly applicable, otherwise the project slug
 - **category**: `names`, `titles`, `tools`, `process`, `scope`, `filing`, `facts` or `context`
 - **repeats**: if this repeats an existing lesson, file it again as `critical` and say "(repeat of Lxxx)" in the lesson text
@@ -305,64 +219,24 @@ It assigns the next ID under a lock and appends the entry. Choosing the ID by re
 ## Git & GitHub Workflow
 
 **Identity:** [YOUR GIT NAME] / [YOUR GIT EMAIL]. GitHub account: [YOUR GITHUB USER].
-
-**Rules (always apply):**
-- Every project is a git repo with a GitHub remote. This workspace is a **private** repo.
-- Co-Authored-By trailer on every AI-assisted commit (e.g. `Co-Authored-By: Claude <noreply@anthropic.com>`).
-- Never `git add .` blindly. Check for secrets first. Stage specific files. (`bin/harold close` stages this workspace with its own secret scan.)
-- One logical change per commit. Prefix: `feat:`, `fix:`, `docs:`, `refactor:`, `style:`, `chore:`, `test:`
+- Never `git add .` blindly. Check for secrets first. Stage specific files.
 - **Live projects** ([LIST YOUR LIVE REPOS]) use branches + PRs. Direct-to-main only for experiments and prototypes.
 
-**Procedures:** `playbook/core/ship-to-github.md` and `playbook/core/preview-deploys.md`.
+Every other git rule (private repos, commit prefixes, procedures): `playbook/core/ship-to-github.md`, and `playbook/core/preview-deploys.md` for deploys.
 
 ---
 
 ## Session Commands
 
-These trigger on natural language; no slash prefix needed. They work the same in any harness, with any model.
+These trigger on natural language; no slash prefix needed. They work the same in any harness, with any model. Follow the playbook exactly.
 
-### /done — Session Close
-
-**Triggers:** "done", "wrap", "wrap up", "end session", "that's it", "close out", "/done"
-
-**Sequence (execute ALL steps, no skipping):**
-
-1. **Session Summary** — 3-5 bullets of what was accomplished.
-2. **CRM Sweep** — for EVERY contact mentioned or touched this session:
-   - If `HAROLD_NO_LOG_TYPES` is set and the contact's `type` is in it, keep the record current and log no interaction.
-   - For every other contact: verify the interaction is logged, the contact record is updated (warmth, status, notes), and the vault profile is current (`last_updated` today). If any of the three is missing, fix it before proceeding. Written through the connector with no local credentials → `bin/harold file crm '{…,"applied":"connector"}'`; CRM down → `bin/harold file crm` (queued).
-3. **Vault Daily Note** — create or append to `vault/daily/YYYY-MM-DD-<session-slug>.md` (template: `vault/templates/daily.md`): what was done, contacts touched, files created or modified, CRM actions, pending items for next session.
-4. **Task Check** — update the task manager for anything discussed; create tasks for new action items (every task gets a due date and a project).
-5. **Record scheduled work** — every DUE item from boot: `bin/harold file trigger <id> ran|skipped "<reason>"`.
-6. **Close** — run `bin/harold close --final`. It sets the session file to `"session": false`, verifies the filing above, appends the maintenance line (what was due and whether it ran) to today's daily note, and commits and pushes. If it lists problems, fix them and run it again.
-7. **Report** — concise summary: what was done, what was filed, any loose ends.
-
-### /debrief — Meeting Debrief
-
-**Triggers:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted call notes or a forwarded email with commitments in it, "/debrief"
-
-**Follow `playbook/core/meeting-debrief.md` exactly.** Key steps: process the input → log the interaction in the CRM → create a task for every commitment automatically, without being asked (the operator's to-dos and what others owe them), and write each task ID into the meeting note's `## Action items` (`bin/harold close` blocks until every item has one) → update contact warmth, status and pipeline stage → extract atomic facts to `harold/facts.md` → write the meeting note in `vault/meetings/` → draft a follow-up if needed.
-
-### /status — Dashboard Summary
-
-**Triggers:** "status", "what's happening", "where are we", "dashboard", "/status"
-
-1. Read `dashboard/status.md`, `harold/alerts.md` and `harold/blockers.md`
-2. Check for stale relationships with the CRM tool: `crm_stale` on the connector, `harold_cadence_check` on harold-mcp (the same rule)
-3. Check which projects have gone quiet: `bin/harold pulse` (`harold_pulse` on the connector, the same answer)
-4. Present a concise summary: project status, quiet projects with their next step, flags, stale relationships, upcoming deadlines
-
-### /intake — Contact Intake
-
-**Triggers:** a new name with business significance, "add [name] to CRM", "met [name]", "/intake"
-
-**Follow `playbook/core/contact-intake.md` exactly.** Check the CRM first (update or new?) → pick the one type → create the CRM record → create the vault profile → add labels where they apply → a pipeline entry only if the conversation established a purpose → a task if follow-up is needed.
-
-### /analyst — Intel Sweep
-
-**Triggers:** new intel from any source, "analyze this", "what does this mean for us", "/analyst"
-
-**Follow `playbook/core/analyst.md` exactly.** Cross-reference the insight against every active project in `harold/projects.md` (their people and competitors), upcoming events, blockers, key relationships and strategy, and update every file it touches.
+| Command | Triggers | Playbook |
+|---------|----------|----------|
+| /done | "done", "wrap", "wrap up", "end session", "that's it", "close out" | `playbook/core/session-close.md` |
+| /debrief | "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted call notes or a forwarded email with commitments in it | `playbook/core/meeting-debrief.md` (every commitment becomes a task automatically, and `bin/harold close` blocks until each action item carries one) |
+| /status | "status", "what's happening", "where are we", "dashboard" | `playbook/core/status.md` |
+| /intake | a new name with business significance, "add [name] to CRM", "met [name]" | `playbook/core/contact-intake.md` |
+| /analyst | new intel from any source, "analyze this", "what does this mean for us" | `playbook/core/analyst.md` |
 
 ---
 

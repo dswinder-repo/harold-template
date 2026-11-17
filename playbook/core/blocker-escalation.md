@@ -1,6 +1,6 @@
 # Playbook: Blocker Escalation
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Move blockers that aren't resolving: flag, escalate by age, and force a decision before they rot.
 **Trigger:** Boot lists a blocker in `harold/blockers.md` older than 7 days (trigger id `blocker-escalation:<ID>`); "escalate [blocker]"; the same blocker mentioned repeatedly without progress.
@@ -115,7 +115,7 @@ Does that work, or is there a firmer timeline for the original path?
 ### Waiting on your own team
 - Use the team's normal channel first (brief, standup, sync).
 - Past 7 days: name the downstream impact plainly ("this is holding up [downstream work]; can we prioritize it?").
-- Record the chase in the daily note. Whether to log it in the CRM follows the CRM filing protocol (types listed in the optional `HAROLD_NO_LOG_TYPES` are never logged).
+- Record the chase in the daily note. Whether to log it in the CRM follows `playbook/core/crm-filing.md`.
 
 ### Waiting on an external contact
 - Day 7: follow-up message.
@@ -178,5 +178,5 @@ One of:
 - [ ] `harold/blockers.md` Last Update column updated (or row moved to `## Resolved`)
 - [ ] Daily note updated
 - [ ] Task manager comment added
-- [ ] Touches filed in the CRM (or queued), except types listed in `HAROLD_NO_LOG_TYPES`
+- [ ] Touches filed in the CRM (or queued)
 - [ ] `bin/harold file trigger blocker-escalation:<ID> ran|skipped|deferred "<reason>"` recorded

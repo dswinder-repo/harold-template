@@ -982,9 +982,32 @@ def last_commit(folder):
     subject = (msg.strip().split('\n') or [''])[0].strip()
     return {'date': local_date(epoch), 'subject': subject if len(subject) <= 72 else subject[:71] + '…'}
 
+def heartbeat_rel(p):
+    """The project's own folder holds its heartbeats; a project without a usable folder falls back to harold/heartbeats/."""
+    import unicodedata
+    f = norm_folder(p.get('folder'))
+    if f: return f + '/heartbeats.jsonl'
+    slug = re.sub(r'[^a-z0-9]+', '-', ''.join(c for c in unicodedata.normalize('NFKD', p['name']) if not unicodedata.combining(c)).lower()).strip('-')[:60].rstrip('-') or 'note'
+    return f'harold/heartbeats/{slug}.jsonl'
+
+def latest_heartbeat(p, today_iso):
+    path = os.path.join(ROOT, heartbeat_rel(p))
+    if not os.path.exists(path): return None
+    best = None
+    for line in open(path, encoding='utf-8', errors='replace'):
+        try: o = json.loads(line)
+        except ValueError: continue
+        if not isinstance(o, dict) or not ISO_RE.match(str(o.get('date', ''))) or not isinstance(o.get('done'), str): continue
+        if o['date'] > today_iso: continue
+        if best is None or o['date'] >= best['date']: best = o
+    return best
+
 def pulse_activity(p, g, mentions, card, folder, today_iso, commit):
     """The newest dated activity of one project: a note (dates written in the note) or a commit. None when nothing."""
     nodes, out, inn = g['nodes'], g['out'], g['inn']
+    # A project that posts heartbeats (<folder>/heartbeats.jsonl, else harold/heartbeats/<project>.jsonl) is judged by them alone.
+    hb = latest_heartbeat(p, today_iso)
+    if hb: return {'kind': 'heartbeat', 'date': hb['date'], 'path': heartbeat_rel(p), 'title': (hb['done'].strip().split('\n')[0])[:72], 'via': 'heartbeat', 'label': 'heartbeat'}
     cands, seen = [], set()
     def add(path, via):
         n = nodes.get(path)

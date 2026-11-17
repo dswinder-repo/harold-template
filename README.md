@@ -38,7 +38,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
    ```bash
    HAROLD_TZ="America/Chicago"
    ```
-   That file is committed and holds only non-secret `HAROLD_*` settings (`HAROLD_TZ`, `HAROLD_BRIEF_TIME`, `HAROLD_NO_LOG_TYPES`, `HAROLD_STALE_DAYS`, `HAROLD_PULSE_DAYS`, and `HAROLD_CHECKS`, your own check scripts that `bin/harold check` and boot run), so every computer, cloud session and scheduled job gets them with nothing to set up. A value in the environment or in `~/.harold/env` (the per-machine file where credentials live) overrides it. Without a zone, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
+   That file is committed and holds only non-secret `HAROLD_*` settings (`HAROLD_TZ`, `HAROLD_BRIEF_TIME`, `HAROLD_STALE_DAYS`, `HAROLD_PULSE_DAYS`, and `HAROLD_CHECKS`, your own check scripts that `bin/harold check` and boot run), so every computer, cloud session and scheduled job gets them with nothing to set up. A value in the environment or in `~/.harold/env` (the per-machine file where credentials live) overrides it. Without a zone, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
    Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it. Until you do, it is inert: the example blocker and event carry no dates, so they never fall due, and your first boot starts the clock for scheduled work (it writes a `harold-start` line into the empty `harold/trigger-log.jsonl`, so the weekly scan, full audit and month-end review count from the next day, and nothing the starter's own dates imply is ever "overdue"). Your first session closes cleanly with the examples still in place.
 
 4. **Set up the CRM (Supabase).**
@@ -185,7 +185,7 @@ harold/                    operational state
   search.db                the search index and link graph (gitignored, rebuilt whenever a file changed)
   housekeeping.json        the switch for cloud housekeeping ("cloud": false until you turn it on)
   housekeeping-prompt.md   the prompt the scheduled housekeeping job runs
-  settings.env             your non-secret settings (HAROLD_TZ, HAROLD_NO_LOG_TYPES, ...), committed
+  settings.env             your non-secret settings (HAROLD_TZ, HAROLD_BRIEF_TIME, ...), committed
   update-manifest.txt      which files are Harold's machinery (what bin/harold update may change)
   upstream.json            where updates come from, and the starter commit last applied
 memory/                    CLAUDE.md (working memory), glossary.md
@@ -219,7 +219,7 @@ tests/
   brief-gate.test.js       tests for the brief schedule gate: node --test tests/brief-gate.test.js
   hooks.test.js            boot and close as Claude Code, Codex and Cursor hooks: node --test tests/hooks.test.js
   harnesses.test.js        the same for every other wired harness and the three plugins: node --test tests/harnesses.test.js
-  crm.test.js              one CRM schema (001 = schema.sql) and the optional HAROLD_NO_LOG_TYPES: node --test tests/crm.test.js
+  crm.test.js              one CRM schema (001 = schema.sql) and contact filing: node --test tests/crm.test.js
   housekeeping.test.js     the housekeeping gate across time zones, the job, and close inside it: node --test tests/housekeeping.test.js
   agent-action.test.js     each agent's credential choice (subscription first) and what it is given, with stub CLIs
   agent-auth.test.js       sign-in files kept fresh across runs, and a custom agent's secrets
@@ -236,7 +236,7 @@ Run them all with `node --test tests/*.test.js` (Node 22+ and Python 3.8+). `tes
 
 Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`; the web app adds its own tables around them.
 
-Every conversation with a contact is logged unless you choose otherwise: the optional setting `HAROLD_NO_LOG_TYPES` in `harold/settings.env` (empty by default) lists contact types whose conversations are never logged, for example your own team; a contact matches by its type or any of its labels. (The hosted connector reads it from its own environment variables.) "CRM Filing Protocol" in `AGENTS.md` describes exactly what it changes.
+Every conversation with a contact is logged, and every contact is filed the same way, whatever its type. The one exception is a person whose vault card says `crm: none`: they are deliberately kept out of the CRM, and only their vault profile is updated. `playbook/core/crm-filing.md` describes the full procedure.
 
 ## Finding things: search and the link graph
 
@@ -372,7 +372,7 @@ The job ends with `bin/harold housekeeping finish`, which checks that the job wa
 
 ## From any chat app: the hosted connector
 
-Sessions in a workspace harness are where Harold does its full work. The connector in `tools/harold-connector` is the standard way to reach the knowledge base and the CRM from any tool that supports remote MCP servers, and the way from somewhere without the workspace folder, such as a chat app on your phone or in a browser: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed ("CRM Filing Protocol" in `AGENTS.md`).
+Sessions in a workspace harness are where Harold does its full work. The connector in `tools/harold-connector` is the standard way to reach the knowledge base and the CRM from any tool that supports remote MCP servers, and the way from somewhere without the workspace folder, such as a chat app on your phone or in a browser: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed (`playbook/core/crm-filing.md`).
 
 ## Keeping Harold up to date
 

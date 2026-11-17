@@ -25,13 +25,13 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 | `harold_person` | read | A person's card in `vault/people/` (fuzzy name match) plus, when the CRM is configured, their CRM record. |
 | `crm_search_contacts` | read | Filters CRM contacts (type, warmth, stage, purpose, project, keyword, ...). |
 | `crm_get_contact` | read | One contact's full record: interactions, open tasks, stage history. |
-| `crm_stale` | read | Who has gone quiet: active or pending contacts whose last interaction is older than their cadence (the tightest stage cadence among their open pipeline entries, else warmth: Hot 7 days, Warm 14, Lukewarm 28; Cold or unset warmth is never flagged). The same rule as `harold_cadence_check` in `tools/harold-mcp`. Types in `HAROLD_NO_CADENCE_TYPES` and `HAROLD_NO_LOG_TYPES` are skipped, by the contact's type only. |
+| `crm_stale` | read | Who has gone quiet: active or pending contacts whose last interaction is older than their cadence (the tightest stage cadence among their open pipeline entries, else warmth: Hot 7 days, Warm 14, Lukewarm 28; Cold or unset warmth is never flagged). The same rule as `harold_cadence_check` in `tools/harold-mcp`. Types in `HAROLD_NO_CADENCE_TYPES` are skipped, by the contact's type only. |
 | `harold_capture` | write | "Remember this": a timestamped line in `vault/daily/<date>-chat.md`. |
 | `harold_note` | write | A new note in `vault/intel`, `vault/decisions`, `vault/meetings`, `vault/companies` or `vault/projects`. Never overwrites. |
 | `harold_update` | write | Appends to (optionally under a heading) and/or sets simple frontmatter fields of an existing `.md` under `vault/` or `harold/`. |
 | `harold_learning` | write | Appends a lesson to `harold/learnings.jsonl` with the next free id, in the same format as `bin/harold file learning` (`source: connector`). |
 | `harold_person_create` | write | Creates a person's card `vault/people/<Name>.md` in the person template shape - the third record of contact filing, next to the CRM contact and the interaction. Refuses when a card for the name exists (`harold_update` changes cards) and names similar cards. `warmth` stays unset unless you rated the person; `status` defaults to `pending`. Refuses secrets. |
-| `crm_log_interaction` | write | Logs a touchpoint with a contact and freshens their vault card. Refused for contact types in `HAROLD_NO_LOG_TYPES`. |
+| `crm_log_interaction` | write | Logs a touchpoint with a contact and freshens their vault card. Every contact is logged the same way, whatever its type. |
 | `crm_upsert_contact` | write | Creates or updates a contact. The type is free text from your own list (as in `dashboard/people.md`). Never places anyone in the pipeline. |
 | `crm_pipeline` | write | The one pipeline: add (a purpose is required), move, close, list. |
 | `crm_task` | write | Contact follow-up tasks: create, update, complete, cancel, list. |
@@ -107,7 +107,6 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `ALLOWED_REDIRECT_HOSTS` | no | unset (default: any tool) | Optional narrowing: exact https hosts and app schemes, e.g. `claude.ai,claude.com,cursor:`. Unset, empty or `*`: any. Loopback is always accepted. |
 | `REVOKED_TOKEN_IDS` | no | `k3J9...,Xq2...` | Ids of revoked personal access tokens, comma-separated. |
 | `HAROLD_TZ` | no | `America/Chicago` | Your IANA time zone. Unset: dates are UTC. An invalid name also falls back to UTC, and `harold_today` says so. |
-| `HAROLD_NO_LOG_TYPES` | no | `team` | Contact types whose conversations are never logged as interactions. Empty by default. Same setting as in `~/.harold/env`. |
 | `HAROLD_NO_CADENCE_TYPES` | no | `other` | Contact types `crm_stale` never checks. Default `other`; set it empty to check every type. Same setting as in `~/.harold/env`. |
 | `HAROLD_HUB_DEGREE` | no | `40` (default) | `harold_related`: a note with more links than this is a hub and no longer makes its neighbours related. Same setting as in `~/.harold/env`. |
 | `HAROLD_PULSE_DAYS` | no | `14` (default) | `harold_pulse`: days without activity after which an active project is quiet. Unset, it uses the value the workspace wrote into `harold/graph.json` (its `HAROLD_PULSE_DAYS`), else 14. |
@@ -228,7 +227,6 @@ The sealed token is encrypted with `TOKEN_KEY` and useless without it; rotating 
 - **No deletes**, by design. Remove things in a workspace session.
 - **The Google calendar token lives in the environment.** The connector has no database: if the Google grant is revoked or rotated, re-run `/google/authorize` and update `GOOGLE_REFRESH_TOKEN`. A durable token store is a possible follow-up, deliberately not built in - it would make the CRM database a hard dependency of calendar reads.
 - **Stateless sign-in.** An authorization code is refused on reuse only within the same server instance (PKCE still binds it to the client that started the flow); refresh tokens stay valid until they expire. To end every session at once, change `TOKEN_KEY` or revoke the OAuth App's grant on GitHub. Personal access tokens cannot be listed, only revoked by id or all together.
-- **Optional `HAROLD_NO_LOG_TYPES`.** When set, `crm_log_interaction` refuses contacts whose CRM type, or whose vault card's `type` (or older `category`), is listed. Records can still be created and updated; those cards are not freshened by CRM writes.
 
 ## Tests
 

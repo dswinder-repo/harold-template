@@ -16,7 +16,6 @@ export function setTestEnv(extra: Record<string, string> = {}) {
     HAROLD_REPO: REPO,
     HAROLD_BRANCH: "main",
     HAROLD_TZ: "",
-    HAROLD_NO_LOG_TYPES: "",
     HAROLD_COMMIT_EMAIL: "",
     PUBLIC_BASE_URL: "https://harold-connector.example.com",
     SUPABASE_URL: "",
