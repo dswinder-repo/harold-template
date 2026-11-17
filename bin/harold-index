@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-harold-index — SQLite FTS5 search and a link graph over Harold's markdown. Replaces the Obsidian
-Local REST API (localhost-only, tied to one desktop app on one computer). No app, no server, no machine
-dependency: one file, harold/search.db, gitignored and rebuilt from the markdown in seconds.
+harold-index — SQLite FTS5 search and a link graph over Harold's markdown. It needs no app, no server
+and no particular computer: everything lives in one file, harold/search.db, which is gitignored and
+rebuilt from the markdown in seconds.
 
   harold-index build [--full]          rebuild harold/search.db (reuses rows for unchanged files).
                                        --full reads every file.
@@ -15,7 +15,10 @@ dependency: one file, harold/search.db, gitignored and rebuilt from the markdown
   harold-index backlinks <note> [--json]   every note that links to <note>
   harold-index graph-json              write harold/graph.json (compact graph, no bodies) if it changed
   harold-index pulse [--json] [--all] [--boot]
-                                       each active project's last activity and next step; quiet ones first
+                                       each active project's last activity and next step; quiet ones first.
+                                       A project that posts heartbeats (<folder>/heartbeats.jsonl, else
+                                       harold/heartbeats/<project>.jsonl) is judged by them alone; nothing
+                                       in the starter writes heartbeats yet.
   harold-index stat                    what is indexed
 
 Indexed unit: one row per markdown section (split at headings), with path, title (file H1 or
@@ -38,7 +41,7 @@ Link graph (same database, same incremental pass):
 a target with a slash ([[projects/example-project]]) resolves by path suffix. Resolution runs over every link on
 every build, so a new note fixes old broken links in files that did not change.
 
-Settings (environment; bin/harold passes them through from ~/.harold/env): HAROLD_STALE_DAYS (default 30)
+Settings (environment; bin/harold passes them through from ~/.harold/env and harold/settings.env): HAROLD_STALE_DAYS (default 30)
 is when a maintained note counts as stale; HAROLD_HUB_DEGREE (default 40) is the link count above which a
 note is a hub and no longer makes its neighbours related; HAROLD_PULSE_DAYS (default 14) is when an active
 project with no activity counts as quiet; HAROLD_TODAY or HAROLD_TZ set "today".
