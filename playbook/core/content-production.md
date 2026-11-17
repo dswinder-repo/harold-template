@@ -72,14 +72,14 @@ What is the insight? Write it in one sentence. If you cannot, the piece is not r
 ### Step 2: Check Voice Calibration
 Read `vault/intel/voice-calibration.md`.
 
-**If it does not exist yet:** create it the first time this playbook runs. Ask the operator for 3 to 5 pieces they have written and liked, extract the patterns, and write them as short rules. Starter rules to replace with your own:
+**If it does not exist yet:** create it the first time this playbook runs. Ask the operator for 3 to 5 pieces they have written and liked, extract the patterns, and write them as short rules. Give the file frontmatter with `project: global` (the voice applies to everything the operator writes), because `bin/harold close` refuses a new note in `vault/intel/` that does not name its project. Starter rules to replace with your own:
 - [VOICE RULE 1, e.g. "Specific beats general"]
 - [VOICE RULE 2, e.g. "Stories beat opinions"]
 - [VOICE RULE 3, e.g. "Contrarian but constructive"]
 - [VOICE RULE 4, e.g. "Show your work"]
 
 ### Step 3: Draft
-Write fast, edit slow. Get the ideas down first. Save the draft in the content folder resolved with `bin/harold where content`. If no content folder is registered in `harold/projects.md`, save it under `vault/intel/drafts/` and suggest registering a content project.
+Write fast, edit slow. Get the ideas down first. Save the draft in the content folder resolved with `bin/harold where content`. If no content folder is registered in `harold/projects.md`, save it under `vault/intel/drafts/` with frontmatter naming its project (`project:` followed by the project the piece is for, as `harold/projects.md` names it, or `project: global`), and suggest registering a content project. `bin/harold close` refuses a new note in `vault/intel/` without that field.
 
 **For threads:**
 1. Hook post (most important: it must stop the scroll)
@@ -216,7 +216,7 @@ Every piece should map to at least one pillar. If it maps to none, ask whether i
 - [ ] Session file set to `writing` at start and `sleeping` at end
 - [ ] Hook written in one sentence
 - [ ] Voice checked against `vault/intel/voice-calibration.md` (created if it was missing)
-- [ ] Draft saved to the content folder (`bin/harold where content`) or `vault/intel/drafts/`
+- [ ] Draft saved to the content folder (`bin/harold where content`) or `vault/intel/drafts/`, with `project:` frontmatter in anything written under `vault/intel/`
 - [ ] Facts verified; external claims passed through `document-qc.md`
 - [ ] Operator approved before anything was published
 - [ ] Content calendar or daily note updated
