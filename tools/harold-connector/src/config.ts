@@ -78,20 +78,6 @@ export function tzInfo(): TzInfo {
 
 export const tz = (): string => tzInfo().tz;
 
-// ───────────── contact types never logged ─────────────
-// Optional, empty by default: HAROLD_NO_LOG_TYPES lists contact types (comma-separated, matched
-// case-insensitively) whose conversations are never logged as CRM interactions. Their records may still
-// be created and updated. Same setting and meaning as bin/harold and tools/harold-mcp.
-
-export function noLogTypes(): string[] {
-  return [...new Set((process.env.HAROLD_NO_LOG_TYPES || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean))];
-}
-
-export const isNoLogType = (type: unknown): boolean => {
-  const t = String(type ?? "").trim().toLowerCase();
-  return !!t && noLogTypes().includes(t);
-};
-
 // ───────────── commits ─────────────
 
 export const DEFAULT_COMMIT_EMAIL = "harold-connector@users.noreply.github.com";

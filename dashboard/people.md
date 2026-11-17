@@ -15,7 +15,7 @@
 
 ## Your Contact Types
 
-*Each contact in the CRM has exactly one type, from this list. Keep it short: if you are unsure which type someone is, you have too many. If there are types whose conversations you never want logged (some people choose this for their own team), list them in `HAROLD_NO_LOG_TYPES` (see "CRM Filing Protocol" in `AGENTS.md`).*
+*Each contact in the CRM has exactly one type, from this list. Keep it short: if you are unsure which type someone is, you have too many.*
 
 | Type | Who it covers |
 |------|---------------|

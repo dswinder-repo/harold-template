@@ -70,6 +70,7 @@ Watch every message for a body of work that will produce files and needs a home:
 
 ## Step 3 — The cascade
 
+0. **A new project that needs code gets its own repository** (and its own hosting project, if it needs hosting): never a branch or folder inside another project's repo or hosting project. A session that cannot create repositories asks the operator to create the empty repo, then attaches it.
 1. **Create the folder** at the resolved path. If the parent uses numbered subfolders (e.g. `00_strategy`, `01_research`, `02_deliverables`), mirror only the ones needed now; don't scaffold empties. Add a `README.md` with: purpose (one paragraph), a status line with today's date, and any isolation rule (e.g. "this workstream never touches the task manager or the CRM").
 
 2. **Add the map entry** to `harold/projects.md`, exactly this shape:

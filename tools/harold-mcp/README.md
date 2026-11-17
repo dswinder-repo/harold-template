@@ -26,11 +26,10 @@ The MCP server that connects Harold to your CRM and keeps the `harold/` markdown
 1. Create a Supabase project in your own account. In its SQL editor, run `schema.sql` (this folder). It creates exactly the seven tables this server uses, with row-level security on.
 2. `bin/harold-setup-crm` — stores `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `~/.harold/env` (outside the repo) and tests the connection.
 3. `cd tools/harold-mcp && npm install` (node_modules is gitignored).
-4. Copy `.mcp.example.json` at the workspace root to `.mcp.json` (gitignored) and set the absolute path to `bin/harold-mcp`, which loads `~/.harold/env` and starts `server.js`. Restart your Claude session.
+4. Copy `.mcp.example.json` at the workspace root to `.mcp.json` (gitignored) and set the absolute path to `bin/harold-mcp`, which loads `~/.harold/env` and starts `server.js`. Restart your agent session.
 
 Without the two Supabase variables the server still starts: it prints a loud warning, the markdown tools work, and every CRM tool returns an error saying exactly what is missing. Queue CRM work meanwhile with `bin/harold file crm '<json>'`.
 
-Optional settings, in `~/.harold/env`:
+Optional setting, in `~/.harold/env` or `harold/settings.env`:
 
-- `HAROLD_NO_LOG_TYPES` (empty by default): contact types whose conversations are never logged. `harold_log_interaction` refuses them; their records can still be updated. See "CRM Filing Protocol" in `AGENTS.md`.
-- `HAROLD_NO_CADENCE_TYPES` (default `other`): contact types that never get staleness alerts. Types in `HAROLD_NO_LOG_TYPES` are skipped too. Both match the contact's one type, never its labels.
+- `HAROLD_NO_CADENCE_TYPES` (default `other`): contact types that never get staleness alerts. It matches the contact's one type, never its labels.

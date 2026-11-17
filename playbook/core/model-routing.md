@@ -13,9 +13,9 @@ Tier names are generic on purpose. Map them to whatever your provider currently 
 
 | Tier | Example | Best for | Cost |
 |------|---------|----------|------|
-| **Fast** | fast tier (e.g. Haiku) | Lookups, status checks, simple reads, rote updates | Lowest |
-| **Mid** | mid tier (e.g. Sonnet) | Playbook execution, drafting, task-manager management, structured tasks | Medium |
-| **Top** | top tier (e.g. Opus) | Strategy, synthesis, complex analysis, meeting prep, research, morning briefs | Highest |
+| **Fast** | your provider's fastest, least expensive model | Lookups, status checks, simple reads, rote updates | Lowest |
+| **Mid** | your provider's mid-range model | Playbook execution, drafting, task-manager management, structured tasks | Medium |
+| **Top** | your provider's most capable model | Strategy, synthesis, complex analysis, meeting prep, research, morning briefs | Highest |
 
 ---
 
@@ -99,7 +99,7 @@ Do it directly in the current session, even if the current session is top tier a
 # Token-heavy structured task: delegate to save cost
 Agent(
   subagent_type="general-purpose",
-  model="<mid tier, e.g. sonnet>",
+  model="<your mid-tier model>",
   prompt="[Full context: the email to draft, the playbook instructions, contact details, template]"
 )
 ```

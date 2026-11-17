@@ -2,8 +2,8 @@
 // tools/harold-mcp/server.js), so a chat and a terminal session flag the same people:
 //   - only contacts whose status is active or pending;
 //   - only contacts with a relationship: warmth Lukewarm, Warm or Hot (Cold or unset get no nudge);
-//   - never the types the caller passes in `skipTypes` (HAROLD_NO_CADENCE_TYPES, default "other", plus
-//     HAROLD_NO_LOG_TYPES), matched against the contact's ONE type only, never its labels;
+//   - never the types the caller passes in `skipTypes` (HAROLD_NO_CADENCE_TYPES, default "other"),
+//     matched against the contact's ONE type only, never its labels;
 //   - the threshold is the tightest stage cadence (pipeline_stages.default_cadence) among the contact's
 //     OPEN pipeline entries (closed_at is null); otherwise warmth: Hot hot_days (7), Warm stale_days (14),
 //     Lukewarm twice stale_days (28);
@@ -19,9 +19,9 @@ const PAGE = 1000;
 
 export const typeList = (v: string | undefined) => [...new Set((v || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean))];
 
-/** HAROLD_NO_CADENCE_TYPES (default "other"; set it empty to track every type) plus the given no-log types. */
-export function cadenceSkipTypes(noLog: string[]): string[] {
-  return [...new Set([...typeList(process.env.HAROLD_NO_CADENCE_TYPES ?? "other"), ...noLog.map(t => t.trim().toLowerCase()).filter(Boolean)])];
+/** HAROLD_NO_CADENCE_TYPES (default "other"; set it empty to track every type). */
+export function cadenceSkipTypes(): string[] {
+  return typeList(process.env.HAROLD_NO_CADENCE_TYPES ?? "other");
 }
 
 export interface StaleOpts { staleDays?: number; hotDays?: number; skipTypes: string[]; type?: string; now?: Date; limit?: number }

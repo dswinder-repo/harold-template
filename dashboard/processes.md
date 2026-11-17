@@ -1,6 +1,6 @@
 # Dashboard: Processes & Operating Rules
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 *How Harold operates. Loaded every session. The Context Engine below is always on: playbooks fire on what you say, by meaning, never on exact commands.*
 
@@ -44,7 +44,9 @@
 | "which model should do this?" | `playbook/core/model-routing.md` |
 | "ship it", "push this", "deploy" | `playbook/core/ship-to-github.md`, `playbook/core/preview-deploys.md` |
 | "show me the dashboard", "open HQ" | `playbook/core/expedition-hq.md` |
-| "done", "wrap up", "that's it for today" | Session close (`AGENTS.md` → /done): summary, CRM sweep, daily note, `bin/harold close --final` |
+| "done", "wrap up", "that's it for today" | Session close (`playbook/core/session-close.md`): summary, CRM sweep, daily note, `bin/harold close --final` |
+| "status", "what's happening", "where are we" | `playbook/core/status.md` |
+| any conversation with a contact, a corrected contact detail | `playbook/core/crm-filing.md` (all three places) |
 
 *Add a row whenever you add a playbook, and a row to `playbook/README.md`. Engagement playbooks (`playbook/engagements/<name>/`) fire only while that engagement's project is `status: active` in `harold/projects.md`.*
 

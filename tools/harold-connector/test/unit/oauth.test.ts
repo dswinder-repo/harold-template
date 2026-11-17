@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { isAllowedUser, checkTokenIdentityOnce, _resetIdentityCache } from "../../src/identity.js";
 import { redirectAllowed, register, _resetOauthCaches } from "../../src/oauth.js";
-import { config, isNoLogType, noLogTypes, repoConfig } from "../../src/config.js";
+import { config, repoConfig } from "../../src/config.js";
 import { FakeGithub } from "./fakes.js";
 import { OWNER, STRANGER, setTestEnv } from "./env.js";
 
@@ -89,13 +89,5 @@ describe("configuration", () => {
     expect(() => config()).toThrow(/ALLOWED_GITHUB_LOGIN/);
     setTestEnv({ ALLOWED_GITHUB_ID: "abc" });
     expect(() => config()).toThrow(/numeric/);
-  });
-  it("HAROLD_NO_LOG_TYPES is empty by default and parsed case-insensitively", () => {
-    expect(noLogTypes()).toEqual([]);
-    expect(isNoLogType("team")).toBe(false);
-    setTestEnv({ HAROLD_NO_LOG_TYPES: "Team, family ,," });
-    expect(noLogTypes()).toEqual(["team", "family"]);
-    expect(isNoLogType("TEAM")).toBe(true);
-    expect(isNoLogType("")).toBe(false);
   });
 });

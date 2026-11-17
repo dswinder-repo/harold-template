@@ -1,14 +1,13 @@
 // The CRM (Supabase), ported from tools/harold-mcp/server.js against the starter schema
 // (tools/harold-mcp/schema.sql): same tables, same contact matching, same pipeline rules (one
-// pipeline, every entry bound to a stated purpose, nobody placed automatically), and the same
-// optional HAROLD_NO_LOG_TYPES setting: an interaction is never logged for a contact whose type
-// (contacts.category) is listed there. Empty by default, so nothing is refused unless the owner opts in.
+// pipeline, every entry bound to a stated purpose, nobody placed automatically). Every contact is
+// filed the same way, whatever its type.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { isNoLogType, tz } from "./config.js";
+import { tz } from "./config.js";
 
 export type Sb = SupabaseClient;
-export interface CrmResult { text: string; isError?: boolean; person?: { name: string; noLog: boolean } }
+export interface CrmResult { text: string; isError?: boolean; person?: { name: string } }
 
 let _sb: Sb | null = null;
 export function supabaseFromEnv(): Sb | null {
@@ -58,17 +57,11 @@ export async function resolveContact(sb: Sb, contactName: string, org?: string):
   return { id: matches[0].id, name: matches[0].name };
 }
 
-/** The contact's name and type, and whether HAROLD_NO_LOG_TYPES lists that type. */
-export async function noLogContact(sb: Sb, contactId: string): Promise<{ noLog: boolean; name: string; type: string }> {
-  const { data: c } = await sb.from("contacts").select("id, name, category").eq("id", contactId).maybeSingle();
-  const row = c as { name?: string; category?: string } | null;
-  if (!row) return { noLog: false, name: "", type: "" };
-  const type = String(row.category || "").trim().toLowerCase();
-  return { noLog: isNoLogType(type), name: row.name || "", type };
+/** The contact's name as the CRM holds it, or "" when there is no such contact. */
+async function contactName(sb: Sb, contactId: string): Promise<string> {
+  const { data: c } = await sb.from("contacts").select("id, name").eq("id", contactId).maybeSingle();
+  return (c as { name?: string } | null)?.name || "";
 }
-
-export const NO_LOG_MESSAGE = (name: string, type: string) =>
-  `Not logged: ${name || "this contact"} is type "${type}", and HAROLD_NO_LOG_TYPES says conversations with that type are never logged. Keep their record current with crm_upsert_contact instead; if something from the conversation matters, capture it with harold_capture.`;
 
 // ───────────── log interaction ─────────────
 
@@ -82,15 +75,14 @@ export async function logInteraction(sb: Sb, a: LogInteractionArgs): Promise<Crm
     if ("error" in r) return r.error;
     id = r.id; name = r.name;
   }
-  const gate = await noLogContact(sb, id);
-  if (gate.noLog) return { text: NO_LOG_MESSAGE(gate.name || name, gate.type), isError: true, person: { name: gate.name || name, noLog: true } };
-  if (gate.name) name = gate.name;
+  const canonical = await contactName(sb, id);
+  if (canonical) name = canonical;
   const { data, error } = await sb.from("interactions").insert({
     contact_id: id, type: a.type, subject: a.subject || "", body: a.body || "", occurred_at: a.occurred_at || new Date().toISOString(),
   }).select("id, occurred_at").single();
   if (error) return err(`Error logging interaction: ${error.message}`);
   const row = data as { id: string; occurred_at: string };
-  return { text: `Logged ${a.type} for ${name}: "${a.subject}"\n   Contact: ${id}\n   Interaction: ${row.id}\n   Time: ${row.occurred_at}`, person: { name, noLog: false } };
+  return { text: `Logged ${a.type} for ${name}: "${a.subject}"\n   Contact: ${id}\n   Interaction: ${row.id}\n   Time: ${row.occurred_at}`, person: { name } };
 }
 
 // ───────────── upsert contact ─────────────
@@ -147,7 +139,7 @@ export async function upsertContact(sb: Sb, a: UpsertArgs): Promise<CrmResult> {
     .map(cp => `\n   Pipeline: ${cp.stage}${cp.purpose ? ` — ${cp.purpose}` : ""}${cp.project ? ` [${cp.project}]` : ""}`).join("");
   return {
     text: `${isUpdate ? "Updated" : "Created"} contact: ${contact.name} (${contact.org || "no org"}) [type: ${contact.category}${labels.length ? `; labels: ${labels.join(", ")}` : ""}]${contact.warmth ? ` | ${contact.warmth}` : ""}\n   ID: ${contact.id}\n   Status: ${contact.status}${pipeStr}`,
-    person: { name: contact.name, noLog: isNoLogType(contact.category) },
+    person: { name: contact.name },
   };
 }
 
@@ -249,7 +241,7 @@ export async function getContact(sb: Sb, a: GetArgs): Promise<CrmResult> {
   const { data: sc } = await sb.from("stage_changes").select("from_stage, to_stage, notes, changed_at").eq("contact_id", id).order("changed_at", { ascending: false }).limit(10);
   const srows = (sc || []) as Record<string, string>[];
   if (srows.length) { L.push("\n## Stage History"); srows.forEach(s => L.push(`- **${day(s.changed_at)}**: ${s.from_stage || "—"} → ${s.to_stage}${s.notes ? ` — ${s.notes}` : ""}`)); }
-  return { text: L.join("\n"), person: { name: c.name, noLog: isNoLogType(c.category) } };
+  return { text: L.join("\n"), person: { name: c.name } };
 }
 
 // ───────────── pipeline ─────────────
@@ -293,7 +285,7 @@ export async function pipeline(sb: Sb, a: PipelineArgs): Promise<CrmResult> {
     if (error) return err(`Error: ${error.message}`);
     const e = data as { id: string; stage: string; purpose: string; project?: string };
     await sb.from("stage_changes").insert({ contact_id: contact.id, entry_id: e.id, from_stage: null, to_stage: e.stage, notes: a.notes || "" });
-    return { text: `${contact.name} is in the pipeline at **${e.stage}** — ${e.purpose}${e.project ? ` [${e.project}]` : ""}`, person: { name: contact.name, noLog: false } };
+    return { text: `${contact.name} is in the pipeline at **${e.stage}** — ${e.purpose}${e.project ? ` [${e.project}]` : ""}`, person: { name: contact.name } };
   }
   type Entry = { id: string; stage: string; purpose?: string; project?: string; contact_id: string };
   let entry: Entry | null = null;
@@ -317,12 +309,12 @@ export async function pipeline(sb: Sb, a: PipelineArgs): Promise<CrmResult> {
     const { error } = await sb.from("contact_pipelines").update({ stage: a.stage, entered_at: new Date().toISOString() }).eq("id", entry.id);
     if (error) return err(`Error: ${error.message}`);
     await sb.from("stage_changes").insert({ contact_id: entry.contact_id, entry_id: entry.id, from_stage: from, to_stage: a.stage, notes: a.notes || "" });
-    return { text: `${who}: **${from} → ${a.stage}** (${entry.purpose})${a.notes ? `\n   ${a.notes}` : ""}`, person: contact ? { name: contact.name, noLog: false } : undefined };
+    return { text: `${who}: **${from} → ${a.stage}** (${entry.purpose})${a.notes ? `\n   ${a.notes}` : ""}`, person: contact ? { name: contact.name } : undefined };
   }
   if (a.action === "close") {
     const { error } = await sb.from("contact_pipelines").update({ closed_at: new Date().toISOString(), outcome: a.outcome || "", stage: a.stage || entry.stage }).eq("id", entry.id);
     if (error) return err(`Error: ${error.message}`);
-    return { text: `Closed: ${entry.purpose}${a.outcome ? ` — ${a.outcome}` : ""}. The record stays; it is out of the open pipeline.`, person: contact ? { name: contact.name, noLog: false } : undefined };
+    return { text: `Closed: ${entry.purpose}${a.outcome ? ` — ${a.outcome}` : ""}. The record stays; it is out of the open pipeline.`, person: contact ? { name: contact.name } : undefined };
   }
   return err(`Unknown action: ${a.action}`);
 }
@@ -385,7 +377,7 @@ export async function crmTask(sb: Sb, a: TaskArgs): Promise<CrmResult> {
     const { data, error } = await sb.from("tasks").insert(rec).select("id, title, status, priority, due_date, contact_id").single();
     if (error) return err(`CRM task error: ${error.message}`);
     const d = data as Record<string, string>;
-    return { text: `Created CRM task: "${d.title}"${cname ? ` → ${cname}` : d.contact_id ? ` → ${d.contact_id}` : ""}\n   Priority: ${d.priority} | Due: ${dueDay(d.due_date)}\n   ID: ${d.id}`, person: cname ? { name: cname, noLog: false } : undefined };
+    return { text: `Created CRM task: "${d.title}"${cname ? ` → ${cname}` : d.contact_id ? ` → ${d.contact_id}` : ""}\n   Priority: ${d.priority} | Due: ${dueDay(d.due_date)}\n   ID: ${d.id}`, person: cname ? { name: cname } : undefined };
   }
   return err(`Unknown action: ${a.action}`);
 }

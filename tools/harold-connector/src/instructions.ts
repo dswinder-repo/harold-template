@@ -1,13 +1,7 @@
 // What the chat app's model is told when the connector is on. Generic: it describes the owner's Harold,
-// whoever the owner is. The HAROLD_NO_LOG_TYPES line appears only when that optional setting is used.
-
-import { noLogTypes } from "./config.js";
+// whoever the owner is.
 
 export function instructions(): string {
-  const noLog = noLogTypes();
-  const noLogLine = noLog.length
-    ? `\n  - The owner has chosen never to log conversations with contacts of type ${noLog.map(t => `"${t}"`).join(", ")} (HAROLD_NO_LOG_TYPES). crm_log_interaction refuses them; keep their record current with crm_upsert_contact and capture anything that matters with harold_capture.`
-    : "";
   return `Harold is the owner's personal operating system: a private knowledge base (people, companies, projects, decisions, meetings, intel, daily notes, lessons learned) kept in a private GitHub repository, plus, when configured, a CRM of contacts, interactions, a pipeline and follow-up tasks, and the owner's task manager. These tools let you read and file into the owner's Harold from any chat.
 
 How to use it:
@@ -22,7 +16,7 @@ How to use it:
   - harold_update adds to an existing note or changes simple fields such as warmth or last_updated.
   - A correction of a fact (a misspelled name, a wrong title, a date, a detail about a person, company or project) is fixed in its record with harold_update or crm_upsert_contact. It is not a lesson.
   - harold_learning records a lesson only when the owner says Harold did something the wrong way and names the right way, about how Harold works, applying beyond this case.
-  - CRM tools: crm_log_interaction for a call, meeting or email with a contact, crm_upsert_contact for a new person or changed details, crm_pipeline only when there is a stated purpose, crm_task for a follow-up.${noLogLine}
+  - CRM tools: crm_log_interaction for a call, meeting or email with a contact, crm_upsert_contact for a new person or changed details, crm_pipeline only when there is a stated purpose, crm_task for a follow-up.
 - Turn commitments into tasks without being asked. Harold does not read the owner's email; it acts on what the owner pastes or forwards. When the owner shares meeting notes, a transcript, a forwarded email or any text with commitments in it (something the owner said they would do, or something someone owes the owner), in the same turn:
   1. call task_list to see what is already open, so nothing is created twice;
   2. call task_create once per new commitment: the owner's own to-dos as plain actions, things owed to the owner as "Follow up: <who> owes <what>", each with a due date when one is stated or clearly implied, and the project from harold_where;

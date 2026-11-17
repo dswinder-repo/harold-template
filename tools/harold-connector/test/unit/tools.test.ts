@@ -1,5 +1,5 @@
 // The MCP tool surface through the real HTTP app, with the MCP SDK v2 client (2026-07-28 protocol):
-// annotations, the optional HAROLD_NO_LOG_TYPES gate on both the CRM and the vault side, CRM + vault
+// annotations, CRM + vault
 // filing together, and configuration errors. Fictional data only.
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -68,7 +68,6 @@ describe("tool surface (SDK v2 client)", () => {
     const ins = client.getInstructions() || "";
     expect(ins).toMatch(/call harold_today first/);
     expect(ins).toMatch(/the owner's Harold/);
-    expect(ins).not.toMatch(/HAROLD_NO_LOG_TYPES/); // empty by default: no refusal line
     expect(client.getServerVersion()?.name).toBe("harold");
   });
 
@@ -93,7 +92,7 @@ describe("tool surface (SDK v2 client)", () => {
     expect(text(none)).toMatch(/harold\/graph.json is not in/);
   });
 
-  it("crm_stale lists who has gone quiet, skips HAROLD_NO_LOG_TYPES by type, and writes nothing", async () => {
+  it("crm_stale lists who has gone quiet, skips HAROLD_NO_CADENCE_TYPES by type, and writes nothing", async () => {
     db.tables.pipeline_stages.push({ stage_name: "Reached Out", default_cadence: "weekly" });
     db.tables.contacts.push(
       { id: "c-quiet", name: "Quiet Investor", org: "Fund", category: "investor", warmth: "Hot", status: "active" },
@@ -103,33 +102,19 @@ describe("tool surface (SDK v2 client)", () => {
     const r = await client.callTool({ name: "crm_stale", arguments: {} });
     expect(r.isError, text(r)).toBeFalsy();
     expect(text(r)).toMatch(/\*\*Quiet Investor\*\* \(Fund\) \[Hot\]: last \d+d ago \(2026-01-01, call: intro\); cadence 7d \(Hot\)/);
-    expect(text(r)).toMatch(/\*\*Team Mate\*\*/);                 // no-log is off by default
+    expect(text(r)).toMatch(/\*\*Team Mate\*\*/);                 // every type but "other" is checked by default
     expect(text(r)).toMatch(/Types never checked: other\./);
-    await connect({ HAROLD_NO_LOG_TYPES: "team" });
+    await connect({ HAROLD_NO_CADENCE_TYPES: "other, team" });
     const r2 = await client.callTool({ name: "crm_stale", arguments: {} });
     expect(text(r2)).not.toMatch(/Team Mate/);
     expect(text(r2)).toMatch(/Types never checked: other, team\./);
     expect(db.inserts.length + db.updates.length).toBe(0);
   });
 
-  it("instructions mention the no-log types only when the setting is used", async () => {
-    await connect({ HAROLD_NO_LOG_TYPES: "team" });
-    expect(client.getInstructions()).toMatch(/type "team" \(HAROLD_NO_LOG_TYPES\)/);
-  });
-
-  it("HAROLD_NO_LOG_TYPES empty: an interaction with a team-typed person is logged", async () => {
+  it("an interaction with a team-typed person is logged like any other", async () => {
     const r = await client.callTool({ name: "crm_log_interaction", arguments: { contact_name: "Riley", type: "call", subject: "sync" } });
     expect(r.isError, text(r)).toBeFalsy();
     expect(db.tables.interactions).toHaveLength(1);
-  });
-
-  it("HAROLD_NO_LOG_TYPES=team: the vault card's type blocks the log even when the CRM record is typed otherwise", async () => {
-    await connect({ HAROLD_NO_LOG_TYPES: "team" });
-    const r = await client.callTool({ name: "crm_log_interaction", arguments: { contact_name: "Riley", type: "call", subject: "sync" } });
-    expect(r.isError).toBe(true);
-    expect(text(r)).toMatch(/HAROLD_NO_LOG_TYPES/);
-    expect(db.tables.interactions.length).toBe(0);
-    expect(gh.puts.length).toBe(0);
   });
 
   it("an interaction is logged in the CRM and the vault card's last_updated is freshened", async () => {

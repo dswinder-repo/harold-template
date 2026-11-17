@@ -1,6 +1,6 @@
 # Playbook: Contact Intake
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** File a new or changed contact into the CRM, vault and tasks, with a duplicate check first.
 **Trigger:** Runs passively whenever a name with business significance appears; also "add [name] to the CRM", "met [name]", "new contact", "/intake".
@@ -92,8 +92,6 @@ High **only** if (a) it is explicitly marked high in a source you trust, or (b) 
 ## Step 3 — Check for exceptions (before any CRM action)
 
 If the frontmatter says **`crm: none`**, the person is deliberately out of the CRM: vault profile only, no CRM calls.
-
-If the optional `HAROLD_NO_LOG_TYPES` setting lists the contact's type (see "CRM Filing Protocol" in `AGENTS.md`; off by default, and some people use it for their own team), keep the **record** current with `crm_upsert_contact` / `harold_upsert_contact` but never log an interaction with them.
 
 ---
 
@@ -205,7 +203,7 @@ Duplicate check finds her → `crm_upsert_contact` / `harold_upsert_contact` (co
 - [ ] Duplicate check run (CRM, `bin/harold search`, task manager) before creating anything
 - [ ] Exactly one type from your list; labels separate and not duplicating the type
 - [ ] Warmth set only if assessed (else unset); status and priority by the rules above
-- [ ] `crm: none` and `HAROLD_NO_LOG_TYPES` (if set) respected
+- [ ] `crm: none` respected
 - [ ] `crm_upsert_contact` / `harold_upsert_contact` done (or queued with `bin/harold file crm`)
 - [ ] `vault/people/<Name>.md` created/updated with full frontmatter and `last_updated`
 - [ ] `harold/facts.md` updated

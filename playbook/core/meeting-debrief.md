@@ -1,6 +1,6 @@
 # Playbook: Meeting Debrief
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Capture a meeting's outcomes and file them into the CRM, vault, tasks and facts so nothing is lost.
 **Trigger:** "just finished [meeting]", "debrief [name]", "had a call with", "meeting notes", "here's the transcript", pasted notes or a transcript, a forwarded email, or any mention of a completed meeting with a contact.
@@ -49,7 +49,6 @@ Harold:   "Got it. Looks like she's interested but wants two customer case studi
 For each attendee, open their `vault/people/<Name>.md` profile.
 - **`crm: none`** → deliberately out of the CRM. Skip steps 3 and 5 for them; the vault profile is still updated.
 - **No profile** → run `playbook/core/contact-intake.md` for them first (it does the duplicate check).
-- **Type listed in `HAROLD_NO_LOG_TYPES`** (an optional setting, off by default; see "CRM Filing Protocol" in `AGENTS.md`) → skip step 3 for them; keep their record and profile current in step 5. Action items and facts still get filed.
 
 ### 1. Process input
 - **Notes / transcript:** extract attendees, topics, decisions, action items, and asks from both sides.
@@ -186,7 +185,7 @@ Best,
 
 ## Completion checklist
 
-- [ ] Gate checked for every attendee (`crm: none` and `HAROLD_NO_LOG_TYPES`, if set, respected)
+- [ ] Gate checked for every attendee (`crm: none` respected)
 - [ ] `crm_log_interaction` / `harold_log_interaction` called (or queued) for each contact
 - [ ] A task for every commitment, created without asking (open tasks checked first); `crm_task` / `harold_crm_task` for contact-specific follow-ups; every `## Action items` line carries its task ID
 - [ ] `crm_upsert_contact` / `harold_upsert_contact` called; pipeline entry added/moved/closed only if the conversation established it

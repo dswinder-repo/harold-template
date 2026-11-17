@@ -26,8 +26,6 @@
  * harold/settings.env (committed; non-secret HAROLD_* settings only, so every machine and scheduled job shares them):
  *   HAROLD_TZ          IANA time zone, e.g. America/Chicago. Default: the zone of the machine running this.
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
- *   HAROLD_NO_LOG_TYPES  optional, comma-separated contact types whose conversations are never logged
- *                      as CRM interactions (records are still kept current). Empty by default.
  *   HAROLD_CHECKS      optional, comma-separated workspace scripts that check runs; a non-zero exit becomes a warning.
  *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
  *   HAROLD_PULSE_DAYS  days without activity after which an active project counts as quiet in pulse and boot. Default 14.
@@ -64,7 +62,7 @@ const CLI = root => path.join(root, 'bin', 'harold');
 // ───────────────────────── settings ─────────────────────────
 // The environment wins; ~/.harold/env (where credentials already live) is next, so a setting written there
 // works in hooks and cron-like runners that never source a shell profile. Last comes harold/settings.env, a
-// COMMITTED file for the workspace's non-secret settings (HAROLD_TZ, HAROLD_NO_LOG_TYPES, ...): it travels with
+// COMMITTED file for the workspace's non-secret settings (HAROLD_TZ, HAROLD_BRIEF_TIME, ...): it travels with
 // the repository, so every machine, cloud session and scheduled job gets them with nothing to set up. Only
 // HAROLD_* names are read from it, never one that looks like a credential, and close's secret scan refuses
 // to commit a key there.
@@ -956,7 +954,7 @@ function cmdBoot(root, today, opts, hook) {
   c.triggers.info.forEach(i => L.push(`- NOTE     ${i}`));
   if (c.warnings.length) { L.push(''); L.push('## Warnings'); c.warnings.forEach(w => L.push(`- ${w}`)); }
   L.push('');
-  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers)${noLogTypes().size ? `; conversations with contact types in HAROLD_NO_LOG_TYPES (${[...noLogTypes()].join(', ')}) are never logged` : ''}. harold close verifies these and commits + pushes the repo.`);
+  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers). harold close verifies these and commits + pushes the repo.`);
   if (opts.full) {
     L.push('\n\n# FULL CONTEXT DUMP (--full)\n');
     ['AGENTS.md', memoryFile(root), 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
@@ -1082,15 +1080,6 @@ function cmdGate(root, hook) {
   } catch (_) { return 0; }
 }
 
-// Commit trailers name the agent that did the work. Scheduled jobs say which one in HAROLD_AGENT; a hook says
-// it through its harness. Claude (and an unknown runner: a terminal, another harness) keeps the long-standing
-// Co-Authored-By line; Codex and Cursor get a neutral Harold-Agent line rather than an address we cannot vouch for.
-// Name the agent that did the work, and only when it is known: a terminal or an unwired harness gets no line.
-function agentTrailer(harness) {
-  const a = String(process.env.HAROLD_AGENT || harness || (process.env.CLAUDE_CODE_REMOTE ? 'claude' : '')).trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
-  if (!a || a === 'terminal') return 'Recorded-By: bin/harold';
-  return a === 'claude' ? 'Co-Authored-By: Claude <noreply@anthropic.com>' : `Harold-Agent: ${a}`;
-}
 const SECRET_PATTERNS = [/sb_secret_[A-Za-z0-9_-]{10,}/, /sk-or-v1-[a-f0-9]{20,}/, /sk-ant-[A-Za-z0-9_-]{20,}/, /eyJhbGciOi[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, /ghp_[A-Za-z0-9]{30,}/, /github_pat_[A-Za-z0-9_]{30,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/, /xox[bp]-[A-Za-z0-9-]{20,}/, /lin_api_[A-Za-z0-9]{20,}/, /OPENROUTER_API_KEY\s*[=:]\s*["']?sk-/,
   // OpenAI keys, Cursor keys, and a pasted Codex/OAuth sign-in file (any agent the scheduled jobs can run).
   /sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/, /crsr_[A-Za-z0-9_-]{20,}/, /"refresh_token"\s*:\s*"[^"\s]{20,}"/];
@@ -1122,8 +1111,8 @@ function crmTouchedToday(root, today) {
 // them as secrets): boot and close do it automatically, `harold replay [--dry-run]` does it by hand.
 // Same semantics as the harold-mcp tools harold_upsert_contact, harold_log_interaction and
 // harold_crm_task (tools/harold-mcp/server.js), plus two guards: a replay never creates a second contact
-// for a name the CRM already holds (it stops and says so), and never logs an interaction for a contact
-// whose type is listed in HAROLD_NO_LOG_TYPES (when that optional setting is used). Every write looks for its own result first, so a crash between the CRM write and the queue
+// for a name the CRM already holds (it stops and says so), and never applies the same row twice.
+// Every write looks for its own result first, so a crash between the CRM write and the queue
 // update cannot apply the same row twice on the next run. The queue is a fallback, not a workflow.
 const CRM_QUEUE = 'harold/crm-queue.jsonl';
 const CRM_ACTIONS = ['log_interaction', 'upsert_contact', 'crm_task'];
@@ -1190,38 +1179,6 @@ function resolveCrmContact(cfg, name, org, id) {
   if (m.length > 1 && org) { const f = m.filter(x => orgMatches(x.org, org)); if (f.length) m = f; }
   if (m.length > 1) throw new Error(`${m.length} CRM contacts match "${name}", add org or contact_id to the row: ${listed(m)}`);
   return m[0];
-}
-// Optional, off by default: HAROLD_NO_LOG_TYPES lists contact types whose conversations are never logged
-// as CRM interactions (for example, some people choose never to log conversations with their own team).
-// Their contact records are still kept current. A contact matches by its CRM type, any of its CRM labels,
-// or its vault card's `type` (or the older `category`) or `labels`.
-function noLogTypes() { return new Set(setting('HAROLD_NO_LOG_TYPES').split(',').map(t => t.trim().toLowerCase()).filter(Boolean)); }
-function cardText(root, name) { const card = path.join(root, 'vault/people', `${name}.md`); try { return fs.existsSync(card) ? readFull(card) : ''; } catch (_) { return ''; } }
-function cardType(root, name) { const fm = frontmatter(cardText(root, name)); return (fm.type || fm.category || '').toLowerCase(); }
-// `labels: [a, b]`, `labels: a, b`, or a YAML block list under `labels:`.
-function fmLabels(text) {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/); if (!m) return [];
-  const lines = m[1].split('\n'); const i = lines.findIndex(l => /^labels:/.test(l)); if (i < 0) return [];
-  let vals = lines[i].replace(/^labels:\s*/, '').trim();
-  let out = vals ? vals.replace(/^\[|\]$/g, '').split(',') : [];
-  if (!vals) for (let j = i + 1; j < lines.length && /^\s+-\s*/.test(lines[j]); j++) out.push(lines[j].replace(/^\s+-\s*/, ''));
-  return out.map(v => v.trim().replace(/^["']|["']$/g, '').toLowerCase()).filter(Boolean);
-}
-// What on the vault card puts this contact under HAROLD_NO_LOG_TYPES ("type team", "label team"), or ''.
-function cardNoLogMatch(root, name) {
-  const t = noLogTypes(); if (!t.size) return '';
-  const text = cardText(root, name); if (!text) return '';
-  const type = cardType(root, name); if (t.has(type)) return `type ${type}`;
-  const label = fmLabels(text).find(l => t.has(l)); return label ? `label ${label}` : '';
-}
-function cardIsNoLog(root, name) { return !!cardNoLogMatch(root, name); }
-function isNoLogContact(root, c, cfg) {
-  const t = noLogTypes();
-  if (!t.size) return false;
-  if (t.has((c.category || '').toLowerCase()) || cardIsNoLog(root, c.name)) return true;
-  if (!cfg || !c.id) return false;
-  const r = crmRequest(cfg, 'GET', `contact_categories?select=category_name&contact_id=eq.${enc(c.id)}`);
-  return !!(r.ok && Array.isArray(r.data) && r.data.some(x => t.has(String(x.category_name || '').toLowerCase())));
 }
 // "2026-07" and "2026" are how people remember dates; Postgres wants a day.
 function normalizeWhen(s) {
@@ -1293,7 +1250,6 @@ function replayLogInteraction(cfg, root, row, dry) {
   if (typeof p.subject !== 'string') throw new Error('subject is required');
   const when = normalizeWhen(p.occurred_at) || row.ts;
   const c = resolveCrmContact(cfg, p.contact_name || row.contact, p.org || p.company, p.contact_id);
-  if (isNoLogContact(root, c, cfg)) throw new Refusal(`${c.name}'s type or a label is listed in HAROLD_NO_LOG_TYPES: conversations with this type are never logged as CRM interactions`);
   const q = `interactions?select=id&contact_id=eq.${enc(c.id)}&type=eq.${enc(p.type)}&subject=eq.${enc(p.subject)}&occurred_at=eq.${enc(when)}`;
   const dup = crmRequest(cfg, 'GET', q);
   if (!dup.ok) throw new Error(`duplicate check failed: ${dup.err}`);
@@ -1557,8 +1513,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   if (final && changed.length && !todaysNotes.length) problems.push(`final close: knowledge changed this session, a vault/daily note for ${today.iso} is required`);
 
   // 3. contacts filed: a vault/people card touched this session must carry today's last_updated and a
-  //    CRM write or crm-queue entry (CRM unreachable) — unless its type is listed in the optional
-  //    HAROLD_NO_LOG_TYPES (`category` on older cards counts too) or the card says crm: none.
+  //    CRM write or crm-queue entry (CRM unreachable), unless the card says crm: none.
   // A card counts as touched only when something about the person changed: a new card, a changed frontmatter
   // field other than the structural ones (tags, aliases, dates), or a changed body line that is not a [[link]]
   // bullet, a ## Related header or blank. Tidying (tag normalization, cross-links, date fixes) is housekeeping,
@@ -1585,13 +1540,9 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   // A contact counts as filed when the CRM itself shows a write for it today. The queue remains a
   // valid answer for when the CRM is down or not configured.
   const crmWritten = crmTouchedToday(root, today);
-  const noLog = noLogTypes();
   for (const f of peopleTouched) {
     const fm = frontmatter(readFull(path.join(root, f)));
     const name = path.basename(f, '.md');
-    const type = (fm.type || fm.category || '').toLowerCase();
-    const label = noLog.has(type) ? '' : fmLabels(readFull(path.join(root, f))).find(l => noLog.has(l));
-    if (noLog.has(type) || label) { notes.push(`${name}: ${label ? `label ${label}` : `type ${type}`} is in HAROLD_NO_LOG_TYPES — conversations are not logged`); continue; }
     if ((fm.crm || '').toLowerCase() === 'none') { notes.push(`${name}: crm: none — this card is deliberately out of the CRM`); continue; }
     const filed = crmWritten.has(name.toLowerCase()) || queue.some(q => (q.contact || '').toLowerCase() === name.toLowerCase());
     const dated = (fm.last_updated || fm.updated || '').includes(today.iso);
@@ -1656,7 +1607,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
           const label = sf ? path.basename(sf, '.json') : id;
           // No git identity on this machine: commit anyway under a neutral one (as the scheduled jobs do) rather than lose the work.
           const ident = git(root, ['config', 'user.email']).out ? [] : ['-c', 'user.name=Harold (close)', '-c', 'user.email=harold-close@users.noreply.github.com'];
-          const cm = git(root, [...ident, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.\n\n${agentTrailer(hook && hook._harness)}`]);
+          const cm = git(root, [...ident, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `chore(session): ${label} ${today.iso}${final ? ' (final)' : ''}\n\n${staged.length} file(s). Recorded by harold close.`]);
           if (cm.code !== 0) gitNote = `SAVE FAILED: commit failed: ${(cm.err || cm.out).trim().split('\n')[0].slice(0, 200)}`;
         }
       }
@@ -1796,7 +1747,6 @@ function cmdFile(root, today, args, opts = {}) {
     let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error('usage: harold file crm \'{"contact":"Name","action":"log_interaction|upsert_contact|crm_task","payload":{...}}\''); return 2; }
     if (!obj.contact || !obj.action) { console.error('crm entry needs "contact" and "action"'); return 2; }
     if (!CRM_ACTIONS.includes(obj.action)) { console.error(`action must be one of: ${CRM_ACTIONS.join(', ')}`); return 2; }
-    if (obj.action === 'log_interaction' && cardIsNoLog(root, obj.contact)) { console.error(`REFUSED: ${obj.contact} is ${cardNoLogMatch(root, obj.contact).replace(/^type /, 'type: ').replace(/^label /, 'labelled: ')}, which HAROLD_NO_LOG_TYPES says is never logged. Keep the record current with upsert_contact instead.`); return 3; }
     const qp = path.join(root, CRM_QUEUE);
     // "applied":"connector" records a write already made through a CRM connector or MCP tool in a harness
     // where bin/harold cannot see the CRM itself (no credentials here): it counts as filed, never replayed.
@@ -1885,7 +1835,7 @@ function cmdWhere(root, args) {
 // While the job runs, harold close checks the job instead of session filing, on any machine (currentJob).
 const BRIEF_JOB = 'harold/.brief-job.json';
 const BRIEF_CONTEXT = 'harold/.brief-context.md';
-const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/crm-queue.jsonl'];
+const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/alerts-archive.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/crm-queue.jsonl'];
 // Hourly retries stop this many hours after the brief time, so a job that keeps failing (a missing
 // credential, say) fails a few times, not all day. HAROLD_BRIEF_WINDOW_HOURS=0 removes the limit.
 const BRIEF_WINDOW_H = (() => { const v = setting('HAROLD_BRIEF_WINDOW_HOURS'); return v !== '' && !isNaN(+v) && +v >= 0 ? +v : 6; })();
@@ -1994,7 +1944,7 @@ function cmdBrief(root, today, argv, now) {
     // A cloud runner usually has no git identity; use a neutral one rather than fail.
     const ident = ['-c', 'core.hooksPath=/dev/null'];
     if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (scheduled brief)', '-c', 'user.email=harold-brief@users.noreply.github.com');
-    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}\n\n${agentTrailer()}`]);
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(brief): morning brief ${job.date} (${job.runner})\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s): ${staged.join(', ')}.\nBrief-Run: ${job.runUrl || job.url || 'n/a'}`]);
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) { console.log(`FAIL: commit failed: ${cm.err.slice(0, 300)}`); return 2; }
     if (git(root, ['remote', 'get-url', 'origin']).code !== 0) {
       Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: git(root, ['rev-parse', 'HEAD']).out, pushedTo: '(no origin remote: committed locally)' }); saveJob(root, job);
@@ -2204,7 +2154,7 @@ function finishHousekeepingJob(root, job, { anyway = false } = {}) {
   const ident = ['-c', 'core.hooksPath=/dev/null'];
   if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (housekeeping)', '-c', 'user.email=harold-housekeeping@users.noreply.github.com');
   if (staged.length) {
-    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}\n\n${agentTrailer()}`]);
+    const cm = git(root, [...ident, 'commit', '-q', '-m', `chore(housekeeping): ${job.job} ${job.date} (${job.runner})${problems.length ? ' (unfinished)' : ''}\n\nFired ${job.firedLocal || '?'}; ${staged.length} file(s).\nHousekeeping-Run: ${job.runUrl || 'n/a'}`]);
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) return { code: 2, text: `FAIL: commit failed: ${cm.err.slice(0, 300)}` };
   }
   const ps = pushHead(root, ident);
@@ -2530,7 +2480,7 @@ function main() {
     const fd = fs.openSync(log, 'a');
     const { spawn } = require('child_process');
     const child = spawn(process.execPath, [CLI(root), 'close', ...argv.slice(1).filter(a => a !== '--detach' && !a.startsWith('--via='))], {
-      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1', ...(hook && hook._harness !== 'claude' && !process.env.HAROLD_AGENT ? { HAROLD_AGENT: hook._harness } : {}) },
+      cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, HAROLD_SESSION_ID: id, HAROLD_DETACHED: '1' },
     });
     child.unref();
     if (hook) closeReply(hook, 'ok'); else console.log(`harold close: running detached (pid ${child.pid}); output in ${path.relative(root, log)}`);

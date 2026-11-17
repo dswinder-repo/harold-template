@@ -20,55 +20,29 @@ beforeEach(() => {
   db.tables.contact_categories.push({ contact_id: "c-label", category_name: "team" });
 });
 
-describe("HAROLD_NO_LOG_TYPES (optional, empty by default)", () => {
-  it("empty: an interaction with a contact of type team is logged like any other", async () => {
+describe("every contact is filed the same way, whatever its type", () => {
+  it("logs an interaction with a contact of type team like any other", async () => {
     const r = await crm.logInteraction(sb(), { contact_name: "Riley", type: "call", subject: "weekly sync" });
     expect(r.isError, r.text).toBeFalsy();
     expect(db.tables.interactions).toHaveLength(1);
-    expect(r.person).toEqual({ name: "Riley Teammate", noLog: false });
+    expect(r.person).toEqual({ name: "Riley Teammate" });
   });
 
-  it("set to team: refuses to log, names the setting, and writes nothing", async () => {
-    setTestEnv({ HAROLD_NO_LOG_TYPES: "team" });
-    const r = await crm.logInteraction(sb(), { contact_name: "Riley", type: "call", subject: "weekly sync" });
-    expect(r.isError).toBe(true);
-    expect(r.text).toMatch(/HAROLD_NO_LOG_TYPES/);
-    expect(r.text).toMatch(/type "team"/);
-    expect((await crm.logInteraction(sb(), { contact_id: "c-team", type: "email", subject: "x" })).isError).toBe(true);
-    expect(db.tables.interactions.length).toBe(0);
-  });
-
-  it("matches the type case-insensitively and accepts a list", async () => {
-    setTestEnv({ HAROLD_NO_LOG_TYPES: " Investor , TEAM " });
-    expect((await crm.logInteraction(sb(), { contact_id: "c-team", type: "note", subject: "x" })).isError).toBe(true);
-    expect((await crm.logInteraction(sb(), { contact_id: "c-dup1", type: "note", subject: "x" })).isError).toBe(true);
-    expect((await crm.logInteraction(sb(), { contact_id: "c-ext", type: "note", subject: "x" })).isError).toBeFalsy();
-    expect(db.tables.interactions).toHaveLength(1);
-  });
-
-  it("only the type counts, not labels (as tools/harold-mcp)", async () => {
-    setTestEnv({ HAROLD_NO_LOG_TYPES: "team" });
-    const r = await crm.logInteraction(sb(), { contact_name: "Pat Labelled", type: "note", subject: "x" });
-    expect(r.isError, r.text).toBeFalsy();
-  });
-
-  it("records of a no-log type may still be created and updated", async () => {
-    setTestEnv({ HAROLD_NO_LOG_TYPES: "team" });
+  it("creates and updates records of any type", async () => {
     const r = await crm.upsertContact(sb(), { name: "Riley Teammate", org: "Example Co", status: "active", notes: "now leads design" });
     expect(r.isError, r.text).toBeFalsy();
     expect(r.text).toMatch(/^Updated contact: Riley Teammate/);
-    expect(r.person).toEqual({ name: "Riley Teammate", noLog: true });
+    expect(r.person).toEqual({ name: "Riley Teammate" });
     const c = await crm.upsertContact(sb(), { name: "New Teammate", org: "Example Co", category: "team" });
     expect(c.text).toMatch(/^Created contact: New Teammate \(Example Co\) \[type: team\]/);
   });
 
-  it("logs an interaction for a contact whose type is not listed", async () => {
-    setTestEnv({ HAROLD_NO_LOG_TYPES: "team" });
+  it("logs an interaction and returns the contact's name as the CRM holds it", async () => {
     const r = await crm.logInteraction(sb(), { contact_name: "jane doe", type: "meeting", subject: "NDA scoping", body: "notes" });
     expect(r.isError).toBeFalsy();
     expect(db.tables.interactions).toHaveLength(1);
     expect(db.tables.interactions[0]).toMatchObject({ contact_id: "c-ext", type: "meeting", subject: "NDA scoping", body: "notes" });
-    expect(r.person).toEqual({ name: "Jane Doe", noLog: false });
+    expect(r.person).toEqual({ name: "Jane Doe" });
   });
 });
 

@@ -2,13 +2,6 @@ import { createClient } from '@/lib/supabase/client'
 import type { NotificationType, NotificationSeverity, WarmthType } from '@/lib/types'
 import { WARMTH_DECAY_THRESHOLDS, REENGAGEMENT_SUGGESTIONS } from '@/lib/types'
 
-// Contact types whose conversations are never logged (optional, empty by default). Same meaning as
-// HAROLD_NO_LOG_TYPES in a Harold workspace; the NEXT_PUBLIC_ prefix makes it readable in the browser.
-const NO_LOG_TYPES = (process.env.NEXT_PUBLIC_HAROLD_NO_LOG_TYPES ?? '')
-  .split(',')
-  .map((t) => t.trim().toLowerCase())
-  .filter((t) => /^[a-z0-9_-]+$/.test(t))
-
 interface NotificationInsert {
   user_id: string
   type: NotificationType
@@ -244,14 +237,11 @@ export async function generateNotifications(userId: string): Promise<{ count: nu
   if (staleEnabled || decayEnabled) {
     const decayWarmthLevels = Object.keys(warmthThresholds) as WarmthType[]
     // last_contacted_at is kept current by a database trigger on interactions.
-    // Optional: NEXT_PUBLIC_HAROLD_NO_LOG_TYPES lists contact types whose conversations you never log
-    // (empty by default). Their last-contact date would look stale forever, so they are skipped here.
-    let warmQuery = supabase
+    const warmQuery = supabase
       .from('contacts')
       .select('id, name, org, warmth, category, last_contacted_at')
       .in('warmth', decayWarmthLevels)
       .in('status', ['active', 'pending'])
-    if (NO_LOG_TYPES.length) warmQuery = warmQuery.not('category', 'in', `(${NO_LOG_TYPES.join(',')})`)
     const { data: warmContacts } = await warmQuery.limit(500)
 
     if (warmContacts && warmContacts.length > 0) {

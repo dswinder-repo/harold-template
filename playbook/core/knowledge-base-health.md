@@ -1,6 +1,6 @@
 # Playbook: Knowledge Base Health Check
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `AGENTS.md`, CRM Filing Protocol).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Keep the knowledge base accurate, consistent and fresh: a weekly quick scan and a monthly full audit.
 **Trigger:** Scheduled: every Friday (Quick Scan, `weekly-scan`), 1st of the month (Full Audit, `full-audit`). On demand: "run health check", "audit the knowledge base", after a restructure or file migration.
@@ -226,7 +226,20 @@ Every session loads a few files at startup, so their size is a cost paid on ever
 
 For each file over budget, move the sections that are clearly stale (superseded, finished, or older than 90 days and not referenced by an active project in `harold/projects.md`) into an archive file beside it, `<same folder>/<name>-archive.md`, leaving a one-line pointer where they were. `bin/harold search` still finds them; sessions no longer load them. Never move rules, instructions or anything current. If a file cannot get under budget without a judgment call, leave the rest and tell the operator in one line. Nothing is deleted.
 
-### Step 12: Report and record
+### Step 12: Learnings ledger review
+
+**Purpose:** keep `harold/learnings.jsonl` from growing into context without bound. Boot lists every `critical` entry (one line each, within a fixed budget; `bin/harold check` warns past 15), and `boot --full` (the scheduled jobs) prints the whole ledger. A fact correction (a name, a title, a project detail) is fixed in place, never kept as a learning.
+
+1. **Count** entries by severity, project and category; put the counts in the report.
+2. **Fold settled criticals.** For each `critical` entry, ask: is the behavior it teaches now written into `AGENTS.md`, a playbook, or settings? If yes, verify the rule actually covers the lesson, then move the entry to `harold/learnings-archive.jsonl` (append it with `archived:` today's date and `folded_into:` the file that now carries it). If no rule covers it yet, write the rule where it belongs in this same run, then archive the entry the same way. Never archive a lesson whose behavior has no home.
+3. **Re-grade.** Entries that were one-off corrections rather than lasting instructions become `info`. Admission guidance for new entries lives in `AGENTS.md` → Error Capture Rule.
+4. **Merge duplicate project keys** (e.g. `acme-site` vs `acmesite`) onto one spelling.
+5. **Repeats stay `critical`.** A repeated lesson means the rule is not working; that is a signal, not clutter.
+6. **Nothing is deleted.** The archive keeps full history. Never hand-edit IDs; `bin/harold file learning` owns the ledger.
+
+**Unattended runs:** a scheduled full-audit job only LISTS fold, re-grade and duplicate-key candidates (with reasons) in its report and, when any exist, one line in `harold/briefs/housekeeping-notes.md`. Folding, re-grading and archiving happen in a session with the operator, never silently.
+
+### Step 13: Report and record
 
 - Write the report (template below) into today's daily note: `vault/daily/YYYY-MM-DD-kb-health.md`.
 - `bin/harold file trigger full-audit ran "<one-line summary>"` (or `skipped "<reason>"`).
@@ -255,6 +268,7 @@ For each file over budget, move the sections that are clearly stale (superseded,
 | Vault hygiene | OK / Warn / Fail | [n] | [brief] |
 | CRM consistency | OK / Warn / Fail / Skipped | [n] | [brief] |
 | Raw inbox | [n] uncompiled | | |
+| Learnings ledger | OK / Warn / Fail | [n] | [brief] |
 
 ### Issues found
 
@@ -306,7 +320,7 @@ When a new spelling or consistency error is found:
 - [ ] `bin/harold file trigger weekly-scan ran|skipped "<reason>"` recorded
 
 **Monthly Full Audit**
-- [ ] Steps 1-11 run (or each skipped step noted with a reason)
+- [ ] Steps 1-12 run (or each skipped step noted with a reason)
 - [ ] Report written to `vault/daily/YYYY-MM-DD-kb-health.md`
 - [ ] New error patterns added to Part 2, Step 2
 - [ ] `bin/harold file trigger full-audit ran|skipped "<reason>"` recorded

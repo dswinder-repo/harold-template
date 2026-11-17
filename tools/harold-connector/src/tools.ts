@@ -3,7 +3,7 @@
 
 import type { McpServer, ServerContext, CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { MAX_RESULT_CHARS, noLogTypes, repoConfig, tz } from "./config.js";
+import { MAX_RESULT_CHARS, repoConfig, tz } from "./config.js";
 import * as crm from "./crm.js";
 import { HaroldRepo } from "./github.js";
 import * as graph from "./graph.js";
@@ -67,7 +67,6 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
   // After a CRM write about a person: freshen their vault card (Harold's filing rule, CRM + vault together).
   const vaultFollowUp = async (ctx: ServerContext, r: crm.CrmResult): Promise<crm.CrmResult> => {
     if (r.isError || !r.person || !r.person.name) return r;
-    if (r.person.noLog) return { ...r, text: `${r.text}\n\nVault: the contact's type is in HAROLD_NO_LOG_TYPES; card not touched.` };
     const note = await kb.touchPersonCard(deps.repoFor(ctx), r.person.name, now()).catch(e => `Vault card not updated: ${e instanceof Error ? e.message : e}`);
     return { ...r, text: `${r.text}\n\n${note}` };
   };
@@ -201,7 +200,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("crm_stale", {
     title: "CRM: who has gone quiet",
-    description: "Contacts whose last logged interaction is older than their cadence, most overdue first. Same rule as harold_cadence_check: active or pending contacts with warmth Lukewarm, Warm or Hot; the cadence is the tightest stage cadence among their open pipeline entries, else Hot 7 days, Warm 14, Lukewarm 28; Hot or Warm with nothing logged is flagged too. Types in HAROLD_NO_CADENCE_TYPES (default other) and HAROLD_NO_LOG_TYPES are never checked. Read-only.",
+    description: "Contacts whose last logged interaction is older than their cadence, most overdue first. Same rule as harold_cadence_check: active or pending contacts with warmth Lukewarm, Warm or Hot; the cadence is the tightest stage cadence among their open pipeline entries, else Hot 7 days, Warm 14, Lukewarm 28; Hot or Warm with nothing logged is flagged too. Types in HAROLD_NO_CADENCE_TYPES (default other) are never checked. Read-only.",
     inputSchema: z.object({
       type: z.string().max(60).optional().describe("Only this contact type, e.g. investor or partner"),
       stale_days: z.number().int().min(1).max(365).optional().describe("Warm threshold in days (default 14; Lukewarm is twice this)"),
@@ -210,7 +209,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     }),
     annotations: READ,
   }, async ({ type, stale_days, hot_days, limit }) => guard(() => withSb(sb => stale.staleText(sb, {
-    skipTypes: stale.cadenceSkipTypes(noLogTypes()), type, staleDays: stale_days, hotDays: hot_days, limit, now: now(),
+    skipTypes: stale.cadenceSkipTypes(), type, staleDays: stale_days, hotDays: hot_days, limit, now: now(),
   }))));
 
   // ───────────── write ─────────────
@@ -281,7 +280,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("crm_log_interaction", {
     title: "CRM: log interaction",
-    description: "Log a touchpoint (call, email, meeting, note, linkedin, other) with a contact. Refused for contact types listed in the optional HAROLD_NO_LOG_TYPES setting (empty by default, so nothing is refused unless the owner opted in). Also freshens the person's vault card.",
+    description: "Log a touchpoint (call, email, meeting, note, linkedin, other) with a contact. Every contact is logged the same way, whatever its type. Also freshens the person's vault card.",
     inputSchema: z.object({
       contact_id: z.string().optional().describe("CRM contact UUID"),
       contact_name: z.string().optional().describe("Name (fuzzy), used when contact_id is not given"),
@@ -292,19 +291,11 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       occurred_at: z.string().optional().describe("ISO datetime; default now"),
     }),
     annotations: WRITE,
-  }, async (args, ctx) => guard(async () => {
-    // HAROLD_NO_LOG_TYPES (optional): the vault card's type counts as well as the CRM type, as in
-    // bin/harold, so a card typed as a no-log type blocks the log even if the CRM record is typed otherwise.
-    if (args.contact_name && noLogTypes().length) {
-      const card = await kb.personCard(deps.repoFor(ctx), args.contact_name).catch(() => null);
-      if (card && kb.isNoLogCard(card.fm)) return { text: crm.NO_LOG_MESSAGE(card.path.slice("vault/people/".length, -3), kb.cardType(card.fm)), isError: true };
-    }
-    return withSb(async sb => vaultFollowUp(ctx, await crm.logInteraction(sb, args)));
-  }));
+  }, async (args, ctx) => guard(() => withSb(async sb => vaultFollowUp(ctx, await crm.logInteraction(sb, args)))));
 
   server.registerTool("crm_upsert_contact", {
     title: "CRM: create or update contact",
-    description: "Create a contact or update one (by contact_id, or name + org). Type (category) is exactly one per contact, from the owner's own list (e.g. investor, partner, founder, team, other; default other); labels (categories) are any number of extra tags such as 'board' or 'advisor'. Warmth: Cold, Lukewarm, Warm, Hot, or empty (not rated). Status: active, pending, cold, archived. Never places anyone in the pipeline. Records may be kept current for every type, including types in HAROLD_NO_LOG_TYPES. Also freshens the person's vault card (not for types in HAROLD_NO_LOG_TYPES).",
+    description: "Create a contact or update one (by contact_id, or name + org). Type (category) is exactly one per contact, from the owner's own list (e.g. investor, partner, founder, team, other; default other); labels (categories) are any number of extra tags such as 'board' or 'advisor'. Warmth: Cold, Lukewarm, Warm, Hot, or empty (not rated). Status: active, pending, cold, archived. Never places anyone in the pipeline. Also freshens the person's vault card.",
     inputSchema: z.object({
       contact_id: z.string().optional(),
       name: z.string().min(1).max(120),
