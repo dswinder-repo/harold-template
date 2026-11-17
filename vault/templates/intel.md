@@ -5,7 +5,7 @@ type:        # durable | timely   <- REQUIRED. durable = still true in a year. t
 status:      # active | superseded
 source:      # research | meeting | news | analysis
 relevance:   # high | medium | low
-projects: [] # project names from harold/projects.md this bears on
+project:     # REQUIRED: a project name, alias or folder from harold/projects.md (comma-separated for several), or global
 ---
 # {{title}}
 
