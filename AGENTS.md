@@ -161,7 +161,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 - **`memory/CLAUDE.md`** is the single source of truth for session context.
 - **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the hosted MCP server you deploy once, which reaches the knowledge base and CRM from any MCP client: a chat app on your phone, a coding agent, a scheduled job; boot and close do not run there), `harold-plugin` (Cowork plugin), `openclaw-plugin` (OpenClaw plugin), `harness-hooks` (user-level hook snippets for Kimi Code and Hermes Agent), `visualizer` (Expedition HQ, local-only).
-- **The task manager** ([Linear by default; team key `[TEAM]`]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
+- **The task manager** (Linear by default; your team key is [TEAM]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
 - **`vault/`** is the knowledge vault: rich context on people, companies, projects, intel, decisions and meetings. Search it for deep context. Write to it when new knowledge is created.
 - **`raw/`** is the source inbox. Save first, process second. Boot flags uncompiled items; it never compiles them.
@@ -186,7 +186,7 @@ For every contact touched, all three happen together, every time: log the intera
 
 ## Context Window Management
 
-Sessions that involve heavy building frequently hit context limits.
+Sessions that involve heavy building often reach the model's context limit.
 - **Save progress incrementally**: commit and push at milestones, not just at session end.
 - **When context is getting long** (100+ tool calls), proactively suggest starting a fresh session with a handoff summary rather than waiting for auto-continuation.
 - **Handoff summaries** are structured: what was done, what's left, key file paths, gotchas (`memory/CLAUDE.md` → Session Handoff).
