@@ -1663,28 +1663,37 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
       if (!gitNote && !refused && isCloudRunner() && git(root, ['remote', 'get-url', 'origin']).code === 0) {
         // Cloud checkouts (routines, Actions) are often detached with no upstream, so a plain push does
         // nothing. Push to the knowledge-base branch explicitly, replaying onto whatever landed meanwhile.
+        // defaultBranch() falls back to the current branch when origin/HEAD is unset (a remote added by hand,
+        // not cloned), which would make a feature branch look like the default: ask origin once instead.
+        if (git(root, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']).code !== 0) git(root, ['remote', 'set-head', 'origin', '--auto'], { timeout: 60000 });
         const branch = defaultBranch(root);
-        const f = git(root, ['fetch', '-q', 'origin', branch], { timeout: 120000 });
-        const known = git(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]).code === 0;
-        // An empty remote has no branch yet: everything is ahead. Any other failure to learn where origin is
-        // must say so, never "nothing to push" (which is what an empty count used to print).
-        const fresh = !known && /couldn't find remote ref/i.test(f.err);
-        const rl = fresh ? git(root, ['rev-list', '--count', 'HEAD']) : git(root, ['rev-list', '--count', `origin/${branch}..HEAD`]);
-        const ahead = rl.code === 0 ? rl.out : '';
-        if (!known && !fresh) gitNote = `NOT PUSHED: could not reach origin/${branch}: ${(f.err || rl.err || 'git fetch failed').split('\n')[0].slice(0, 160)} — committed locally only; retry: git -C "${root}" push origin HEAD:refs/heads/${branch}`;
-        else if (rl.code !== 0) gitNote = `NOT PUSHED: could not count commits ahead of origin/${branch}: ${(rl.err || '').split('\n')[0].slice(0, 160)}`;
-        else if (fresh) {
-          const ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
-          gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to new branch ${branch}` : `NOT PUSHED (${ahead} commit(s)): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
-        } else if (ahead && ahead !== '0') {
-          let ps = { code: 1, err: '' };
-          for (let i = 0; i < 3 && ps.code !== 0; i++) {
-            const rb = git(root, ['pull', '-q', '--rebase', '--autostash', 'origin', branch], { timeout: 180000 });
-            if (rb.code !== 0) { git(root, ['rebase', '--abort']); ps = { code: 1, err: `pull --rebase failed: ${(rb.err || rb.out).split('\n')[0]}` }; break; }
-            ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
-          }
-          gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to ${branch}` : `PUSH FAILED (${ahead} commit(s) unpushed): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
-        } else gitNote = 'nothing to push';
+        // A cloud session working on a named feature branch must not land it on the default branch: that
+        // skips review. Save it to its own branch on origin instead; it reaches the default branch by a PR.
+        const cur = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).out;
+        if (cur && cur !== branch) gitNote = pushFeatureBranch(root, cur, branch);
+        else {
+          const f = git(root, ['fetch', '-q', 'origin', branch], { timeout: 120000 });
+          const known = git(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]).code === 0;
+          // An empty remote has no branch yet: everything is ahead. Any other failure to learn where origin is
+          // must say so, never "nothing to push" (which is what an empty count used to print).
+          const fresh = !known && /couldn't find remote ref/i.test(f.err);
+          const rl = fresh ? git(root, ['rev-list', '--count', 'HEAD']) : git(root, ['rev-list', '--count', `origin/${branch}..HEAD`]);
+          const ahead = rl.code === 0 ? rl.out : '';
+          if (!known && !fresh) gitNote = `NOT PUSHED: could not reach origin/${branch}: ${(f.err || rl.err || 'git fetch failed').split('\n')[0].slice(0, 160)} — committed locally only; retry: git -C "${root}" push origin HEAD:refs/heads/${branch}`;
+          else if (rl.code !== 0) gitNote = `NOT PUSHED: could not count commits ahead of origin/${branch}: ${(rl.err || '').split('\n')[0].slice(0, 160)}`;
+          else if (fresh) {
+            const ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
+            gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to new branch ${branch}` : `NOT PUSHED (${ahead} commit(s)): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
+          } else if (ahead && ahead !== '0') {
+            let ps = { code: 1, err: '' };
+            for (let i = 0; i < 3 && ps.code !== 0; i++) {
+              const rb = git(root, ['pull', '-q', '--rebase', '--autostash', 'origin', branch], { timeout: 180000 });
+              if (rb.code !== 0) { git(root, ['rebase', '--abort']); ps = { code: 1, err: `pull --rebase failed: ${(rb.err || rb.out).split('\n')[0]}` }; break; }
+              ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
+            }
+            gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to ${branch}` : `PUSH FAILED (${ahead} commit(s) unpushed): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
+          } else gitNote = 'nothing to push';
+        }
       }
       if (!gitNote && !refused) gitNote = pushNoUpstream(root);
       if (!gitNote && !refused) {
@@ -1727,6 +1736,25 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   const pushFailed = /^((PUSH|SAVE) FAILED|NOT PUSHED)/.test(gitNote);
   if (isHook) { return closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); }
   console.log(summary); return pushFailed ? 1 : 0;
+}
+
+// Cloud close on a named branch other than the default one: push to that same branch on origin (creating
+// it, with -u, when it is new), replaying onto it if another writer pushed meanwhile. Never to the default.
+function pushFeatureBranch(root, cur, base) {
+  const f = git(root, ['fetch', '-q', 'origin', cur], { timeout: 120000 });
+  const exists = f.code === 0 && git(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${cur}`]).code === 0;
+  if (f.code !== 0 && !/couldn't find remote ref/i.test(f.err)) return `NOT PUSHED: could not reach origin: ${(f.err || 'git fetch failed').split('\n')[0].slice(0, 160)} — committed locally only on ${cur}; retry: git -C "${root}" push -u origin ${cur}`;
+  const rl = exists ? git(root, ['rev-list', '--count', `origin/${cur}..HEAD`]) : git(root, ['rev-list', '--count', 'HEAD', '--not', '--remotes']);
+  const ahead = rl.code === 0 ? rl.out : '?';
+  if (exists && ahead === '0') return 'nothing to push';
+  const where = `${cur} (a feature branch: it reaches ${base} through a pull request, never directly)`;
+  let ps = git(root, ['push', '-q', '-u', 'origin', `HEAD:refs/heads/${cur}`], { timeout: 180000 });
+  if (ps.code !== 0 && exists && /rejected|non-fast-forward|fetch first/.test(ps.err)) {
+    const rb = git(root, ['pull', '-q', '--rebase', '--autostash', 'origin', cur], { timeout: 180000 });
+    if (rb.code === 0) ps = git(root, ['push', '-q', '-u', 'origin', `HEAD:refs/heads/${cur}`], { timeout: 180000 });
+    else { git(root, ['rebase', '--abort']); ps = { code: 1, err: `behind origin/${cur} and pull --rebase failed: ${(rb.err || rb.out).split('\n')[0]}` }; }
+  }
+  return ps.code === 0 ? `pushed ${ahead} commit(s) to ${where}` : `NOT PUSHED (${ahead} commit(s) on ${cur}): ${(ps.err || ps.out).split('\n')[0].slice(0, 160)} — retry: git -C "${root}" push -u origin ${cur}`;
 }
 
 // A branch with no upstream: `@{u}..HEAD` fails there, so the count came back empty and close used to
