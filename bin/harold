@@ -691,10 +691,10 @@ function runCheck(root, today) {
   const ctx = { alerts: al, blockers: bl, events: ev, daily: latestDaily(root), raw: rawUncompiled(root) };
   const triggers = computeTriggers(root, today, ctx);
   const idx = indexStale(root); if (idx) warnings.push(`search index ${idx} (boot rebuilds it)`);
-  // A clone of the public starter still pushes to it: every close would end in PUSH FAILED (or worse, if it is
-  // your own public fork). The workspace belongs in a private repository of your own.
+  // A clone of the public starter (close refuses to push there: publicStarterOrigin), or a fork of it that may be
+  // public. The workspace belongs in a private repository of your own.
   const origin = git(root, ['remote', 'get-url', 'origin']);
-  if (origin.code === 0 && /[/:][^/:]+\/harold-template(?:\.git)?\/?$/i.test(origin.out)) warnings.push(`origin is ${origin.out.replace(/\/\/[^@/]*@/, '//')}, which looks like the public Harold starter (or a fork of it): close would push your knowledge base there. Create your own PRIVATE repository and point origin at it: git -C "${root}" remote set-url origin <your private repo URL>, then git push -u origin HEAD. (If this already is your own private repository, rename it to silence this.)`);
+  if (origin.code === 0 && /[/:][^/:]+\/harold-template(?:\.git)?\/?$/i.test(origin.out)) warnings.push(`origin is ${origin.out.replace(/\/\/[^@/]*@/, '//')}, which looks like the public Harold starter (or a fork of it). Close refuses to push to the starter itself, so your work stays local until origin is your own PRIVATE repository: make one and point origin at it (playbook/core/setup.md, step 1): git -C "${root}" remote set-url origin <your private repo URL>, then git push -u origin HEAD. (If this already is your own private repository, rename it to silence this.)`);
   const cm = tryRead(path.join(root, 'CLAUDE.md'));
   if (!cm.ok || !/@AGENTS\.md/.test(cm.text)) warnings.push('CLAUDE.md should be the one-line include "@AGENTS.md"');
   if (TZ_INFO.warning) warnings.push(TZ_INFO.warning);
@@ -902,6 +902,8 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`Workspace root: ${root}   (use absolute paths under this root for every read and write)`);
   L.push(`Harness: ${st.harness}${adopted ? `   (this run loads the context for the session its hook registered ${Math.round((nowMs - adopted.bootedAtMs) / 1000)}s ago; that harness cannot show hook output to the model)` : resumed ? '   (resumed existing session state)' : ''}`);
   L.push(`Session file: ${P(st.sessionFile)}   ← set "task" and the working activity on your first tool call; all activities back to "sleeping" on your last. Rename it to a descriptive slug if you like; harold close will find it.`);
+  const setupLines = setupNotice(root);
+  if (setupLines.length) L.push('', ...setupLines, '');
   if (archived.length) L.push(`Archived stale session files (>48h): ${archived.join(', ')}`);
   L.push(`Search: ${CLI(root)} search "<query>"   (SQLite FTS5 over all markdown, archives included; ${idxNote}; replaces Obsidian)`);
   L.push(`Links: ${CLI(root)} related "<person, company, project or topic>"   (follows [[links]] 1-2 hops; read only the notes that matter; state staleness and gaps)`);
@@ -984,6 +986,28 @@ function cmdBoot(root, today, opts, hook) {
   return 0;
 }
 
+// A workspace nobody has set up yet: the starter's placeholders are still in the files every session reads,
+// no time zone is set, or origin is still the public starter. Boot says so in one short block at the top, so
+// the AI tool walks the operator through playbook/core/setup.md before anything else.
+const PLACEHOLDER_RE = /\[(?:LIST )?YOUR [^\]\n]*\]/g;
+function setupGaps(root) {
+  const gaps = [];
+  const files = ['AGENTS.md', ...['memory', 'dashboard', 'playbook'].flatMap(d => walk(path.join(root, d), f => f.endsWith('.md')).map(f => path.relative(root, f))),
+    ...(() => { try { return fs.readdirSync(path.join(root, 'harold')).filter(f => f.endsWith('.md')).map(f => 'harold/' + f); } catch (_) { return []; } })()];
+  let count = 0; const where = [];
+  for (const rel of files.filter(f => f !== 'playbook/core/setup.md')) { const r = tryRead(path.join(root, rel)); const n = r.ok ? (r.text.match(PLACEHOLDER_RE) || []).length : 0; if (n) { count += n; where.push(rel); } }
+  if (count) gaps.push(`${count} [YOUR ...] placeholder(s) left in ${where.length} file(s) (${where.slice(0, 3).join(', ')}${where.length > 3 ? ', ...' : ''})`);
+  if (!setting('HAROLD_TZ')) gaps.push('HAROLD_TZ is not set in harold/settings.env');
+  if (publicStarterOrigin(root)) gaps.push('origin is still the public starter, so close will not push');
+  return gaps;
+}
+function setupNotice(root) {
+  const gaps = setupGaps(root);
+  if (!gaps.length) return [];
+  return [`⚠ NOT SET UP YET: this workspace is still the unconfigured starter: ${gaps.join('; ')}.`,
+    `Before other work, walk the operator through playbook/core/setup.md: it asks for their details in conversation and fills everything in. This notice stops once all of it is done.`];
+}
+
 // The largest hook output that reaches the model whole (Claude Code saves anything over ~10 KB to a file and shows a
 // preview). Override with HAROLD_HOOK_BUDGET. Each part `harold context` prints stays under the shell tool's limit.
 const HOOK_BUDGET = Number(process.env.HAROLD_HOOK_BUDGET) || 9000;
@@ -1015,6 +1039,8 @@ const MONITORS = [
 function contextDigest(root, today, L, c, n, bytes) {
   const D = [];
   D.push(...L.slice(0, 4));
+  const setupLines = setupNotice(root);
+  if (setupLines.length) D.push('', ...setupLines);
   D.push('');
   D.push(`⛔ CONTEXT GATE: this boot is ${Math.round(bytes / 1024)} KB, more than the harness passes to the model, so it is split into ${n} part(s).`);
   D.push(`Your FIRST actions, before any other tool or any answer: run ${CLI(root)} context  (repeat until it says all ${n} parts are read).`);
@@ -1612,6 +1638,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
           if (cm.code !== 0) gitNote = `SAVE FAILED: commit failed: ${(cm.err || cm.out).trim().split('\n')[0].slice(0, 200)}`;
         }
       }
+      if (!gitNote && !refused) { const pub = publicStarterOrigin(root); if (pub) gitNote = publicStarterRefusal(root, pub); }
       if (!gitNote && !refused && isCloudRunner() && git(root, ['remote', 'get-url', 'origin']).code === 0) {
         // Cloud checkouts (routines, Actions) are often detached with no upstream, so a plain push does
         // nothing. Push to the knowledge-base branch explicitly, replaying onto whatever landed meanwhile.
@@ -1709,6 +1736,31 @@ function pushFeatureBranch(root, cur, base) {
   return ps.code === 0 ? `pushed ${ahead} commit(s) to ${where}` : `NOT PUSHED (${ahead} commit(s) on ${cur}): ${(ps.err || ps.out).split('\n')[0].slice(0, 160)} — retry: git -C "${root}" push -u origin ${cur}`;
 }
 
+// The public starter is where `bin/harold update` reads machinery from, never where a knowledge base goes. A clone
+// that still has it as origin would push the operator's notes there (or fail for lack of permission, which hides
+// the real problem). Every push Harold makes checks this first and refuses: the work stays committed locally until
+// origin points at the operator's own private repository (playbook/core/setup.md). Contributions to the public
+// project go through pull requests, never through Harold's pushes. URLs compare by owner/repo, so https, ssh
+// (git@host:owner/repo and ssh://), a git proxy in front of the host, credentials in the URL and a trailing .git or
+// slash all match.
+function repoKey(url) {
+  let u = String(url || '').trim().toLowerCase();
+  if (!u) return '';
+  u = u.replace(/^[a-z+]+:\/\//, '').replace(/^[^@/]*@/, '');
+  if (!/^[^/]*:\d*\//.test(u)) u = u.replace(/^([^/:]+):/, '$1/');
+  u = u.replace(/^([^/]+):\d+\//, '$1/');
+  return u.replace(/\/+$/, '').replace(/\.git$/, '').replace(/\/+$/, '').split('/').slice(-2).join('/');
+}
+function publicStarterOrigin(root) {
+  const origin = git(root, ['remote', 'get-url', 'origin']);
+  if (origin.code !== 0 || !origin.out) return '';
+  const starters = new Set([readUpstream(root).url, UPSTREAM_DEFAULT.url].filter(Boolean).map(repoKey).filter(Boolean));
+  return starters.has(repoKey(origin.out)) ? origin.out.replace(/\/\/[^@/]*@/, '//') : '';
+}
+function publicStarterRefusal(root, url) {
+  return `NOT PUSHED: origin is the public Harold starter (${url}), so nothing was pushed; your work is committed locally only. Make your own private copy and point origin at it (playbook/core/setup.md, step 1): git -C "${root}" remote set-url origin <your private repository URL>, then git -C "${root}" push -u origin HEAD. To contribute to the public project, open a pull request from a fork instead.`;
+}
+
 // A branch with no upstream: `@{u}..HEAD` fails there, so the count came back empty and close used to
 // print "nothing to push" over unpushed work. Publish the branch to origin under its own name (-u, so the
 // next close has an upstream), or say plainly that nothing was pushed and why. Returns '' when the
@@ -1795,7 +1847,34 @@ function cmdFile(root, today, args, opts = {}) {
     });
     console.log(`recorded ${entry.id}`); return 0;
   }
-  console.error('usage: harold file trigger|daily|crm|learning ...'); return 2;
+  if (kind === 'heartbeat') {
+    // A heartbeat is a project's own report of where it stands: what finished, what is running, what waits on
+    // the operator. bin/harold-index reads the newest one first for the pulse (`harold pulse` and boot), so a
+    // project that posts them is judged by them. The file sits in the project's folder, as the pulse looks for it.
+    const usage = 'usage: harold file heartbeat \'{"project":"<name or alias>","done":"what finished","running":"what is in progress","waiting":"what waits on the operator, with due dates","detail":"<repo file with the detail>"}\'';
+    let obj; try { obj = JSON.parse(args.slice(1).join(' ')); } catch (_) { console.error(usage); return 2; }
+    if (!obj || typeof obj !== 'object' || !String(obj.project || '').trim() || !String(obj.done || '').trim()) { console.error(`a heartbeat needs "project" and "done"\n${usage}`); return 2; }
+    const { projects } = loadProjects(root); const q = String(obj.project).trim().toLowerCase();
+    const p = projects.find(x => x.name.toLowerCase() === q) || projects.find(x => x.aliasList.some(a => a.toLowerCase() === q));
+    if (!p) { console.error(`no project "${obj.project}" in harold/projects.md (by name or alias). Known: ${projects.map(x => x.name).join(', ') || 'none'}. Resolve it with: ${CLI(root)} where <topic>`); return 2; }
+    const rel = heartbeatRel(p); const target = path.join(root, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const date = ISO_DATE.test(String(obj.date || '')) ? obj.date : today.iso;
+    const entry = { date, ts: now, project: p.name, done: String(obj.done).trim() };
+    for (const k of ['running', 'waiting', 'detail']) if (obj[k] !== undefined && String(obj[k]).trim()) entry[k] = typeof obj[k] === 'string' ? obj[k].trim() : obj[k];
+    withLock(target, () => appendLine(target, entry));
+    console.log(`heartbeat for ${p.name} → ${rel}`); return 0;
+  }
+  console.error('usage: harold file trigger|daily|crm|learning|heartbeat ...'); return 2;
+}
+// Where a project's heartbeats live: <folder>/heartbeats.jsonl, or harold/heartbeats/<slug>.jsonl when the map gives
+// no usable folder. The same rule as heartbeat_rel() in bin/harold-index, which reads them.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function heartbeatRel(p) {
+  const f = String(p.folder || '').trim().replace(/^`|`$/g, '').trim().replace(/^\.\/+/, '').replace(/\/+$/, '');
+  if (f && f !== '.' && !f.startsWith('/') && !f.split('/').includes('..')) return `${f}/heartbeats.jsonl`;
+  const slug = p.name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '') || 'note';
+  return `harold/heartbeats/${slug}.jsonl`;
 }
 
 function cmdWhere(root, args) {
@@ -1951,6 +2030,8 @@ function cmdBrief(root, today, argv, now) {
       Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: git(root, ['rev-parse', 'HEAD']).out, pushedTo: '(no origin remote: committed locally)' }); saveJob(root, job);
       console.log(`FINISH ok: ${path.relative(root, p)} committed locally (no origin remote to push to).`); return 0;
     }
+    const pubB = publicStarterOrigin(root);
+    if (pubB) { console.log(`FINISH: ${path.relative(root, p)} committed locally. ${publicStarterRefusal(root, pubB)}`); return 1; }
     // Push the branch the job runs on (the knowledge base's branch in production; a test branch in a test).
     const cur = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).out; const branch = cur && cur !== 'HEAD' ? cur : defaultBranch(root);
     let pushed = null, err = '';
@@ -2127,6 +2208,7 @@ function hkProblems(root, job) {
 // Push HEAD to the branch the job runs on, replaying onto whatever other writers pushed meanwhile.
 function pushHead(root, ident) {
   if (git(root, ['remote', 'get-url', 'origin']).code !== 0) return { ok: true, local: true, sha: git(root, ['rev-parse', 'HEAD']).out };
+  const pub = publicStarterOrigin(root); if (pub) return { ok: false, starter: true, err: publicStarterRefusal(root, pub) };
   const cur = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).out; const branch = cur && cur !== 'HEAD' ? cur : defaultBranch(root);
   let err = '';
   for (let i = 0; i < 3; i++) {
@@ -2159,6 +2241,7 @@ function finishHousekeepingJob(root, job, { anyway = false } = {}) {
     if (cm.code !== 0 && !/nothing to commit|no changes added/.test(cm.out + cm.err)) return { code: 2, text: `FAIL: commit failed: ${cm.err.slice(0, 300)}` };
   }
   const ps = pushHead(root, ident);
+  if (!ps.ok && ps.starter) return { code: 1, text: `FINISH: ${job.job} ${job.date}, ${staged.length} file(s) committed locally. ${ps.err}` };
   if (!ps.ok) return { code: 2, text: `FAIL: push to ${ps.branch} failed: ${ps.err}` };
   Object.assign(job, { finished: true, finishedAt: new Date().toISOString(), pushedSha: ps.sha, pushedTo: ps.local ? '(no origin remote: committed locally)' : ps.branch, unfinished: problems.length ? problems : undefined });
   saveHkJob(root, job);
@@ -2508,7 +2591,7 @@ function main() {
     default:
       console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  learnings [--project <slug>] [--severity <s>] [--all]   print learnings in full (default: the critical ones; with
                      --project, that project's critical and warning entries plus global ones)
-  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

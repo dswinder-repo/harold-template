@@ -17,8 +17,8 @@ rebuilt from the markdown in seconds.
   harold-index pulse [--json] [--all] [--boot]
                                        each active project's last activity and next step; quiet ones first.
                                        A project that posts heartbeats (<folder>/heartbeats.jsonl, else
-                                       harold/heartbeats/<project>.jsonl) is judged by them alone; nothing
-                                       in the starter writes heartbeats yet.
+                                       harold/heartbeats/<project>.jsonl) is judged by them alone;
+                                       `bin/harold file heartbeat '<json>'` writes them.
   harold-index stat                    what is indexed
 
 Indexed unit: one row per markdown section (split at headings), with path, title (file H1 or
