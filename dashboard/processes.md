@@ -28,6 +28,7 @@
 
 | You say something like... | Playbook |
 |---------------------------|----------|
+| "set up Harold", "install Harold", "help me get started", a first run in a fresh copy of the starter, or boot opening with `⚠ NOT SET UP YET` | `playbook/core/setup.md` (before anything else, the morning brief included) |
 | A start-of-day opener at any hour: "good morning", "gm", "morning", "let's get started", "let's go", "start the day", "daily brief" (a first message that is a project request is NOT one) | `playbook/core/morning-brief.md` (Step 0 first: show today's scheduled draft if boot says READY; otherwise 3 steps, two pauses, follow exactly) |
 | "just got off a call with...", "we met with...", pasting notes or a transcript, forwarding an email | `playbook/core/meeting-debrief.md` (its commitments become tasks automatically), then `playbook/core/analyst.md` |
 | "met someone new", "intro to...", "add X to the CRM" | `playbook/core/contact-intake.md` |
@@ -75,14 +76,14 @@ One trigger usually means several writes. A meeting debrief, for example: meetin
 
 Runs on the last business day of the month (trigger id `month-end`).
 
-As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it is read-only: it writes the review (step 6's file) and turns every change it would make (a project status, a pipeline entry, `memory/CLAUDE.md`) into a note for the next brief.
+As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it is read-only: it writes the review (step 6's file) and turns every change it would make (a project status, a pipeline entry, `memory/working-memory.md`) into a note for the next brief.
 
 1. **Goals:** read `dashboard/status.md` Goals / KPIs; mark each on track, at risk, or missed, with one line of evidence.
 2. **Projects:** for each active entry in `harold/projects.md`, one line: what moved this month, what didn't (`bin/harold pulse --all` gives each one's last activity and next step). Set `status: paused` or `archived` where that is now true.
 3. **Relationships:** run `harold_cadence_check` on harold-mcp (on the connector, `crm_stale`); list who went stale and decide re-engage or re-rate warmth.
 4. **Pipeline:** `crm_pipeline` / `harold_pipeline` with action `list`; close entries that are really dead (`Dormant` with an outcome).
 5. **Blockers:** anything open more than 30 days gets a decision: resolve, re-scope, or accept.
-6. **Write it down:** `vault/daily/YYYY-MM-DD-month-end.md` with the above, and update `memory/CLAUDE.md` Current Priority if it changed.
+6. **Write it down:** `vault/daily/YYYY-MM-DD-month-end.md` with the above, and update `memory/working-memory.md` Current Priority if it changed.
 7. **Record it:** `bin/harold file trigger month-end ran "<one-line summary>"`.
 
 ---
@@ -97,7 +98,7 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 
 ## Memory Hygiene
 
-- `memory/CLAUDE.md` holds only what every session needs. History goes to `vault/`.
+- `memory/working-memory.md` holds only what every session needs. History goes to `vault/`.
 - Corrections are acted on in the same turn, never later: record fixes are corrected in place, and lessons are written into their rule and filed with `bin/harold file learning`.
 - Derived files (`harold/alerts.md`, the weekly summary) are rebuilt from source, never hand-maintained (`harold/sync-map.md`).
 
@@ -105,4 +106,4 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 
 ## Session Handoff
 
-When a session runs long (100+ tool calls) or the work will continue elsewhere, write a handoff in `memory/CLAUDE.md` → Session Handoff: what was done, what is left, key file paths, gotchas. Then start fresh rather than waiting for the context to overflow.
+When a session runs long (100+ tool calls) or the work will continue elsewhere, write a handoff in `memory/working-memory.md` → Session Handoff: what was done, what is left, key file paths, gotchas. Then start fresh rather than waiting for the context to overflow.

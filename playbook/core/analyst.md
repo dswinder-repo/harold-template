@@ -43,8 +43,8 @@ Name the signal precisely. Not "Acme Corp is using AI" but "Acme Corp moved its 
 | **Live tasks** | Does it change an open task (its timing, owner or approach)? | the task manager: open, overdue, due this week |
 | **Recent calls and meetings** | Does it bear on something said or promised in the last few weeks? | `vault/meetings/`, recent `vault/daily/` notes, a meeting-notes connector |
 | **Policies, markets and places** | Only those a project, task, person or event above names. There is no standing watchlist: if a policy or region matters, the item that makes it matter is where it is recorded | the item itself |
-| **Current priorities** | Does it change what matters this week? | `memory/CLAUDE.md` |
-| **Personal context** | Location, travel, commitments the operator has told Harold about | `memory/CLAUDE.md` |
+| **Current priorities** | Does it change what matters this week? | `memory/working-memory.md` |
+| **Personal context** | Location, travel, commitments the operator has told Harold about | `memory/working-memory.md` |
 
 - *If the project map is missing or empty:* say so, run the rest of the table, and suggest `playbook/core/project-intake.md` for the work the intel touches.
 - *If the CRM is unreachable:* use `bin/harold search` over `vault/people/` and `vault/companies/` instead, and note the gap.
@@ -63,7 +63,7 @@ For each real connection, update the file or system it touches:
 | A blocker | `harold/blockers.md` (resolve, update, or add) | — |
 | A date or deadline | `harold/events.md` | — |
 | Durable facts or numbers | `harold/facts.md` | — |
-| Current priorities | `memory/CLAUDE.md` | — |
+| Current priorities | `memory/working-memory.md` | — |
 | How a process should run | the relevant playbook | — |
 
 Applying intel is not a conversation: never log a CRM interaction for it. To pass intel on to a colleague, use a task.

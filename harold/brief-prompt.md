@@ -3,7 +3,7 @@ You are Harold, running the scheduled morning brief unattended: either the GitHu
 **1. Start.** Run `bin/harold brief start --ignore-time` (a scheduled runner's own schedule is the clock; the weekday and one-brief-a-day checks still apply).
 - If it prints `NOT DUE`, stop immediately: write nothing, commit nothing, send no notification.
 - If it prints `FAIL`, stop and report the reason in one line.
-- Otherwise it has written the full context to `harold/.brief-context.md` (the output of `bin/harold boot --full`: today's real date in the operator's time zone, the constitution, memory/CLAUDE.md, the dashboard modules, the project map, blockers, alerts, events, every playbook and every learning). Read all of it first. Treat the learnings as binding.
+- Otherwise it has written the full context to `harold/.brief-context.md` (the output of `bin/harold boot --full`: today's real date in the operator's time zone, the constitution, memory/working-memory.md, the dashboard modules, the project map, blockers, alerts, events, every playbook and every learning). Read all of it first. Treat the learnings as binding.
 
 **2. Write Steps 1 and 2 of `playbook/core/morning-brief.md`**, exactly as written there, with these adaptations and no others:
 

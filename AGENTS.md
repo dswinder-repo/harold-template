@@ -104,7 +104,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 ### Then:
 
-1. **Read `memory/CLAUDE.md`** — current priorities, blockers, key context
+1. **Read `memory/working-memory.md`** — current priorities, blockers, key context
 2. **Read `dashboard/index.md`** — module router (tells you which dashboard modules to load)
 3. **Read `dashboard/status.md`** — current state, projects, deadlines, intel
 4. **Check `harold/alerts.md`** — urgent items and time-sensitive flags. **If its `Last updated:` date is more than a day old, say so and rebuild the Current Alerts section from the task manager + `harold/blockers.md` + `harold/events.md` before proceeding.** Alerts is a derived view that must be regenerated from source, never hand-maintained.
@@ -123,7 +123,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 >
 > `bin/harold backlinks "<note>"` lists everything pointing at a note. Links are `[[wikilinks]]` (by filename, title or `aliases:`), relative markdown links, and frontmatter fields that name notes (`company`, `project`, `people`, `attendees`, `related` and similar). The graph lives in `harold/search.db` (gitignored, rebuilt by boot, search and close whenever a file changed); `harold/graph.json` is its committed copy (paths, titles, types, dates and links, no note text), rewritten by close, so a surface without the workspace follows the same links through the connector's `harold_related`, which reads that file. Archived notes (`archive/` folders, `*-archive.md`) are indexed and searchable, and never flagged stale. Resolve any project to its folder with `bin/harold where <topic>`.
 >
-> **Which projects have gone quiet:** `bin/harold pulse` lists each active project's newest activity (what it was and its date), its next step, and a quiet flag after `HAROLD_PULSE_DAYS` (default 14) days without any; boot prints the quiet ones. A project with no next step recorded is a gap: say it, and record the step as `next_step:` in its `harold/projects.md` entry once the operator names it. The connector's `harold_pulse` gives the same answer.
+> **Which projects have gone quiet:** `bin/harold pulse` lists each active project's newest activity (what it was and its date), its next step, and a quiet flag after `HAROLD_PULSE_DAYS` (default 14) days without any; boot prints the quiet ones. A project with no next step recorded is a gap: say it, and record the step as `next_step:` in its `harold/projects.md` entry once the operator names it. At each finished piece of work on a project, post a heartbeat with `bin/harold file heartbeat '{"project":"<name>","done":"...","running":"...","waiting":"...","detail":"<file>"}'`; the pulse reads the newest one first. The connector's `harold_pulse` gives the same answer.
 
 ---
 
@@ -131,7 +131,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 | Purpose | Path |
 |---------|------|
-| **Working Memory** | `memory/CLAUDE.md` |
+| **Working Memory** | `memory/working-memory.md` |
 | **Dashboard Router** | `dashboard/index.md` |
 | **Dashboard Modules** | `dashboard/status.md`, `people.md`, `processes.md` (Context Engine), `strategy.md` |
 | **Glossary / Shorthand** | `memory/glossary.md` |
@@ -159,7 +159,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 ## System Rules
 
-- **`memory/CLAUDE.md`** is the single source of truth for session context.
+- **`memory/working-memory.md`** is the single source of truth for session context.
 - **`tools/`** holds Harold's own software: `harold-mcp` (knowledge-base + CRM MCP server), `harold-crm` (the optional CRM web app, Next.js on the same Supabase database), `harold-connector` (the hosted MCP server you deploy once, which reaches the knowledge base and CRM from any MCP client: a chat app on your phone, a coding agent, a scheduled job; boot and close do not run there), `harold-plugin` (Cowork plugin), `openclaw-plugin` (OpenClaw plugin), `harness-hooks` (user-level hook snippets for Kimi Code and Hermes Agent), `visualizer` (Expedition HQ, local-only).
 - **The task manager** (Linear by default; your team key is [TEAM]) holds tasks and due dates. `bin/harold-linear` talks to Linear when `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` are set in `~/.harold/env`.
 - **Playbooks** in `playbook/` define standard operating procedures for recurring workflows. The Context Engine in `dashboard/processes.md` fires them from what the operator says.
@@ -174,7 +174,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 ## CRM Filing Protocol (MANDATORY)
 
-For every contact touched, all three happen together, every time: log the interaction, update the contact record, update the vault people profile. Every contact is filed the same way, whatever its type. A vault card with `crm: none` is deliberately kept out of the CRM. Full procedure (tools, connector writes, outages, corrections): `playbook/core/crm-filing.md`. When a contact detail is corrected, the CRM record is the most important update: never fix the vault or the task manager and skip the CRM.
+The CRM is a required part of Harold: a Supabase database in the operator's own account, reached through the hosted connector or the local `harold-mcp` (setup: `playbook/core/setup.md`, step 8). Only the CRM web app (`tools/harold-crm`) is optional. For every contact touched, all three happen together, every time: log the interaction, update the contact record, update the vault people profile. Every contact is filed the same way, whatever its type. A vault card with `crm: none` is deliberately kept out of the CRM. Full procedure (tools, connector writes, outages, corrections): `playbook/core/crm-filing.md`. When a contact detail is corrected, the CRM record is the most important update: never fix the vault or the task manager and skip the CRM.
 
 ## Deployment Verification (MANDATORY)
 
@@ -189,7 +189,7 @@ For every contact touched, all three happen together, every time: log the intera
 Sessions that involve heavy building often reach the model's context limit.
 - **Save progress incrementally**: commit and push at milestones, not just at session end.
 - **When context is getting long** (100+ tool calls), proactively suggest starting a fresh session with a handoff summary rather than waiting for auto-continuation.
-- **Handoff summaries** are structured: what was done, what's left, key file paths, gotchas (`memory/CLAUDE.md` → Session Handoff).
+- **Handoff summaries** are structured: what was done, what's left, key file paths, gotchas (`memory/working-memory.md` → Session Handoff).
 
 ## Error Capture Rule (MANDATORY)
 

@@ -14,9 +14,9 @@ When you edit any file below, check its cascade column. If the field you are cha
 
 | Field | Authoritative Source | Also Appears In | Cascade |
 |-------|---------------------|-----------------|---------|
-| Active blocker list | `harold/blockers.md` | `harold/alerts.md`, `memory/CLAUDE.md` | Edit blockers.md first → rebuild the alerts rows → update the Active Blockers list in memory/CLAUDE.md |
+| Active blocker list | `harold/blockers.md` | `harold/alerts.md`, `memory/working-memory.md` | Edit blockers.md first → rebuild the alerts rows → update the Active Blockers list in memory/working-memory.md |
 | Blocker age | `harold/blockers.md` (Raised column) | `harold/alerts.md` | Never typed by hand: boot computes it from Raised |
-| Blocker resolution | `harold/blockers.md` | `harold/alerts.md`, `memory/CLAUDE.md` | Move the row to `## Resolved` with the date → remove from alerts → remove from memory |
+| Blocker resolution | `harold/blockers.md` | `harold/alerts.md`, `memory/working-memory.md` | Move the row to `## Resolved` with the date → remove from alerts → remove from memory |
 
 **Validation rule:** every blocker in the Current Blockers table is either in alerts.md or younger than 3 days.
 
@@ -26,7 +26,7 @@ When you edit any file below, check its cascade column. If the field you are cha
 
 | Field | Authoritative Source | Also Appears In | Cascade |
 |-------|---------------------|-----------------|---------|
-| Upcoming events | `harold/events.md` | `harold/alerts.md`, `memory/CLAUDE.md` | Edit events.md first → proximity alerts follow → memory's upcoming list |
+| Upcoming events | `harold/events.md` | `harold/alerts.md`, `memory/working-memory.md` | Edit events.md first → proximity alerts follow → memory's upcoming list |
 | Prep status | `harold/events.md` | `harold/alerts.md` | Prep not Complete and event under 10 days out → alert, and event prep is due work |
 | Debrief status | `harold/events.md` | `harold/alerts.md` | Event ended and no debrief after 3 days → alert |
 | Completed events | `harold/events.md` (Completed Events) | weekly summary | Move the row out of Upcoming once debriefed |
@@ -40,7 +40,7 @@ When you edit any file below, check its cascade column. If the field you are cha
 | Field | Authoritative Source | Also Appears In | Cascade |
 |-------|---------------------|-----------------|---------|
 | Relationship state (type, labels, warmth, pipeline entries, last contact) | **CRM** | `vault/people/<Name>.md` frontmatter | CRM first → vault card frontmatter (`warmth`, `last_updated`) |
-| Names, titles, organizations | `harold/facts.md` + `vault/people/` | CRM, project folders, `memory/CLAUDE.md` | Fix the spelling everywhere it appears → add the mistake to the Terminology table in facts.md |
+| Names, titles, organizations | `harold/facts.md` + `vault/people/` | CRM, project folders, `memory/working-memory.md` | Fix the spelling everywhere it appears → add the mistake to the Terminology table in facts.md |
 | New contacts | `playbook/core/contact-intake.md` | CRM, `vault/people/`, `harold/facts.md` | Vault card → CRM record → facts.md row if it is a fact worth guarding |
 
 ---
@@ -50,9 +50,9 @@ When you edit any file below, check its cascade column. If the field you are cha
 | Field | Authoritative Source | Also Appears In | Cascade |
 |-------|---------------------|-----------------|---------|
 | Which projects exist, where they live | `harold/projects.md` | `vault/projects/`, `dashboard/status.md` | Map entry first (`playbook/core/project-intake.md`) → vault card → status dashboard |
-| Task state and due dates | **Task manager** (Linear by default) | weekly summary, `memory/CLAUDE.md` | Never duplicated by hand: summaries pull from the task manager |
-| Project deadlines | `dashboard/status.md` | `harold/events.md` (if date-specific), `memory/CLAUDE.md` | Status dashboard → events.md → memory |
-| Current priorities | `memory/CLAUDE.md` | weekly summary | Memory is authoritative; the summary mirrors it |
+| Task state and due dates | **Task manager** (Linear by default) | weekly summary, `memory/working-memory.md` | Never duplicated by hand: summaries pull from the task manager |
+| Project deadlines | `dashboard/status.md` | `harold/events.md` (if date-specific), `memory/working-memory.md` | Status dashboard → events.md → memory |
+| Current priorities | `memory/working-memory.md` | weekly summary | Memory is authoritative; the summary mirrors it |
 
 ---
 
@@ -80,9 +80,9 @@ When you edit any file below, check its cascade column. If the field you are cha
 
 | When you edit... | Also update... |
 |------------------|----------------|
-| `harold/blockers.md` (add or resolve) | `harold/alerts.md`, `memory/CLAUDE.md` |
-| `harold/events.md` (add or complete) | `harold/alerts.md`, `memory/CLAUDE.md` |
+| `harold/blockers.md` (add or resolve) | `harold/alerts.md`, `memory/working-memory.md` |
+| `harold/events.md` (add or complete) | `harold/alerts.md`, `memory/working-memory.md` |
 | A contact's warmth or details | CRM first, then the vault card |
 | `harold/projects.md` | the project's vault card, `dashboard/status.md` |
-| `memory/CLAUDE.md` priorities | the next weekly summary |
+| `memory/working-memory.md` priorities | the next weekly summary |
 | A misspelling found | every file containing it, then the Terminology table in `harold/facts.md` |

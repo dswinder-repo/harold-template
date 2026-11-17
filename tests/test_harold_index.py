@@ -75,7 +75,7 @@ NOTES = {
 
         Once worked with [[Acme Corp]] on the zeppelin.
         ''',
-    'memory/CLAUDE-archive.md': '''
+    'memory/working-memory-archive.md': '''
         # Working memory archive
 
         The 2025 zeppelin plan, moved out of working memory.
@@ -273,10 +273,10 @@ class IndexTest(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out): hi.search('zeppelin')
         self.assertIn('vault/archive/Old Partner.md', out.getvalue())
-        self.assertIn('memory/CLAUDE-archive.md', out.getvalue())
+        self.assertIn('memory/working-memory-archive.md', out.getvalue())
         g = self.graph()
         self.assertEqual(g.node('vault/archive/Old Partner.md')['type'], 'archive')
-        self.assertEqual(g.node('memory/CLAUDE-archive.md')['type'], 'archive')
+        self.assertEqual(g.node('memory/working-memory-archive.md')['type'], 'archive')
         self.assertFalse(hi.is_stale(g.node('vault/archive/Old Partner.md')))  # two years old, archived
         self.assertIn('vault/archive/Old Partner.md', g.inn['vault/companies/Acme Corp.md'])
 

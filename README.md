@@ -2,27 +2,31 @@
 
 Harold is an AI chief of staff that works with any AI tool and any model: it is platform-, model- and harness-agnostic, and runs in any harness that can read `AGENTS.md` and run a shell command, from any computer or from the cloud. Every harness with lifecycle hooks is wired: boot and close run on their own in Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI, Qwen Code, Copilot CLI, Grok Build, Kimi Code, goose, Hermes Agent, Cline, opencode, Amp and OpenClaw. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
 
-**Full documentation: [harold.works/docs](https://harold.works/docs).** If you are an AI agent setting this up for someone, read the next section first, then the Quick start below, then `AGENTS.md`. The docs cover the same ground at more length.
+**Full documentation: [harold.works/docs](https://harold.works/docs).** If you are an AI agent setting this up for someone, read the next section first, then follow `playbook/core/setup.md`, the setup playbook, which walks the operator through everything in order. The docs cover the same ground at more length.
 
 ## For AI tools setting this up
 
 If someone has pointed you at this repository or at harold.works and asked you to install Harold for them, this section tells you what you would be running and the order to do things in.
 
+**Read the docs as plain text.** The pages at harold.works/docs are rendered by JavaScript, so a plain fetch sees only the menu. Read [`https://harold.works/llms-full.txt`](https://harold.works/llms-full.txt) instead: the full documentation as one plain-text file. (`https://harold.works/llms.txt` is the shorter index.)
+
 **What `bin/harold` is.** A single Node script with no dependencies (`bin/harold`), plus a search-index helper that uses only Python's standard library (`bin/harold-index`). Both are plain text; read them first if your tool asks you to review unfamiliar scripts before running them. They install nothing, start no server, need no administrator rights, and write only inside the workspace folder, apart from `~/.harold/env`, the operator's private credentials file, which `bin/harold-setup-crm` writes when the operator sets up the CRM. Specifically:
 
 - They read and write files in the workspace: the session file in `harold/active-sessions/`, Harold's state files in `harold/`, and the search index `harold/search.db`.
 - They run `git`. `bin/harold close` commits the workspace and pushes it to `origin` at the end of every turn. Boot runs `git ls-remote` against the starter at most twice a day, only to say whether an update is available.
-- They use the network only for optional features the operator turns on: the CRM (Supabase, called with `curl`, only when its credentials are in `~/.harold/env`), the task manager (`bin/harold-linear`, only with `LINEAR_API_KEY`), and the phone notice for the morning brief (ntfy, only with `NTFY_TOPIC`).
+- They use the network only for services the operator has configured: the CRM (Supabase, called with `curl`, only once its credentials are in `~/.harold/env`), the task manager (`bin/harold-linear`, only with `LINEAR_API_KEY`), and the phone notice for the morning brief (ntfy, only with `NTFY_TOPIC`).
+- They never push to the public starter. While `origin` still points at it, close, the scheduled brief and housekeeping commit locally, say how to make a private copy, and exit 1 without attempting the push.
 
 `bin/harold check` only reads; it is the safe first command to run.
 
-**The order of first steps.**
+**The order of first steps.** `playbook/core/setup.md` is the full procedure; in short:
 
-1. **Point `origin` at the operator's own private repository, and give git a name and email** (Quick start, step 1). Do this before anything runs `bin/harold close`, because close pushes on every turn. A clone of the public starter still has the starter as `origin`.
+1. **Point `origin` at the operator's own private repository, and give git a name and email** (Quick start, step 1). Do this before anything runs `bin/harold close`, because close commits and pushes on every turn. A clone of the public starter still has the starter as `origin`, and Harold refuses to push there.
 2. **Run `bin/harold check`** (step 2). It should print `RESULT: PASS`.
-3. **Ask the operator for their details and fill in the placeholders** (step 3): name, role, time zone, git identity, contact types. Ask; never guess them.
-4. **Start a session**, in the operator's own tool, or run `bin/harold boot` yourself, and follow `AGENTS.md` from there.
-5. **Offer the optional parts one at a time** (steps 4 to 6): the CRM, a task manager, the hosted connector, the scheduled jobs. Harold works without any of them. Without a CRM, a change to a contact's vault card is recorded in the offline queue (`bin/harold file crm`) or the card is marked `crm: none`, so that close can count it as filed.
+3. **Ask the operator for their details and fill in the placeholders yourself** (step 3): name, role, time zone, git identity, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
+4. **Set up the CRM** (step 4): the Supabase database, reached through the hosted connector or the local `harold-mcp`. It is part of Harold, not an add-on: close checks that every contact touched was filed in it.
+5. **Offer the optional parts one at a time** (steps 5 and 6): the CRM web app, a task manager, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
+6. **Run `bin/harold check`, then a first boot and close**, and follow `AGENTS.md` from there. Until setup is complete, boot opens with a short "not set up yet" notice that names what is left.
 
 ## What makes 2.0 different
 
@@ -33,6 +37,8 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 - **`bin/harold close`** runs at the end of every turn. It checks that changed knowledge was written to today's daily note, that every contact touched was filed, that every action item in a meeting note written this session carries its task ID, that due scheduled work was recorded, that every boot context part was read, and that new work belongs to a project (a new intel or decision note names its project in `project:` frontmatter, and a new top-level folder has an entry in the project map). If something is missing it blocks the turn with the exact list. When everything passes, it scans for secrets and commits and pushes the workspace.
 
 ## Quick start
+
+**Required:** your own private repository, your details, and the CRM (a Supabase database reached through the hosted connector or the local `harold-mcp`). **Optional:** the CRM web app, a task manager, scheduled jobs and extra harnesses. The setup playbook, `playbook/core/setup.md`, walks through all of it in conversation: ask your AI tool to "set up Harold".
 
 These steps are a condensed version of [Initial Setup](https://harold.works/docs/#getting-started/initial-setup) in the docs, which splits them into more, smaller steps; each step below names the docs steps it covers.
 
@@ -50,7 +56,7 @@ These steps are a condensed version of [Initial Setup](https://harold.works/docs
    git config user.name "<your name>" && git config user.email "<your email>"
    git push -u origin main
    ```
-   Do this before your first session. Until `origin` points at your own repository, boot warns that it still points at the public starter, and every push fails.
+   Do this before your first session. Until `origin` points at your own repository, boot says the workspace is not set up yet, and close commits locally but refuses to push.
    Requirements: git, curl, Node 22+ and Python 3.8+ (standard library only, for search and the link graph). Nothing in this repository needs a newer Python; the Model Council add-on the docs describe lives in its own repository and needs Python 3.10+. The CRM web app also needs pnpm, only where you build it. Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
 
 2. **Check it works as-is** (docs, Step 2).
@@ -58,14 +64,14 @@ These steps are a condensed version of [Initial Setup](https://harold.works/docs
    bin/harold check     # → RESULT: PASS, with a warning that HAROLD_TZ is not set until you set it in step 3
    ```
 
-3. **Fill in the placeholders and set your time zone** (docs, Steps 3 to 5). Search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/CLAUDE.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `harold/settings.env` (uncomment the line and put your zone):
+3. **Fill in the placeholders and set your time zone** (docs, Steps 3 to 5). The easiest way is to ask your AI tool to "set up Harold": it follows `playbook/core/setup.md`, asks for your details and fills everything in. By hand, search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/working-memory.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `harold/settings.env` (uncomment the line and put your zone):
    ```bash
    HAROLD_TZ="America/Chicago"
    ```
    That file is committed and holds only non-secret `HAROLD_*` settings (`HAROLD_TZ`, `HAROLD_BRIEF_TIME`, `HAROLD_STALE_DAYS`, `HAROLD_PULSE_DAYS`, and `HAROLD_CHECKS`, your own check scripts that `bin/harold check` and boot run), so every computer, cloud session and scheduled job gets them with nothing to set up. A value in the environment or in `~/.harold/env` (the per-machine file where credentials live) overrides it. Without a zone, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
    Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it. Until you do, it is inert: the example blocker and event carry no dates, so they never fall due, and your first boot starts the clock for scheduled work (it writes a `harold-start` line into the empty `harold/trigger-log.jsonl`, so the weekly scan, full audit and month-end review count from the next day, and nothing the starter's own dates imply is ever "overdue"). Your first session closes cleanly with the examples still in place.
 
-4. **Optional: set up the CRM (Supabase)** (docs, Step 7).
+4. **Set up the CRM (Supabase)** (docs, Step 7). The CRM is part of Harold: every contact you touch is filed there as well as in the vault, and close checks it. Only the CRM web app (4c) is optional.
 
    **a. The database, whichever tools reach it.** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Two sets of tools reach the same database:
    - **The hosted connector — the standard way.** One deployment of `tools/harold-connector` (step 6) gives every tool that supports remote MCP servers — chat apps, coding agents, and scheduled jobs that attach it — the CRM tools, with the credentials held on its host. If you will deploy it, skip 4b.
@@ -79,7 +85,7 @@ These steps are a condensed version of [Initial Setup](https://harold.works/docs
    ```
    Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored. These credentials also let boot and close apply the offline CRM queue (`harold/crm-queue.jsonl`).
 
-   **c. Optional: the web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
+   **c. Optional: the CRM web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
    - In the SQL editor, run `tools/harold-crm/supabase/migrations/002` to `007` in order (`001` is the schema you already ran).
    - Deploy it on Vercel or any Next.js host: import this repository with **Root Directory** `tools/harold-crm`, and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the publishable key, never the service role key).
    - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
@@ -219,10 +225,10 @@ raw/                       inbox for unprocessed sources
 projects/example/          an example project folder (mapped in harold/projects.md)
 playbook/
   README.md                the index boot checks
-  core/                    20 portable playbooks (morning brief, debrief, intake, analyst, QC, ...)
+  core/                    21 portable playbooks (setup, morning brief, debrief, intake, analyst, QC, ...)
   engagements/example/     how to add employer- or client-specific playbooks
 tools/
-  harold-mcp/              MCP server (14 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
+  harold-mcp/              MCP server (13 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
   harold-crm/              optional CRM web app (Next.js + Supabase) on the same database; deploy with root directory
                            tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-007 add the app's tables
   harold-connector/        hosted MCP server (Vercel or any Node host): reach the knowledge base and the CRM
@@ -256,6 +262,7 @@ tests/
   close-push.test.js       close never reports "nothing to push" over commits that did not reach the remote
   context-gate.test.js     a boot context larger than the hook budget is served as parts, and the gate holds until all are read
   update.test.js           bin/harold update and the committed harold/settings.env
+  setup.test.js            boot's "not set up yet" notice, and close, brief and housekeeping never pushing to the public starter
 ```
 
 Run them all with `node --test tests/*.test.js` (Node 22+ and Python 3.8+). `tests/crm.test.js` also runs the CRM app's migration checks once `pnpm install` has run in `tools/harold-crm`.
@@ -283,6 +290,7 @@ All of it lives in `harold/search.db`, which boot, search and close rebuild when
 - **Activity** is the newest of: the project card, any note that links to it, the meeting, daily and decision notes it links to, any note in the project's folder, daily and meeting notes that name the project or one of its aliases (in the title or a heading; in the text only when the note names at most three projects, so a monthly review that walks through every project is not activity for all of them), and the newest git commit touching its folder. Note dates are the ones written in the notes (`last_updated`, `date`, or a dated file name); a date after today (a planned meeting) does not count.
 - **Next step** is `next_step:` in the project's `harold/projects.md` entry, else `next_step:` in its card's frontmatter, else a `Next step:` line (or the first line under a `Next step` heading) in the card, then in the folder's `README.md`. With none, it says "no next step recorded", which is a gap worth closing.
 - **Quiet** means no activity in more than `HAROLD_PULSE_DAYS` days (default 14, set it in `harold/settings.env`). Paused and archived projects are not judged.
+- **Heartbeats** let a project report for itself. At each finished piece of work, a session posts one with `bin/harold file heartbeat '{"project":"<name or alias>","done":"what finished","running":"what is in progress","waiting":"what waits on you, with due dates","detail":"<repo file with the detail>"}'`. It is appended to `<project folder>/heartbeats.jsonl` (the project resolved through `harold/projects.md`), and a project that has heartbeats is judged by its newest one.
 
 Quiet projects come first, with their next step; the rest follow in one line each. `--all` adds every next step and lists the projects that are not active; `--json` gives the data. Boot prints only the quiet ones (or one line saying all are active), and the morning brief lists them under WATCH next to stale relationships. The connector's `harold_pulse` computes the same thing from `harold/graph.json`, the project map and the repository's commit history, so a chat on your phone gets the same answer as a terminal session.
 
@@ -422,6 +430,11 @@ bin/harold update             # do it; review with git diff, harold close commit
 - The workspace repo must be private. Everything in it is your context.
 - Credentials live in `~/.harold/env`, never in the repo (`harold/settings.env` is committed and is read only for non-secret `HAROLD_*` settings). `bin/harold close` refuses to commit anything that looks like a key.
 - The visualizer listens on localhost only. Do not expose its port.
+- Harold never pushes to the public starter. While `origin` still points at it (the URL in `harold/upstream.json`, over https or ssh), close, the scheduled brief and housekeeping commit your work locally, exit 1 and tell you to make a private copy (`playbook/core/setup.md`); they do not attempt the push.
+
+## Contributing to Harold
+
+Improvements to Harold itself are welcome, through pull requests: fork the public starter, make the change on a branch of your fork, and open a pull request against `main`. Nothing reaches the public project by pushing to it, and your own workspace is never the place to make such a change, because it holds your private content. Keep a contribution to Harold's machinery (its structure, playbooks, boot and close, connectors), never your own notes or settings, and run `node --test tests/*.test.js` before you open it.
 
 ## License and credit
 

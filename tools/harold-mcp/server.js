@@ -8,7 +8,6 @@
  * information without relying on the AI to "remember" to update markdown.
  *
  * Tools:
- *   harold_log              — Append an entry to context-log.md
  *   harold_fact             — Add or update a fact in facts.md
  *   harold_alert            — Add or update an alert in alerts.md
  *   harold_blocker          — Add or update a blocker in blockers.md
@@ -51,7 +50,7 @@ const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 const CRM_MISSING = [!SUPABASE_URL && "SUPABASE_URL", !SUPABASE_KEY && "SUPABASE_SERVICE_ROLE_KEY"].filter(Boolean);
 const CRM_NOT_CONFIGURED = `Error: CRM not configured — ${CRM_MISSING.join(" and ")} ${CRM_MISSING.length > 1 ? "are" : "is"} not set. ` +
   "Put them in ~/.harold/env (run bin/harold-setup-crm) and launch this server through bin/harold-mcp, then restart the session. " +
-  "Until then, queue CRM work with: bin/harold file crm '<json>'. The markdown tools (harold_log, harold_fact, harold_alert, harold_blocker, harold_event, harold_read) still work.";
+  "Until then, queue CRM work with: bin/harold file crm '<json>'. The markdown tools (harold_fact, harold_alert, harold_blocker, harold_event, harold_read) still work.";
 if (CRM_MISSING.length) {
   console.error("\n" + "!".repeat(78) + "\n!! harold-mcp: CRM DISABLED. Missing: " + CRM_MISSING.join(", ") + "\n!! Set them in ~/.harold/env (bin/harold-setup-crm) and start the server via bin/harold-mcp.\n" + "!".repeat(78) + "\n");
 }
@@ -211,56 +210,6 @@ function now() {
 }
 
 /**
- * Find the section for today's date in context-log.md.
- * If it exists, append under it. If not, create a new date header.
- */
-function appendContextLog(title, body) {
-  const logPath = path.join(HAROLD_DIR, "context-log.md");
-  const content = readFile(logPath) || "# Harold Context Log\n\n";
-
-  const dateStr = new Date().toLocaleDateString("en-US", {
-    year: "numeric", month: "long", day: "numeric"
-  });
-  const dateHeader = `## ${dateStr}`;
-
-  const entry = `\n### ${title}\n\n**Logged:** ${now()}\n\n${body}\n`;
-
-  // Check if today's date section exists
-  if (content.includes(dateHeader)) {
-    // Find the date header and insert after it (before the next ## or end)
-    const headerIdx = content.indexOf(dateHeader);
-    const afterHeader = content.indexOf("\n", headerIdx) + 1;
-
-    // Find the next date section (## followed by a month name)
-    const nextSection = content.indexOf("\n## ", afterHeader);
-
-    if (nextSection === -1) {
-      // No next section — append to end
-      writeFile(logPath, content + entry);
-    } else {
-      // Insert before next section
-      const before = content.slice(0, nextSection);
-      const after = content.slice(nextSection);
-      writeFile(logPath, before + entry + after);
-    }
-  } else {
-    // Create new date section at the top (after the main header and first ---)
-    const firstDivider = content.indexOf("---");
-    if (firstDivider !== -1) {
-      const insertPoint = content.indexOf("\n", firstDivider) + 1;
-      const before = content.slice(0, insertPoint);
-      const after = content.slice(insertPoint);
-      writeFile(logPath, before + `\n${dateHeader}\n` + entry + "\n---\n" + after);
-    } else {
-      // No divider — just append
-      writeFile(logPath, content + `\n${dateHeader}\n` + entry);
-    }
-  }
-
-  return `Logged to context-log.md under ${dateStr}: "${title}"`;
-}
-
-/**
  * Update or insert a row in a markdown table within a file.
  * Uses a key column to find existing rows for update.
  */
@@ -334,29 +283,6 @@ const server = new McpServer({
   name: "harold-memory-sync",
   version: "1.0.0",
 });
-
-// ── Tool: harold_log ──────────────────────────────────────────────
-server.tool(
-  "harold_log",
-  "Append an entry to the Harold context log (context-log.md). Use for decisions, confirmations, meeting notes, corrections, or any context worth preserving across sessions.",
-  {
-    title: z.string().describe("Short title for the log entry (e.g., 'Partner intro emails confirmed sent')"),
-    body: z.string().describe("Full content of the log entry. Markdown supported. Include who, what, when, source."),
-    tags: z.array(z.string()).optional().describe("Optional tags for searchability (e.g., ['investor', 'outreach', 'acme'])"),
-  },
-  async ({ title, body, tags }) => {
-    try {
-      let fullBody = body;
-      if (tags && tags.length > 0) {
-        fullBody += `\n\n**Tags:** ${tags.join(", ")}`;
-      }
-      const result = appendContextLog(title, fullBody);
-      return { content: [{ type: "text", text: result }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
-    }
-  }
-);
 
 // ── Tool: harold_fact ─────────────────────────────────────────────
 server.tool(
@@ -673,7 +599,7 @@ server.tool(
   "Read a Harold knowledge base file. Use for verification after writes, or quick lookups without parsing markdown manually.",
   {
     file: z.enum([
-      "context-log.md", "facts.md", "alerts.md", "blockers.md",
+      "facts.md", "alerts.md", "blockers.md",
       "events.md", "projects.md", "sync-map.md"
     ]).describe("Which Harold file to read"),
     search: z.string().optional().describe("Optional: search for lines containing this text (case-insensitive)"),

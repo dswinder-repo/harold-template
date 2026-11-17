@@ -18,7 +18,7 @@ The brief is built around one reality: things change overnight. Colleagues in ot
 
 Priority-setting is guided, not open-ended. Harold proposes; you confirm, correct, or add nuance.
 
-**Configure these once** (replace the placeholders in this file, or record them in `memory/CLAUDE.md` and point here):
+**Configure these once** (replace the placeholders in this file, or record them in `memory/working-memory.md` and point here):
 
 | Setting | Placeholder | Notes |
 |---------|-------------|-------|
@@ -92,7 +92,7 @@ Everything below is the live procedure, used when there is no draft and as the s
       - **Alerts and blockers:** the Current Alerts in `harold/alerts.md` and `harold/blockers.md`.
       - **People:** contacts touched in the last 14 days (daily notes, CRM) and pipeline entries in play.
       - **Recent calls and meetings:** `vault/meetings/` and `vault/daily/` from the last 7 days, and a meeting-notes connector when the session has one.
-      - **Events and priorities:** `harold/events.md` and `memory/CLAUDE.md`.
+      - **Events and priorities:** `harold/events.md` and `memory/working-memory.md`.
       Write it down as a short **Relevance set** at the top of this section, each entry with its source.
    2. **Search for it.** Besides the configured beats, run up to five targeted searches for the entries most likely to be in the news (an organization in a live deal, a market or policy a project depends on, the city of a trip on the calendar).
    3. **Cross-reference every story against that set** (`playbook/core/analyst.md` defines the full cross-reference). Every 📌 names the live item that makes the story matter: a project, a task, a person, a meeting or an event. A story that touches nothing in the set gets no callout, however big it is. If a region or policy keeps coming up, it is because a project or task names it; record it there, never in a fixed list.

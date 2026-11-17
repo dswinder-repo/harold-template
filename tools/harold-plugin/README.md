@@ -4,6 +4,6 @@ Claude Code runs `bin/harold boot` and `close` from `.claude/settings.json`. Cow
 
 **Install:** in the Claude desktop app, add this folder (`tools/harold-plugin`) as a local plugin, then connect your Harold workspace folder to the Cowork session.
 
-**How it finds the workspace:** `scripts/resolve-root.sh` checks `HAROLD_ROOT`, `CLAUDE_PROJECT_DIR`, the current folder and its parents, `~/Documents/Harold`, then searches common sandbox mounts for a folder containing `AGENTS.md` whose path contains "Harold". If your workspace is named differently, set `HAROLD_ROOT` or `HAROLD_NAME_HINT`.
+**How it finds the workspace:** `scripts/resolve-root.sh` checks `HAROLD_ROOT`, `CLAUDE_PROJECT_DIR`, the current folder and its parents, then searches common sandbox mounts and the home folder (four levels deep) for a Harold workspace. It recognises one by its contents, not its name: `AGENTS.md`, a `playbook/` folder, a `harold/` folder and the `bin/harold` program. If your workspace is deeper than that, set `HAROLD_ROOT`.
 
 If the workspace cannot be found, boot refuses loudly rather than letting the session run without its instructions.

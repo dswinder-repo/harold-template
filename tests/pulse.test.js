@@ -94,3 +94,21 @@ test('boot prints only the quiet projects, or one line; HAROLD_PULSE_DAYS comes 
   assert.match(run(w, ['pulse']).out, /0 of 2 active projects quiet \(no activity in more than 60 days\)/);
   fs.rmSync(w.envFile);
 });
+
+test('file heartbeat: appends to the project folder, and the pulse judges the project by it', () => {
+  const x = workspace();
+  const bad = run(x, ['file', 'heartbeat', JSON.stringify({ project: 'No Such Project', done: 'x' })]);
+  assert.strictEqual(bad.code, 2);
+  assert.match(bad.err, /no project "No Such Project" in harold\/projects\.md/);
+  assert.strictEqual(run(x, ['file', 'heartbeat', JSON.stringify({ project: 'example' })]).code, 2, '"done" is required');
+  const r = run(x, ['file', 'heartbeat', JSON.stringify({ project: 'the example', done: 'Signed the NDA with Jane Doe', running: 'Drafting the plan', waiting: 'Budget sign-off by 2026-10-31', detail: 'projects/example/plan.md' })]);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /heartbeat for Example Project → projects\/example\/heartbeats\.jsonl/);
+  const row = JSON.parse(fs.readFileSync(path.join(x.ws, 'projects/example/heartbeats.jsonl'), 'utf8').trim().split('\n').pop());
+  assert.deepStrictEqual({ date: row.date, project: row.project, done: row.done, waiting: row.waiting }, { date: '2026-10-20', project: 'Example Project', done: 'Signed the NDA with Jane Doe', waiting: 'Budget sign-off by 2026-10-31' });
+  const p = run(x, ['pulse', '--json']);
+  const ex = JSON.parse(p.out).projects.find(q => q.name === 'Example Project');
+  assert.ok(ex, p.out);
+  assert.strictEqual(JSON.stringify(ex).includes('Signed the NDA with Jane Doe'), true, JSON.stringify(ex));
+  assert.strictEqual(ex.quiet, false, JSON.stringify(ex));
+});

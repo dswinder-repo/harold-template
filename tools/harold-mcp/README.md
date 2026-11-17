@@ -2,7 +2,7 @@
 
 The MCP server that connects Harold to your CRM and keeps the `harold/` markdown files in the formats `bin/harold` reads.
 
-**Tools (14)**
+**Tools (13)**
 
 | Tool | What it does |
 |------|--------------|
@@ -14,7 +14,6 @@ The MCP server that connects Harold to your CRM and keeps the `harold/` markdown
 | `harold_cadence_check` | Relationships overdue for contact, plus overdue CRM tasks. The same rule as the connector's `crm_stale` (`cadence.js`): the tightest stage cadence among open pipeline entries, else warmth (Hot 7 days, Warm 14, Lukewarm 28); Cold or unset warmth is never flagged |
 | `harold_crm_task` | Contact-specific follow-ups: create, update, complete, cancel, list |
 | `harold_alerts_sync` | The alerts engine: events, blockers, CRM freshness, CRM tasks, task-manager input |
-| `harold_log` | Append to `harold/context-log.md` |
 | `harold_fact` | Upsert a row in `harold/facts.md` |
 | `harold_alert` | Add, update or resolve an alert in `harold/alerts.md` |
 | `harold_blocker` | Add, update or resolve a blocker in `harold/blockers.md` |

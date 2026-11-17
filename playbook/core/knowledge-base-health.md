@@ -47,7 +47,7 @@ A lighter pass, done alongside the weekly summary.
 
 5. **Hot items**
    - Any fact, contact or concept referenced 3+ times this week (search this week's daily notes)?
-   - If yes → promote it: add it to `dashboard/status.md` or `memory/CLAUDE.md` so it is easy to find, not buried.
+   - If yes → promote it: add it to `dashboard/status.md` or `memory/working-memory.md` so it is easy to find, not buried.
 
 6. **Fact verification**
    - Pick 3 random entries from `harold/facts.md` and check they are still accurate.
@@ -85,7 +85,7 @@ A lighter pass, done alongside the weekly summary.
 | `harold/alerts.md` | Alert ages; timestamp at the bottom (older than 1 day means the `alerts-rebuild` trigger should already have fired) |
 | `harold/events.md` | Past events still under `## Upcoming Events`; prep and debrief status |
 | `harold/blockers.md` | Blockers older than 14 days; resolved items not moved to `## Resolved` |
-| `memory/CLAUDE.md` | Priorities that no longer match reality |
+| `memory/working-memory.md` | Priorities that no longer match reality |
 | Project READMEs (via `harold/projects.md`) | Status indicators, "Last updated" dates |
 
 **Action:** update stale dates, archive past events, close resolved blockers.
@@ -114,10 +114,10 @@ Key facts appear in several files. Check they agree, and fix downstream files fr
 
 | Fact | Where it appears | Source of truth |
 |------|------------------|-----------------|
-| Active blockers | `harold/blockers.md`, `harold/alerts.md`, `memory/CLAUDE.md` | `harold/blockers.md` |
+| Active blockers | `harold/blockers.md`, `harold/alerts.md`, `memory/working-memory.md` | `harold/blockers.md` |
 | Upcoming events and dates | `harold/events.md`, `harold/alerts.md`, `dashboard/status.md`, project READMEs | `harold/events.md` |
 | Contact names, titles, organizations | `vault/people/`, the CRM, `harold/facts.md` | The CRM record and the vault profile must match; if they differ, ask the operator |
-| Recurring meeting schedule | `memory/CLAUDE.md`, `harold/facts.md` | `memory/CLAUDE.md` |
+| Recurring meeting schedule | `memory/working-memory.md`, `harold/facts.md` | `memory/working-memory.md` |
 | Key metrics and figures | `harold/facts.md`, `dashboard/strategy.md`, project docs | `harold/facts.md` |
 | Project list and folders | `harold/projects.md`, `dashboard/status.md` | `harold/projects.md` |
 | [ADD YOUR OWN] | | |
@@ -222,7 +222,7 @@ List files in `raw/` without `compiled: true` in frontmatter. Report the count a
 
 ### Step 11: Size budgets (slim-down)
 
-Every session loads a few files at startup, so their size is a cost paid on every boot. `bin/harold boot` warns when one is over its character budget (defaults: `AGENTS.md` 36k, `memory/CLAUDE.md` 10k, `dashboard/status.md` 10k, `dashboard/processes.md` 15k, `harold/alerts.md` 8k; change any of them under `"size_budgets"` in `harold/housekeeping.json`).
+Every session loads a few files at startup, so their size is a cost paid on every boot. `bin/harold boot` warns when one is over its character budget (defaults: `AGENTS.md` 36k, `memory/working-memory.md` 10k, `dashboard/status.md` 10k, `dashboard/processes.md` 15k, `harold/alerts.md` 8k; change any of them under `"size_budgets"` in `harold/housekeeping.json`).
 
 For each file over budget, move the sections that are clearly stale (superseded, finished, or older than 90 days and not referenced by an active project in `harold/projects.md`) into an archive file beside it, `<same folder>/<name>-archive.md`, leaving a one-line pointer where they were. `bin/harold search` still finds them; sessions no longer load them. Never move rules, instructions or anything current. If a file cannot get under budget without a judgment call, leave the rest and tell the operator in one line. Nothing is deleted.
 
