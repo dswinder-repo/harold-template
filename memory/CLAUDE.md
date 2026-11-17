@@ -3,7 +3,7 @@
 *The single source of truth for session context. `bin/harold boot` verifies it is readable and `AGENTS.md` has every session read it first. Keep it short and current: this is what Harold must know before your first sentence, not an archive. History belongs in `vault/`.*
 
 **Operator:** [YOUR NAME], [YOUR ROLE] at [YOUR COMPANY]
-**Time zone:** [YOUR TIMEZONE] (set `HAROLD_TZ` in `~/.harold/env` or your shell to the IANA name, e.g. `America/Chicago`, so boot prints the right date)
+**Time zone:** [YOUR TIMEZONE] (set `HAROLD_TZ` to the IANA name, e.g. `America/Chicago`, in `harold/settings.env`, so every session and scheduled job uses your date)
 
 ---
 

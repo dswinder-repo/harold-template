@@ -1,6 +1,6 @@
 # Glossary & Shorthand
 
-*Terms, acronyms and shorthand Harold should know. Add anything that would be ambiguous without context. When Harold gets a term wrong, fix it here and record a lesson with `bin/harold file learning`.*
+*Terms, acronyms and shorthand Harold should know. Add anything that would be ambiguous without context. When Harold gets a term wrong, fix it here: that is a record fix, not a lesson (see the Error Capture Rule in `AGENTS.md`).*
 
 ---
 

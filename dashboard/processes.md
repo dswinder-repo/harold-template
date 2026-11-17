@@ -21,7 +21,7 @@
 | A **task signal** ("done", "started", "blocked", a new to-do) | Update the task manager now; add to `harold/blockers.md` if blocked |
 | **Commitments in pasted call notes, a transcript or a forwarded email** (something the operator said they would do, or something someone owes the operator) | Tasks, automatically, without asking: check the open tasks first (no duplicates), then one task per commitment in the task manager (`bin/harold-linear create`, `task_create` on the connector, or the task manager's own tool), with a due date when stated or implied and the project from `bin/harold where`; `crm_task` as well when it is tied to a contact. Things owed to the operator read "Follow up: <who> owes <what>". Each task ID goes on its line under `## Action items` in the meeting note; `bin/harold close` blocks until it does. Harold never reads email on its own: it acts on what is pasted or forwarded |
 | **New intel** (news, market data, notes, a strategic insight) | `playbook/core/analyst.md`: apply it across the knowledge base, don't just mention it |
-| A **correction** from you (wrong name, wrong title, skipped step) | Record it first: `bin/harold file learning '{...}'`, then fix the error |
+| A **correction** from you | Decide which kind it is, per the Error Capture Rule in `AGENTS.md`, and act in the same turn. A wrong fact (a name, a title, a date) is a record fix: correct it everywhere it appears, CRM first for a contact. A wrong way of working (a skipped step, a wrong process) is a lesson: write the right way into the rule it belongs to and file it with `bin/harold file learning '{...}'` |
 | **Substantive synthesis** (3+ sources, or analysis worth keeping) | File it to `vault/intel/` or `vault/decisions/` so it compounds |
 
 ### Context Triggers (natural phrases → playbook)
@@ -98,7 +98,7 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 ## Memory Hygiene
 
 - `memory/CLAUDE.md` holds only what every session needs. History goes to `vault/`.
-- Corrections become lessons immediately (`bin/harold file learning`), never later.
+- Corrections are acted on in the same turn, never later: record fixes are corrected in place, and lessons are written into their rule and filed with `bin/harold file learning`.
 - Derived files (`harold/alerts.md`, the weekly summary) are rebuilt from source, never hand-maintained (`harold/sync-map.md`).
 
 ---

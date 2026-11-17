@@ -43,6 +43,7 @@ Playbooks live in `playbook/`, not in the dashboard. The full index is `playbook
 
 | Server | Purpose | Config |
 |--------|---------|--------|
+| Hosted connector (`tools/harold-connector`) | The knowledge base, the CRM (`crm_*` tools), tasks and calendars from any tool that supports remote MCP servers | Deployed once; add `<your deployment>/mcp` in each tool (`tools/harold-connector/README.md`) |
 | `harold-mcp` | CRM (contacts, labels, pipeline, interactions, tasks, cadence) + alerts engine + atomic writes to the `harold/` markdown files | `.mcp.json` → `bin/harold-mcp` → `tools/harold-mcp/server.js`, credentials from `~/.harold/env` |
 
 > **Prefer MCP tools over hand edits** for the files they own (facts, alerts, blockers, events). They keep the formats boot depends on.
