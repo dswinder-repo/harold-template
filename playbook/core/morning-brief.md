@@ -85,13 +85,23 @@ Everything below is the live procedure, used when there is no draft and as the s
 
    **This is the critical differentiator. Never skip it.** The news is the surface; the angles are the point.
 
-   1. **Cross-reference against the full knowledge base**, not a static list: every `status: active` entry in `harold/projects.md` (its keywords, people and competitors), upcoming items in `harold/events.md`, open blockers in `harold/blockers.md`, key relationships, and the priorities in `memory/CLAUDE.md`. `playbook/core/analyst.md` defines the full cross-reference.
-   2. **Look for the angle.** Ask: how does this story create risk, opportunity, leverage, or urgency for the operator's work or life? Consider second-order effects, not only obvious connections.
-   3. **Don't force it.** Flag only real, actionable connections. Quality over quantity.
-   4. **Format callouts inline** under the story:
+   1. **Build today's relevance set from the operator's live work, before reading any news.** There is no standing list of regions, policies or topics: a topic matters only because something live makes it matter. Collect the organizations, people, places, markets and policies named by:
+      - **Active projects:** every `status: active` entry in `harold/projects.md` (its `keywords`, `people`, `competitors` and `next_step`).
+      - **Tasks:** open tasks in the task manager (overdue, due this week, in progress, high priority).
+      - **Calendar:** today's and this week's meetings (attendees, their organizations, locations) and any travel.
+      - **Alerts and blockers:** the Current Alerts in `harold/alerts.md` and `harold/blockers.md`.
+      - **People:** contacts touched in the last 14 days (daily notes, CRM) and pipeline entries in play.
+      - **Recent calls and meetings:** `vault/meetings/` and `vault/daily/` from the last 7 days, and a meeting-notes connector when the session has one.
+      - **Events and priorities:** `harold/events.md` and `memory/CLAUDE.md`.
+      Write it down as a short **Relevance set** at the top of this section, each entry with its source.
+   2. **Search for it.** Besides the configured beats, run up to five targeted searches for the entries most likely to be in the news (an organization in a live deal, a market or policy a project depends on, the city of a trip on the calendar).
+   3. **Cross-reference every story against that set** (`playbook/core/analyst.md` defines the full cross-reference). Every 📌 names the live item that makes the story matter: a project, a task, a person, a meeting or an event. A story that touches nothing in the set gets no callout, however big it is. If a region or policy keeps coming up, it is because a project or task names it; record it there, never in a fixed list.
+   4. **Look for the angle.** Ask: how does this story create risk, opportunity, leverage, or urgency for the operator's work or life? Consider second-order effects, not only obvious connections.
+   5. **Don't force it.** Flag only real, actionable connections. Quality over quantity.
+   6. **Format callouts inline** under the story:
       📌 *[Project/Context]:* [1-2 sentences: what it means, what to watch, or what action it suggests]
 
-   Angles worth catching: policy changes affecting your markets or events; moves by investors, partners, customers or competitors; economic signals for your regions; travel disruption near an upcoming trip; technology shifts relevant to what you build; anything touching [YOUR CITY], your focus regions, or a key contact.
+   Angles worth catching: anything that changes the outcome, timing or talking points of an item in the relevance set: a move by a company or person in it, a policy or market shift that a project or task depends on, disruption near a trip on the calendar.
 
    - *If a news or markets source is unavailable:* drop that section with a one-line note. Analyst mode still runs on whatever intel you do have.
 

@@ -42,7 +42,7 @@ When presenting news or market intel:
 - [ ] **Does it relate to an existing partnership, agreement or relationship?** Search the vault (`bin/harold search "<company or topic>"`) and check `harold/facts.md`.
 - [ ] **Does it affect an upcoming event?** Check `harold/events.md`.
 - [ ] **Does it touch an active project?** Check `harold/projects.md` (or `bin/harold where <topic>`) and `dashboard/status.md`.
-- [ ] **Is there a second-order connection?** Think about pipeline contacts, target markets, open blockers in `harold/blockers.md`.
+- [ ] **Is there a second-order connection?** Think about a live project, open task, person or upcoming meeting it touches indirectly, and open blockers in `harold/blockers.md`.
 
 **Rule:** Don't just report news. Connect it to what the knowledge base already knows. If it is substantive, run `playbook/core/analyst.md`.
 
