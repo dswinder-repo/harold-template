@@ -40,8 +40,9 @@ Name the signal precisely. Not "Acme Corp is using AI" but "Acme Corp moved its 
 | **Key relationships** | Does it touch an active contact, a pipeline entry, or a target? | `crm_search_contacts` / `harold_search_contacts`, `crm_pipeline list` / `harold_pipeline list`, `bin/harold search "<name or company>"` |
 | **Strategy and narrative** | Does it strengthen or weaken your positioning, fundraising story or pitch to partners? | `dashboard/strategy.md` |
 | **Product / offering** | Roadmap, priorities, pricing, competitive position | the relevant project folder |
-| **Policy watchlist** | [YOUR POLICY WATCHLIST] (e.g. trade, tax, immigration, sector regulation) | `dashboard/strategy.md` |
-| **Geographic focus** | [YOUR REGIONS] | `crm_search_contacts` / `harold_search_contacts` by region |
+| **Live tasks** | Does it change an open task (its timing, owner or approach)? | the task manager: open, overdue, due this week |
+| **Recent calls and meetings** | Does it bear on something said or promised in the last few weeks? | `vault/meetings/`, recent `vault/daily/` notes, a meeting-notes connector |
+| **Policies, markets and places** | Only those a project, task, person or event above names. There is no standing watchlist: if a policy or region matters, the item that makes it matter is where it is recorded | the item itself |
 | **Current priorities** | Does it change what matters this week? | `memory/CLAUDE.md` |
 | **Personal context** | Location, travel, commitments the operator has told Harold about | `memory/CLAUDE.md` |
 
