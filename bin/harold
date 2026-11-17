@@ -1664,9 +1664,19 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
         // Cloud checkouts (routines, Actions) are often detached with no upstream, so a plain push does
         // nothing. Push to the knowledge-base branch explicitly, replaying onto whatever landed meanwhile.
         const branch = defaultBranch(root);
-        git(root, ['fetch', '-q', 'origin', branch], { timeout: 120000 });
-        const ahead = git(root, ['rev-list', '--count', `origin/${branch}..HEAD`]).out;
-        if (ahead && ahead !== '0') {
+        const f = git(root, ['fetch', '-q', 'origin', branch], { timeout: 120000 });
+        const known = git(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]).code === 0;
+        // An empty remote has no branch yet: everything is ahead. Any other failure to learn where origin is
+        // must say so, never "nothing to push" (which is what an empty count used to print).
+        const fresh = !known && /couldn't find remote ref/i.test(f.err);
+        const rl = fresh ? git(root, ['rev-list', '--count', 'HEAD']) : git(root, ['rev-list', '--count', `origin/${branch}..HEAD`]);
+        const ahead = rl.code === 0 ? rl.out : '';
+        if (!known && !fresh) gitNote = `NOT PUSHED: could not reach origin/${branch}: ${(f.err || rl.err || 'git fetch failed').split('\n')[0].slice(0, 160)} — committed locally only; retry: git -C "${root}" push origin HEAD:refs/heads/${branch}`;
+        else if (rl.code !== 0) gitNote = `NOT PUSHED: could not count commits ahead of origin/${branch}: ${(rl.err || '').split('\n')[0].slice(0, 160)}`;
+        else if (fresh) {
+          const ps = git(root, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], { timeout: 180000 });
+          gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to new branch ${branch}` : `NOT PUSHED (${ahead} commit(s)): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
+        } else if (ahead && ahead !== '0') {
           let ps = { code: 1, err: '' };
           for (let i = 0; i < 3 && ps.code !== 0; i++) {
             const rb = git(root, ['pull', '-q', '--rebase', '--autostash', 'origin', branch], { timeout: 180000 });
@@ -1676,6 +1686,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
           gitNote = ps.code === 0 ? `pushed ${ahead} commit(s) to ${branch}` : `PUSH FAILED (${ahead} commit(s) unpushed): ${(ps.err || '').split('\n')[0].slice(0, 160)}`;
         } else gitNote = 'nothing to push';
       }
+      if (!gitNote && !refused) gitNote = pushNoUpstream(root);
       if (!gitNote && !refused) {
         const ahead = git(root, ['rev-list', '--count', '@{u}..HEAD']).out;
         if (ahead && ahead !== '0') {
@@ -1713,9 +1724,27 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     const lb = readLastBoot(root); if (lb && lb.id === id) { try { fs.unlinkSync(path.join(root, LAST_BOOT)); } catch (_) {} }
   } else saveState(root, id, st);
   const summary = [`harold close ${final ? '(final) ' : ''}OK — ${today.iso} ${today.hm}`, ...notes.map(n => `  ${n}`), `  triggers: ${needs.length ? needs.map(d => d.id + '=' + ((loggedToday(log, d.id, today).pop() || {}).status || '?')).join(', ') : 'none due'}`, `  git: ${gitNote || 'skipped'}`, archived.length ? `  archived stale sessions: ${archived.join(', ')}` : ''].filter(Boolean).join('\n');
-  const pushFailed = /^(PUSH|SAVE) FAILED/.test(gitNote);
+  const pushFailed = /^((PUSH|SAVE) FAILED|NOT PUSHED)/.test(gitNote);
   if (isHook) { return closeReply(hook, pushFailed ? 'notice' : 'ok', pushFailed ? summary : ''); }
   console.log(summary); return pushFailed ? 1 : 0;
+}
+
+// A branch with no upstream: `@{u}..HEAD` fails there, so the count came back empty and close used to
+// print "nothing to push" over unpushed work. Publish the branch to origin under its own name (-u, so the
+// next close has an upstream), or say plainly that nothing was pushed and why. Returns '' when the
+// branch has an upstream (the normal path handles it).
+function pushNoUpstream(root) {
+  if (git(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).code === 0) return '';
+  const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).out;
+  const hasOrigin = git(root, ['remote', 'get-url', 'origin']).code === 0;
+  const local = git(root, ['rev-list', '--count', 'HEAD', '--not', '--remotes']).out || '?';
+  if (!hasOrigin) {
+    // A workspace kept on one machine on purpose has no remote: not a failure, but never "nothing to push".
+    return local === '0' ? 'nothing to push' : `local only: no git remote "origin", ${local} commit(s) not pushed anywhere`;
+  }
+  if (!branch) return `NOT PUSHED: detached HEAD with no upstream, so there is no branch to push (${local} commit(s) only here) — check out a branch, then: git -C "${root}" push -u origin <branch>`;
+  const ps = git(root, ['push', '-q', '-u', 'origin', branch], { timeout: 180000 });
+  return ps.code === 0 ? `pushed ${branch} to origin (new upstream origin/${branch})` : `NOT PUSHED: ${branch} has no upstream and push -u origin ${branch} failed: ${(ps.err || ps.out).split('\n')[0].slice(0, 160)} — retry: git -C "${root}" push -u origin ${branch}`;
 }
 
 function cmdFile(root, today, args, opts = {}) {
