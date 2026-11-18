@@ -87,7 +87,7 @@ Everything below is the live procedure, used when there is no draft and as the s
 
    1. **Build today's relevance set from the operator's live work, before reading any news.** There is no standing list of regions, policies or topics: a topic matters only because something live makes it matter. Collect the organizations, people, places, markets and policies named by:
       - **Active projects:** every `status: active` entry in `harold/projects.md` (its `keywords`, `people`, `competitors` and `next_step`).
-      - **Tasks:** open tasks in the task manager (overdue, due this week, in progress, high priority).
+      - **Tasks:** open tasks from Harold's task list (overdue, due this week, in progress, high priority).
       - **Calendar:** today's and this week's meetings (attendees, their organizations, locations) and any travel.
       - **Alerts and blockers:** the Current Alerts in `harold/alerts.md` and `harold/blockers.md`.
       - **People:** contacts touched in the last 14 days (daily notes, CRM) and pipeline entries in play.
@@ -126,7 +126,7 @@ Everything below is the live procedure, used when there is no draft and as the s
 
 This is why alerts never go stale. `harold/alerts.md` is a **derived view**: rebuild it from source, never patch it by memory.
 
-1. **Task manager (Linear by default):** overdue tasks, tasks due today, tasks due this week and not started, high-priority tasks. (`bin/harold-linear tasks` if you use the helper.)
+1. **Harold's task list:** overdue tasks, tasks due today, tasks due this week and not started, high-priority tasks. Read it with the connector's `task_list`, or `bin/harold task list`. With no database key, the command reads `harold/tasks-snapshot.md` and says how old it is: state that age. Linear is not read directly: it reaches the list through the optional sync.
 2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 3-7 days = 🟠. A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
 3. **`harold/events.md`:** days until each event. An event fewer than 10 days out with prep not complete fires `event-prep:<event>`.
 4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job includes them only when its session has a CRM tool. With no CRM tool here, say so in one line.
@@ -141,7 +141,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 
 **If the alerts timestamp was more than 1 day old at session start**, say so first: "⚠️ Alerts were last refreshed [date]. Rebuilding now."
 
-**If a source is missing or unreachable:** rebuild from the sources you have, name the missing one in the brief ("Task manager unreachable: alerts built from blockers and events only"), and record the trigger as `ran` with that reason. If you could not rebuild at all, record `bin/harold file trigger alerts-rebuild skipped "<reason>"`.
+**If a source is missing or unreachable:** rebuild from the sources you have, name the missing one in the brief ("Task list unreachable: alerts built from blockers and events only"), and record the trigger as `ran` with that reason. If you could not rebuild at all, record `bin/harold file trigger alerts-rebuild skipped "<reason>"`.
 
 ### Then: run the daily brief
 
@@ -181,7 +181,7 @@ From the combined picture (overnight + system state):
 Generate a ready-to-paste prompt for each confirmed priority. Each prompt includes:
 - The relevant context from the knowledge base (project folder resolved via `bin/harold where <topic>`, key people, recent decisions)
 - Clear deliverables and the files to create or update
-- The task-manager issues to update ([TEAM]-123 style ids)
+- The tasks to update (refs such as H-12)
 - Success criteria
 - A recommended model tier
 
@@ -215,7 +215,7 @@ The operator launches each prompt as its own session, in parallel.
 3. **Stop after the Step 2 priorities.** Wait for confirmation.
 4. **Never skip analyst mode.** The callouts are the whole point.
 5. **Never skip the alerts rebuild**, and always record the trigger.
-6. **Never silently drop a source.** If calendar, CRM, task manager or news is down, say so the first time.
+6. **Never silently drop a source.** If calendar, CRM, the task list or news is down, say so the first time.
 7. **Overnight updates are processed in Step 2, not Step 1.**
 8. If you run a session dashboard, keep `harold/active-sessions/<session>.json` in step with where you are.
 
@@ -227,7 +227,7 @@ The operator launches each prompt as its own session, in parallel.
 - [ ] Step 1 presented (memory consolidation, calendar, configured intel sections, analyst callouts) and ended with the overnight question
 - [ ] Waited for the overnight answer
 - [ ] Overnight updates integrated; intake/analyst playbooks queued for new people, projects, intel
-- [ ] `harold/alerts.md` Current Alerts rebuilt from blockers + events + task manager; `Last updated:` line changed
+- [ ] `harold/alerts.md` Current Alerts rebuilt from blockers + events + task list; `Last updated:` line changed
 - [ ] `bin/harold file trigger alerts-rebuild ran "morning brief"` recorded (or `skipped` with a reason)
 - [ ] Raw inbox, pipeline health, blockers and due scheduled triggers reported
 - [ ] Top 3 priorities proposed and confirmed with "Does this look right?"

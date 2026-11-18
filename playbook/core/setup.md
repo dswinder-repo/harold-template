@@ -106,17 +106,58 @@ The CRM is part of Harold, not an add-on: every person the operator deals with i
    - Report how many were created, how many were skipped as duplicates, and how many rows could not be read and why.
 
    The optional CRM web app (step 9) also has a CSV import screen, if the operator prefers to do it there.
-5. **Say what happens next:** from now on the CRM grows on its own. Each meeting debrief, conversation and new name Harold hears is filed there as part of normal work, so the operator never has to maintain it by hand.
+5. **Harold's task list.** Tasks live in the same database, in a table called `tasks`. They work with no outside tool connected.
+   - **A database made just now** from `tools/harold-mcp/schema.sql` already has everything the task list needs. Nothing more to do.
+   - **A database made before the task list existed** needs one more script. Tell the operator these steps in plain words:
+     1. Open the Supabase project and choose **SQL Editor** in the left menu, then **New query**.
+     2. Open the file `tools/harold-mcp/migrations/2026-11-18-task-list.sql` (you can paste its contents for them), copy all of it, and paste it into the editor.
+     3. Press **Run**. Supabase may ask you to confirm a query that changes existing tables: confirm.
+     4. "Done" looks like this: the result area says **Success. No rows returned**. Running it a second time is safe and changes nothing.
+   - **Check it.** Run `bin/harold task create "Test task" --due <tomorrow, YYYY-MM-DD>`, then `bin/harold task list`. The new task appears with a ref such as `H-1`. Then run `bin/harold task cancel H-1` so the test task does not stay on the list.
+6. **Say what happens next:** from now on the CRM grows on its own. Each meeting debrief, conversation and new name Harold hears is filed there as part of normal work, so the operator never has to maintain it by hand.
 
 ## Step 9: The optional parts
 
 Offer each in turn, with one sentence on what it gives. "Skip for now" is always a good answer; each can be set up at any time by asking for it.
 
 - **The CRM web app** (`tools/harold-crm`): the CRM in a browser, with contacts, a pipeline, tasks and CSV import and export, on the same database. Steps: `tools/harold-crm/README.md`. Skip: the CRM works fully through the AI tool.
-- **A task manager.** Linear by default: `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` in `~/.harold/env` (and on the connector, if they use it), and the team key in place of the bracketed team placeholder in `AGENTS.md`. Any other task manager can be used through its own MCP server in the AI tool. Skip: boot says the task layer is unavailable, and commitments from meetings cannot become tasks until one is set up.
+- **Two-way sync with Linear.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. For an operator who also uses Linear, the connector can keep the task list and one Linear team in step, in both directions. Steps: the section "Optional: two-way sync with Linear" below. Skip: tasks stay in Harold's task list only.
 - **The hosted connector**, if step 8 used harold-mcp: it adds access from chat apps and other computers. Skip: sessions in the workspace folder do everything.
 - **Scheduled jobs**: the morning brief written before the operator sits down, and the weekly, monthly and month-end housekeeping, run on GitHub Actions or any scheduler (README, "Scheduled jobs in the cloud"). Skip: the brief runs live when the operator says good morning, and housekeeping runs in sessions when it is due.
 - **More AI tools.** Harold already works in every harness listed in `AGENTS.md`; some need a one-time step (trusting the hooks, or copying a snippet into the user's own configuration). Ask which tools they use besides this one and do that step for each. Skip: the tool they are using now is enough.
+
+### Optional: two-way sync with Linear
+
+Do this only if the operator uses Linear and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Linear and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+
+**Tell the operator first, in plain words:**
+- Every task in the chosen Linear team is copied into Harold's task list, and every Harold task is copied into that team. A change on either side reaches the other within seconds. If the same field changes on both sides at once, the later change wins and Harold keeps a note of the conflict.
+- Linear's free plan has no private teams. Anyone in the Linear workspace can see the team's tasks. An operator who wants them private should use a Linear workspace of their own.
+
+1. **Create a Linear personal API key.** In Linear: click the workspace name (top left), choose **Settings**, then **Account**, then **Security & access**, then **Personal API keys**, then **Create key**. Name it "Harold". Copy the key. It starts with `lin_api_`. It is a secret: it goes only into the places in step 3, never into a file in the repository or the chat.
+2. **Find the team key.** In Linear: **Settings**, then **Teams**, then the team to sync. Its **Identifier** is the team key, for example `ENG` (tasks in that team look like `ENG-12`). Write it into `LINEAR_TEAM_KEY` in `harold/settings.env`.
+3. **Generate a sync secret.** Run `openssl rand -hex 32` and keep the 64-character result. This is `SYNC_SECRET`: a password only the connector and the database share.
+4. **Set three settings on the connector host.** In the connector's project settings (on Vercel: **Settings**, then **Environment Variables**), add `LINEAR_API_KEY`, `LINEAR_TEAM_KEY` and `SYNC_SECRET` with the values from steps 1 to 3. Add the same `LINEAR_API_KEY` to `~/.harold/env` on the operator's computer so `bin/harold-linear` and the first import can use it. `LINEAR_WEBHOOK_SECRET` comes in step 6.
+5. **Redeploy the connector** so it reads the new settings. On Vercel: **Deployments**, the latest one, **Redeploy**. Then check that the routes exist: `curl -s -X POST <connector address>/sync/catchup` should answer with a JSON message (a 401 or 503 is fine here), not "Not found".
+6. **Create the Linear webhook.** In Linear: **Settings**, then **API**, then **Webhooks**, then **New webhook**. Set the URL to `<connector address>/webhooks/linear`. Under data change events, tick **Issues** only. Under teams, choose the team from step 2. Save. Linear then shows a **signing secret**. Copy it, add it to the connector host as `LINEAR_WEBHOOK_SECRET`, and redeploy again (step 5).
+7. **Let the connector read the project list.** Ask the operator's AI tool to call `harold_today` once through the connector. This makes the connector read `harold/projects.md`, which it needs to match Linear projects to Harold projects. Without it, every sync route answers 503. If a Linear project name differs from a Harold project name, add `linear_project: <exact Linear name>` to that project's entry in `harold/projects.md`.
+8. **Run the sync script in Supabase.** In the Supabase **SQL Editor**:
+   1. New query. Paste these two lines, replacing the placeholders with the connector address (no trailing slash) and the `SYNC_SECRET` from step 3, and press **Run**:
+      ```sql
+      select vault.create_secret('<connector address>', 'harold_connector_url');
+      select vault.create_secret('<SYNC_SECRET>', 'harold_sync_secret');
+      ```
+   2. New query. Paste the whole of `tools/harold-connector/supabase/sync.sql` and press **Run**. If Supabase asks you to confirm a query with destructive operations, confirm: it only replaces Harold's own sync trigger and schedule.
+   3. "Done" looks like this: the result area does not show **Success. No rows returned**. It shows one row with a job number instead (the last line schedules the 10-minute catch-up job). That is normal.
+9. **Run the first import.** In a new query, run:
+   ```sql
+   select public.harold_sync_call('/sync/catchup', '{"import": true}'::jsonb, 55000);
+   ```
+   It returns a number straight away. The import then runs in the connector: every open task in the Linear team, plus those finished in the last 30 days, is copied into Harold's task list. Running it twice is safe. (From a terminal, `cd tools/harold-connector && npm run sync:import` does the same.)
+10. **Check that it works.**
+    - Run `bin/harold task list`. The Linear tasks appear, each with its Linear key (for example `ENG-12`) beside its `H-` ref.
+    - Create a test task: `bin/harold task create "Sync test" --due <tomorrow>`. Within a few seconds it appears in the Linear team. Rename it in Linear and run `bin/harold task list` again: the new title appears. Then run `bin/harold task cancel <ref>` and check it shows as canceled in Linear.
+    - If something is missing, run `select * from public.sync_log order by at desc limit 20;` in the SQL editor. Each failed or skipped step is logged there with the reason. `bin/harold task conflicts` lists changes that clashed.
 
 ## Step 10: Check, boot and close
 
@@ -137,5 +178,6 @@ Offer each in turn, with one sentence on what it gives. "Skip for now" is always
 - [ ] Contact types confirmed in `dashboard/people.md`
 - [ ] One to three projects in `harold/projects.md`, each with a folder, a card and a next step
 - [ ] CRM database created, reached through the connector or harold-mcp, and checked; existing contacts imported if the operator wanted that
+- [ ] Harold's task list works (a test task created and canceled)
 - [ ] Each optional part set up or explicitly skipped
 - [ ] `bin/harold check` passes, boot shows no setup notice, a daily note exists, and close pushed to the private repository

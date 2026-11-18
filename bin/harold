@@ -44,6 +44,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 // ───────────────────────── root + time ─────────────────────────
@@ -561,7 +562,7 @@ function computeTriggers(root, today, ctx) {
   else if (t > lbd && !lastRun(log, 'month-end', lbd) && after(lbd)) overdue.push({ id: 'month-end', what: `Month-end review for ${lbd} not run`, where: 'dashboard/processes.md' });
   // Alerts shipped with the workspace (or rebuilt before Harold started) count as rebuilt on the first boot.
   const alertsAge = start && (!ctx.alerts.updated || ctx.alerts.updated < start) ? daysBetween(start, t) : ctx.alerts.age;
-  if (alertsAge === null || alertsAge > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Linear`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
+  if (alertsAge === null || alertsAge > 1) due.push({ id: 'alerts-rebuild', what: `alerts.md last rebuilt ${ctx.alerts.updated || 'unknown'} (${ctx.alerts.age ?? '?'} days) — rebuild Current Alerts from blockers.md + events.md + Harold's task list`, where: 'AGENTS.md step 4 / playbook/core/morning-brief.md Step 2' });
   for (const b of ctx.blockers.rows) {
     if (b.age !== null && b.age > 7) {
       const id = `blocker-escalation:${b.id}`;
@@ -779,16 +780,6 @@ function pulseBootLines(root) {
 }
 
 
-// ───────────────────────── Linear (task layer) via bin/harold-linear ─────────────────────────
-function linearSummary(root) {
-  const r = spawnSync('node', [path.join(root, 'bin/harold-linear'), 'tasks', '--json'], { cwd: root, encoding: 'utf8', timeout: 25000 });
-  if (r.status === 0) { try { const j = JSON.parse(r.stdout); return { live: true, ...j }; } catch (_) {} }
-  const snap = path.join(root, 'harold/linear-snapshot.md');
-  // Age from the "Pulled <ISO time>" line the snapshot carries: a fresh checkout gives every file a new mtime.
-  if (fs.existsSync(snap)) { const text = readFull(snap); const m = text.match(/Pulled (\d{4}-\d{2}-\d{2}T[\d:.]+Z)/); const t = m ? Date.parse(m[1]) : fs.statSync(snap).mtimeMs; return { live: false, ageH: Math.round((nowDate().getTime() - t) / 3600000), text }; }
-  return { live: false, none: true, err: (r.stderr || '').trim().slice(0, 160) };
-}
-
 // ───────────────────────── commands ─────────────────────────
 function cmdCheck(root, today, opts) {
   const c = runCheck(root, today);
@@ -940,14 +931,7 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`## Alerts — last rebuilt ${c.ctx.alerts.updated || 'unknown'} (${c.ctx.alerts.age ?? '?'} days ago) — ${P('harold/alerts.md')}`);
   if (c.ctx.alerts.current) { L.push(...compactAlerts(c.ctx.alerts.current)); L.push(`(Context and suggested actions for each: read ${P('harold/alerts.md')}.)`); }
   L.push('');
-  const lin = linearSummary(root);
-  L.push(`## Linear (task layer, via bin/harold-linear) — ${lin.live ? `live, ${lin.total} open` : lin.none ? 'UNAVAILABLE: ' + lin.err : `no API key here; committed snapshot ${lin.ageH}h old (${P('harold/linear-snapshot.md')})`}`);
-  if (lin.none) L.push(`No task manager is set up here, so action items cannot become tasks yet. Tell the operator once, and offer the two ways: Linear (LINEAR_API_KEY and LINEAR_TEAM_KEY in ~/.harold/env; see "Optional: tasks in Linear" in the README quick start), or any other task manager through its own MCP server in this AI tool.`);
-  if (lin.live) {
-    const row = i => `- ${i.identifier} [${i.state.name}${i.dueDate ? ', due ' + i.dueDate : ''}] ${i.title}${i.project ? ' (' + i.project.name + ')' : ''}`;
-    L.push(`Overdue ${lin.overdue.length} · due today ${lin.dueToday.length} · due this week ${lin.dueWeek.length} · in progress ${lin.inProg.length}. Full table: ${P('harold/linear-snapshot.md')}. Update state with: ${path.join(root, 'bin/harold-linear')} done|start <id>`);
-    lin.overdue.slice(0, 8).forEach(i => L.push(row(i))); lin.dueToday.forEach(i => L.push(row(i)));
-  } else if (lin.text) L.push(lin.text.split('\n').filter(l => /^\| [A-Z][A-Z0-9]*-\d|^### /.test(l)).slice(0, 14).join('\n'));
+  L.push(...taskBootLines(root, today));
   L.push('');
   L.push('## Scheduled work (AGENTS.md → Scheduled Triggers). Due items run THIS session, then are recorded with:');
   L.push(`   ${CLI(root)} file trigger <id> ran|skipped|deferred "<reason>"   — harold close blocks the turn until every due item is recorded.`);
@@ -1031,7 +1015,7 @@ const MONITORS = [
   'ALWAYS-ON MONITORS (dashboard/processes.md). Run EVERY operator message through these, in the same turn, before the deliverable:',
   '  • New venture / project / client / workstream that `harold where` cannot resolve → playbook/core/project-intake.md (folder, map entry, card, Linear project). Exploratory or not yet agreed is never a reason to skip.',
   '  • New name with business context → playbook/core/contact-intake.md (CRM + vault card; a thin entry with TODOs beats none).',
-  '  • Task signal or commitment ("I want to talk to him this week") → Linear task with a due date and a project.',
+  '  • Task signal or commitment ("I want to talk to him this week") → a task in Harold\'s list (bin/harold task create, or task_create on the connector) with a due date and a project.',
   '  • New intel → playbook/core/analyst.md. Research synthesis from 3+ sources → filed under its project.',
   '  • Before ANY output → playbook/core/pre-flight-verification.md (names, dates, never invent a name).',
   '  • Deliverables go TO the operator: inline, an artifact, or a sent file. Never a repo path.',
@@ -1044,7 +1028,7 @@ function contextDigest(root, today, L, c, n, bytes) {
   D.push('');
   D.push(`⛔ CONTEXT GATE: this boot is ${Math.round(bytes / 1024)} KB, more than the harness passes to the model, so it is split into ${n} part(s).`);
   D.push(`Your FIRST actions, before any other tool or any answer: run ${CLI(root)} context  (repeat until it says all ${n} parts are read).`);
-  D.push(`Until then every tool except ${CLI(root)} is blocked (PreToolUse gate) and close blocks the turn. The parts hold the critical learnings, project map, alerts and Linear.`);
+  D.push(`Until then every tool except ${CLI(root)} is blocked (PreToolUse gate) and close blocks the turn. The parts hold the critical learnings, project map, alerts and tasks.`);
   D.push(`Then read ${memoryFile(root)}, dashboard/index.md and dashboard/status.md, per AGENTS.md.`);
   D.push('');
   D.push(...MONITORS);
@@ -1143,6 +1127,7 @@ function crmTouchedToday(root, today) {
 // update cannot apply the same row twice on the next run. The queue is a fallback, not a workflow.
 const CRM_QUEUE = 'harold/crm-queue.jsonl';
 const CRM_ACTIONS = ['log_interaction', 'upsert_contact', 'crm_task'];
+const QUEUE_ACTIONS = [...CRM_ACTIONS, 'task']; // `task` rows are written by the `task` commands (queueTask), never by `file crm`
 const WARMTH_VALUES = ['', 'Cold', 'Lukewarm', 'Warm', 'Hot'];
 const CONTACT_STATUSES = ['active', 'pending', 'cold', 'archived'];
 const PRIORITIES = ['high', 'medium', 'low'];
@@ -1369,11 +1354,11 @@ function replayCrmQueue(root, opts = {}) {
   try {
     for (const it of pending) {
       if (Date.now() - t0 > budgetMs) { res.deferred++; continue; }
-      const row = it.row, label = `${row.contact} ${row.action}${row.action === 'crm_task' ? ':' + ((row.payload || {}).action || 'create') : ''}`;
+      const row = it.row, label = row.action === 'task' ? `task ${(row.payload || {}).op} ${(row.payload || {}).qid ? 'Q-' + row.payload.qid : (row.payload || {}).ref}` : `${row.contact} ${row.action}${row.action === 'crm_task' ? ':' + ((row.payload || {}).action || 'create') : ''}`;
       const at = new Date().toISOString();
       try {
-        if (!CRM_ACTIONS.includes(row.action)) throw new Error(`unknown action "${row.action}"`);
-        const fn = { upsert_contact: replayUpsertContact, log_interaction: replayLogInteraction, crm_task: replayCrmTask }[row.action];
+        if (!QUEUE_ACTIONS.includes(row.action)) throw new Error(`unknown action "${row.action}"`);
+        const fn = { upsert_contact: replayUpsertContact, log_interaction: replayLogInteraction, crm_task: replayCrmTask, task: replayTask }[row.action];
         const result = fn(cfg, root, row, dry);
         res.applied.push(label); res.details.push(`  ${dry ? 'DRY' : 'OK '}  ${label}: ${result}`);
         if (!dry) patchQueueRow(qp, it.idx, row, { replayed: true, replayed_at: at, replayed_to: `CRM (${cfg.ref})`, result, last_error: undefined });
@@ -1403,6 +1388,475 @@ function cmdReplay(root, opts) {
   return r.failed.length ? 1 : 0;
 }
 
+// ───────────────────────── Harold's own task list ─────────────────────────
+// The Supabase `tasks` table is Harold's task list (tools/harold-mcp/schema.sql). Boot, close, this command and
+// the connector all read and write that one table, so Harold works with no outside task manager connected.
+// Outside tools (Linear first) reach it through the connector's sync and show up as `task_links` rows.
+//
+//   task list [--project <name>] [--all] [--json]        open tasks, grouped by when they are due
+//   task create "<title>" [--project <name>] [--due YYYY-MM-DD] [--priority high|medium|low] [--contact <name>] [--desc "<text>"]
+//   task start|done|cancel|reopen <ref>
+//   task update <ref> [--title <t>] [--due YYYY-MM-DD|none] [--priority <p>] [--project <name>|none] [--desc <text>]
+//   task conflicts [--seen]                               unseen sync conflicts (sync_log), optionally marked seen
+//
+// A ref is H-<n> (or T-<8 hex> on a database not yet migrated), Q-<id> (a write still in the offline queue), an
+// outside key such as ENG-123 (through task_links), or the task's UUID.
+//
+// Three states of the database are handled, never crashed on:
+//   no key or unreachable → writes queue in harold/crm-queue.jsonl (action "task", ref Q-<id>), `list` reads
+//                           harold/tasks-snapshot.md and says how old it is
+//   old schema (no ref/project columns) → everything works on the old columns; refs are T-<first 8 of the id>,
+//                           the project cannot be stored (said out loud)
+//   no task_links / sync_log tables → those parts are skipped
+const TASK_SNAPSHOT = 'harold/tasks-snapshot.md';
+const TASK_GROUPS = ['Overdue', 'Due today', 'Due this week', 'In progress', 'Later or undated'];
+const TASK_COLS = 'id,ref,title,description,status,priority,due_date,contact_id,project,completed_at,updated_at,created_at';
+const TASK_COLS_OLD = 'id,title,description,status,priority,due_date,contact_id,completed_at,updated_at,created_at';
+const TASK_OPS = { start: { status: 'in_progress' }, done: { status: 'completed' }, cancel: { status: 'cancelled' }, reopen: { status: 'pending' } };
+const TASK_HEAD = '| Ref | Title | Project | Contact | Status | Due | Priority | Linked |\n|---|---|---|---|---|---|---|---|';
+const TASK_SNAPSHOT_REFRESH_MS = 3600000;
+
+// A due date is a calendar day stored as UTC midnight (YYYY-MM-DDT00:00:00Z) and read as the first 10 characters of
+// its UTC ISO string, with no time-zone conversion, the same in every client. "Today" is the date in HAROLD_TZ.
+const dueToDb = d => (d ? `${d}T00:00:00Z` : d);
+const dueFromDb = v => { if (!v) return ''; const t = Date.parse(v); return Number.isNaN(t) ? String(v).slice(0, 10) : new Date(t).toISOString().slice(0, 10); };
+const isDown = r => r.status === 0 || r.status >= 500;
+const isMissingColumn = r => !r.ok && r.status === 400 && /does not exist|Could not find|schema cache/i.test(r.err || '');
+const isMissingTable = r => !r.ok && (r.status === 404 || /does not exist|Could not find the table|schema cache/i.test(r.err || ''));
+// One PostgREST call that throws instead of returning a failure. e.down marks "could not reach the database".
+function taskCall(cfg, method, route, body, opts) {
+  const r = crmRequest(cfg, method, route, body, opts);
+  if (!r.ok) { const e = new Error(r.err); e.down = isDown(r); e.missingColumn = isMissingColumn(r); e.status = r.status; throw e; }
+  return r.data;
+}
+
+let TASK_SCHEMA = null;
+// What the database offers: { reachable, migrated } (migrated = the ref and project columns exist).
+function taskSchema(cfg) {
+  if (TASK_SCHEMA) return TASK_SCHEMA;
+  let r = crmRequest(cfg, 'GET', 'tasks?select=ref,project&limit=1', undefined, { timeout: 6 });
+  if (r.ok) return (TASK_SCHEMA = { reachable: true, migrated: true });
+  if (isMissingColumn(r)) {
+    r = crmRequest(cfg, 'GET', 'tasks?select=id&limit=1', undefined, { timeout: 6 });
+    if (r.ok) return (TASK_SCHEMA = { reachable: true, migrated: false });
+  }
+  return (TASK_SCHEMA = { reachable: false, down: isDown(r), err: r.err });
+}
+
+function addDaysIso(iso, n) { return isoFromDate(new Date(dateOf(iso).getTime() + n * 86400000)); }
+function taskGroup(t, todayIso) {
+  if (t.due && t.due < todayIso) return 'Overdue';
+  if (t.due === todayIso) return 'Due today';
+  if (t.due && t.due <= addDaysIso(todayIso, 7)) return 'Due this week';
+  if (t.status === 'in_progress') return 'In progress';
+  return 'Later or undated';
+}
+const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
+function groupTasks(tasks, todayIso) {
+  const g = Object.fromEntries(TASK_GROUPS.map(n => [n, []]));
+  tasks.forEach(t => g[taskGroup(t, todayIso)].push(t));
+  TASK_GROUPS.forEach(n => g[n].sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (PRIORITY_RANK[a.priority] ?? 1) - (PRIORITY_RANK[b.priority] ?? 1) || String(a.ref).localeCompare(String(b.ref), undefined, { numeric: true })));
+  return g;
+}
+const taskRow = t => '| ' + [t.ref, t.title, t.project || '—', t.contact || '—', t.status, t.due || '—', t.priority || '—', (t.links || []).join(', ') || '—'].map(c => String(c).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')).join(' | ') + ' |';
+function taskTables(groups) {
+  const L = [];
+  for (const n of TASK_GROUPS) {
+    const rows = groups[n] || [];
+    L.push(`### ${n} (${rows.length})`);
+    if (rows.length) { L.push(TASK_HEAD); rows.forEach(t => L.push(taskRow(t))); }
+    L.push('');
+  }
+  return L.join('\n');
+}
+
+// Open tasks (or, with open:false, the most recently changed 200 of every status), with contact names and
+// outside keys. A database without task_links just shows no keys.
+function fetchTasks(cfg, sc, opts = {}) {
+  const cols = sc.migrated ? TASK_COLS : TASK_COLS_OLD;
+  const route = opts.open === false ? `tasks?select=${cols}&order=updated_at.desc&limit=200` : `tasks?select=${cols}&status=in.(pending,in_progress)&order=due_date.asc.nullslast&limit=2000`;
+  const rows = taskCall(cfg, 'GET', route, undefined, { timeout: 15 }) || [];
+  const names = {};
+  const ids = [...new Set(rows.map(t => t.contact_id).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 60) {
+    const r = crmRequest(cfg, 'GET', `contacts?select=id,name&id=in.(${ids.slice(i, i + 60).join(',')})`, undefined, { timeout: 10 });
+    if (r.ok) (r.data || []).forEach(c => { names[c.id] = c.name; });
+  }
+  const links = {};
+  if (sc.migrated) {
+    const r = crmRequest(cfg, 'GET', 'task_links?select=task_id,provider,external_key,external_id&limit=5000', undefined, { timeout: 10 });
+    if (r.ok) (r.data || []).forEach(l => { (links[l.task_id] = links[l.task_id] || []).push(l.external_key || `${l.provider}:${l.external_id}`); });
+  }
+  return rows.map(r => normTask(r, names, links));
+}
+function normTask(r, names, links) {
+  return { id: r.id, ref: r.ref || `T-${String(r.id).slice(0, 8)}`, title: r.title || '', description: r.description || '', status: r.status, priority: r.priority || 'medium',
+    due: dueFromDb(r.due_date), project: r.project || '', contact: (names || {})[r.contact_id] || '', contact_id: r.contact_id || null, links: (links || {})[r.id] || [], updated_at: r.updated_at || '' };
+}
+
+// ── the snapshot: the same groups as markdown tables, for sessions that have no database key ──
+function snapshotBody(tasks, todayIso) { return taskTables(groupTasks(tasks, todayIso)); }
+function writeTaskSnapshot(root, tasks, todayIso, writer, onlyIfChanged) {
+  const sp = path.join(root, TASK_SNAPSHOT);
+  const body = snapshotBody(tasks, todayIso);
+  if (onlyIfChanged) {
+    try {
+      const old = fs.readFileSync(sp, 'utf8'); const m = old.match(/\*Written (\S+) by /);
+      if (m && old.endsWith(body) && Date.now() - Date.parse(m[1]) < TASK_SNAPSHOT_REFRESH_MS) return false;
+    } catch (_) {}
+  }
+  const text = `# Harold task list snapshot\n\n*Written ${new Date().toISOString()} by ${writer}.*\n\nOpen tasks from Harold's task list (the database), grouped as of the day it was written. Read it with \`bin/harold task list\`; sessions with no database key see this file, with its age.\n\n${body}`;
+  try { const tmp = `${sp}.tmp-${process.pid}`; fs.writeFileSync(tmp, text); fs.renameSync(tmp, sp); return true; } catch (_) { return false; }
+}
+function readTaskSnapshot(root) {
+  const sp = path.join(root, TASK_SNAPSHOT);
+  if (!fs.existsSync(sp)) return null;
+  let text; try { text = readFull(sp); } catch (_) { return null; }
+  const m = text.match(/\*Written (\S+) by ([^.\n]+?)\.\*/);
+  const writtenMs = m ? Date.parse(m[1]) : fs.statSync(sp).mtimeMs;
+  const tasks = [];
+  for (const l of text.split('\n')) {
+    if (!l.startsWith('| ') || /^\| Ref \|/.test(l)) continue;
+    const c = l.trim().slice(1, -1).split(/(?<!\\)\|/).map(x => x.replace(/\\\|/g, '|').trim());
+    if (c.length < 8) continue;
+    const dash = x => (x === '—' ? '' : x);
+    tasks.push({ ref: c[0], title: c[1], project: dash(c[2]), contact: dash(c[3]), status: c[4], due: dash(c[5]), priority: dash(c[6]), links: dash(c[7]) ? c[7].split(', ') : [] });
+  }
+  return { text, tasks, writtenMs, writer: m ? m[2] : 'unknown', ageH: Math.max(0, Math.round((nowDate().getTime() - writtenMs) / 3600000)) };
+}
+const ageWords = h => (h < 1 ? 'under an hour' : h < 48 ? `${h}h` : `${Math.round(h / 24)} days`);
+
+// ── projects: resolved exactly as `harold where` does, stored by canonical name ──
+function rankProjects(projects, query) {
+  const q = query.toLowerCase();
+  const score = p => {
+    let s = 0; const name = p.name.toLowerCase();
+    if (name === q || p.aliasList.some(a => a.toLowerCase() === q)) s += 100;
+    if (name.includes(q) || q.includes(name)) s += 40;
+    p.aliasList.forEach(a => { const al = a.toLowerCase(); if (al && (q.includes(al) || al.includes(q))) s += 30; });
+    p.keywordList.forEach(k => { const kl = k.toLowerCase(); if (kl && (q.includes(kl) || kl.includes(q))) s += 10; });
+    const f = (p.folder || '').toLowerCase(); if (f && (f.includes(q.replace(/\s+/g, '_')) || f.includes(q.replace(/\s+/g, '-')))) s += 25;
+    if (p.status === 'archived') s -= 15;
+    return s;
+  };
+  return projects.map(p => ({ p, s: score(p) })).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+}
+// { name } or { error }. A task needs a real project: a match through the name or an alias (score 30 or more)
+// that is not a tie. Weaker matches (keywords, folder) are offered as close matches, never stored.
+function resolveTaskProject(root, raw) {
+  const q = String(raw || '').trim();
+  const { projects } = loadProjects(root);
+  const ranked = rankProjects(projects, q);
+  const top = ranked[0];
+  const exactName = ranked.filter(x => x.p.name.toLowerCase() === q.toLowerCase());
+  if (exactName.length === 1) return { name: exactName[0].p.name };
+  if (top && top.s >= 30 && !(ranked[1] && ranked[1].s === top.s)) return { name: top.p.name };
+  let close = ranked.slice(0, 5).map(x => x.p.name);
+  if (!close.length) { const words = q.toLowerCase().split(/\W+/).filter(w => w.length >= 4); close = projects.filter(p => words.some(w => p.name.toLowerCase().includes(w))).slice(0, 5).map(p => p.name); }
+  return { error: `no project matches "${q}"${top && top.s >= 30 ? ' (more than one fits equally)' : ''}.${close.length ? ` Close matches: ${close.join('; ')}.` : ` Projects are listed in harold/projects.md.`} A new project goes through playbook/core/project-intake.md first.` };
+}
+
+// ── finding one task by its ref ──
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function queuedTaskRef(root, qid) {
+  for (const it of readQueue(path.join(root, CRM_QUEUE))) {
+    const r = it.row;
+    if (!r || r.action !== 'task' || !r.payload || String(r.payload.qid).toLowerCase() !== String(qid).toLowerCase()) continue;
+    if (r.refused) return { error: `Q-${qid} was refused when the queue was applied (${r.result || 'no reason recorded'}), so there is no task to change` };
+    if (r.replayed === true) { const m = String(r.result || '').match(/\b(H-\d+|T-[0-9a-f]{8})\b/); return m ? { ref: m[1] } : { error: `Q-${qid} was applied but its ref was not recorded; look the task up with ${CLI(root)} task list` }; }
+    return { error: `Q-${qid} is still in the offline queue (not in the database yet). Apply it with ${CLI(root)} replay once the database answers, then use its H- ref`, retry: true };
+  }
+  return { error: `no queued task Q-${qid}` };
+}
+function findTask(cfg, sc, root, ref0) {
+  const ref = String(ref0 || '').trim();
+  if (!ref) throw new Refusal('a task ref is required (H-<n>, an outside key such as ENG-123, or Q-<id>)');
+  const cols = sc.migrated ? TASK_COLS : TASK_COLS_OLD;
+  const one = rows => { if (!rows || !rows.length) throw new Refusal(`no task ${ref}`); return rows[0]; };
+  const names = {};
+  const wrap = r => normTask(r, names, {});
+  if (/^Q-/i.test(ref)) { const q = queuedTaskRef(root, ref.slice(2)); if (q.error) throw (q.retry ? new Error(q.error) : new Refusal(q.error)); return findTask(cfg, sc, root, q.ref); }
+  if (/^H-\d+$/i.test(ref)) {
+    if (!sc.migrated) throw new Refusal(`${ref}: the database has not been migrated to refs yet (tools/harold-mcp/migrations/2026-11-18-task-list.sql); tasks are T-<first 8 of the id> until then`);
+    return wrap(one(taskCall(cfg, 'GET', `tasks?select=${cols}&ref=eq.${enc(ref.toUpperCase())}`)));
+  }
+  if (/^T-[0-9a-f]{6,8}$/i.test(ref)) {
+    const pre = ref.slice(2).toLowerCase();
+    const hit = (taskCall(cfg, 'GET', `tasks?select=${cols}&limit=5000`) || []).filter(r => String(r.id).toLowerCase().startsWith(pre));
+    if (hit.length > 1) throw new Refusal(`${ref} matches ${hit.length} tasks; use the full id`);
+    return wrap(one(hit));
+  }
+  if (UUID_RE.test(ref)) return wrap(one(taskCall(cfg, 'GET', `tasks?select=${cols}&id=eq.${enc(ref)}`)));
+  if (/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(ref)) {
+    if (!sc.migrated) throw new Refusal(`${ref}: outside keys are only known once the database is migrated (task_links)`);
+    const r = crmRequest(cfg, 'GET', `task_links?select=task_id&external_key=eq.${enc(ref.toUpperCase())}`);
+    if (!r.ok) { const e = new Error(r.err); e.down = isDown(r); throw e; }
+    if (!r.data || !r.data.length) throw new Refusal(`no task is linked to ${ref}`);
+    return wrap(one(taskCall(cfg, 'GET', `tasks?select=${cols}&id=eq.${enc(r.data[0].task_id)}`)));
+  }
+  throw new Refusal(`"${ref}" is not a task ref (H-<n>, an outside key such as ENG-123, Q-<id> or a task id)`);
+}
+
+// ── the writes (shared by the command and the queue replay) ──
+function taskCreateOnline(cfg, sc, rec, dry) {
+  const cols = sc.migrated ? 'id,ref,title' : 'id,title';
+  let dupQ = `tasks?select=${cols}&status=in.(pending,in_progress)&title=ilike.${enc(likeExact(rec.title))}`;
+  if (sc.migrated) dupQ += rec.project ? `&project=eq.${enc(rec.project)}` : '&project=is.null';
+  const dup = taskCall(cfg, 'GET', dupQ);
+  if (dup && dup.length) return { existed: true, task: dup[0], ref: dup[0].ref || `T-${String(dup[0].id).slice(0, 8)}` };
+  let contactId = rec.contact_id || null;
+  if (!contactId && rec.contact_name) {
+    try { contactId = resolveCrmContact(cfg, rec.contact_name).id; } catch (e) { if (e.down) throw e; throw new Refusal(`contact: ${e.message}`); }
+  }
+  if (dry) return { dry: true, ref: '(new)' };
+  const body = { title: rec.title, description: rec.description || '', status: 'pending', priority: rec.priority || 'medium' };
+  if (rec.due_date) body.due_date = dueToDb(rec.due_date);
+  if (contactId) body.contact_id = contactId;
+  if (sc.migrated && rec.project) body.project = rec.project;
+  const data = taskCall(cfg, 'POST', `tasks?select=${cols}`, body);
+  const t = data && data[0];
+  if (!t) throw new Error('the database accepted the task but returned nothing');
+  return { existed: false, task: t, ref: t.ref || `T-${String(t.id).slice(0, 8)}`, projectDropped: !sc.migrated && !!rec.project };
+}
+function taskPatchOnline(cfg, sc, root, ref, patch, dry) {
+  const t = findTask(cfg, sc, root, ref);
+  const now = new Date().toISOString();
+  const body = { ...patch, updated_at: now };
+  if (body.due_date) body.due_date = dueToDb(body.due_date);
+  if (!sc.migrated) delete body.project;
+  if (body.status === 'completed') body.completed_at = now; else if (body.status) body.completed_at = null;
+  if (dry) return { ref: t.ref, title: t.title, dry: true };
+  const cols = sc.migrated ? 'id,ref,title,status,priority,due_date,project' : 'id,title,status,priority,due_date';
+  const data = taskCall(cfg, 'PATCH', `tasks?id=eq.${enc(t.id)}&select=${cols}`, body);
+  if (!data || !data.length) throw new Refusal(`no task ${ref}`);
+  return { ref: data[0].ref || t.ref, title: data[0].title, status: data[0].status, due: dueFromDb(data[0].due_date), priority: data[0].priority, project: data[0].project || '', projectDropped: !sc.migrated && patch.project !== undefined };
+}
+
+// The queue: action "task" rows in harold/crm-queue.jsonl, applied by replayCrmQueue (boot, close, `harold replay`).
+// contact is always "(task)": a queued task must never count as a contact being filed (close checks that by name).
+function queueTask(root, today, payload) {
+  const qid = crypto.randomBytes(3).toString('hex');
+  const qp = path.join(root, CRM_QUEUE);
+  withLock(qp, () => appendLine(qp, { contact: '(task)', action: 'task', payload: { ...payload, qid }, date: today.iso, ts: new Date().toISOString(), replayed: false }));
+  return `Q-${qid}`;
+}
+function replayTask(cfg, root, row, dry) {
+  const p = row.payload || {};
+  const sc = taskSchema(cfg);
+  if (!sc.reachable) throw new Error(`the task table is not reachable: ${sc.err}`);
+  try {
+    if (p.op === 'create') {
+      const r = taskCreateOnline(cfg, sc, p, dry);
+      if (r.dry) return `would create task "${p.title}"`;
+      return r.existed ? `already in the task list: ${r.ref} "${r.task.title}", nothing written` : `created ${r.ref} "${p.title}"${r.projectDropped ? ' (project not stored: the database has not been migrated)' : ''}`;
+    }
+    const patch = p.op === 'update' ? p.fields || {} : TASK_OPS[p.op];
+    if (!patch) throw new Refusal(`unknown task operation "${p.op}"`);
+    const r = taskPatchOnline(cfg, sc, root, p.ref, patch, dry);
+    return r.dry ? `would ${p.op} ${r.ref} "${r.title}"` : `${p.op} ${r.ref} "${r.title}" → ${r.status}`;
+  } catch (e) {
+    if (e instanceof Refusal || e.down) throw e;
+    if (e.missingColumn) throw new Error(`${e.message} (the database changed under the replay; it will retry)`);
+    throw e;
+  }
+}
+
+// ── arguments ──
+function parseTaskArgs(argv) {
+  const valued = new Set(['project', 'due', 'priority', 'contact', 'desc', 'title']), bool = new Set(['all', 'json', 'seen']);
+  const f = {}, pos = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('--') || a === '--') { pos.push(a); continue; }
+    const eq = a.indexOf('='); const k = (eq < 0 ? a.slice(2) : a.slice(2, eq)); let v = eq < 0 ? undefined : a.slice(eq + 1);
+    if (k === 'via') continue;
+    if (bool.has(k)) { f[k] = true; continue; }
+    if (!valued.has(k)) return { error: `unknown option --${k}` };
+    if (v === undefined) { v = argv[++i]; if (v === undefined) return { error: `--${k} needs a value` }; }
+    f[k] = v;
+  }
+  return { f, pos };
+}
+function validDue(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(`${s}T00:00:00Z`)) && isoFromDate(new Date(`${s}T00:00:00Z`)) === s; }
+function taskSecret(...texts) { return texts.some(t => t && SECRET_PATTERNS.some(re => re.test(t))); }
+
+function cmdTask(root, today, argv) {
+  const sub = argv[0];
+  const parsed = parseTaskArgs(argv.slice(1));
+  const usage = `usage: ${CLI(root)} task list [--project <name>] [--all] [--json]
+       ${CLI(root)} task create "<title>" [--project <name>] [--due YYYY-MM-DD] [--priority high|medium|low] [--contact <name>] [--desc "<text>"]
+       ${CLI(root)} task start|done|cancel|reopen <ref>
+       ${CLI(root)} task update <ref> [--title <t>] [--due YYYY-MM-DD|none] [--priority <p>] [--project <name>|none] [--desc <text>]
+       ${CLI(root)} task conflicts [--seen]`;
+  if (!sub || sub === 'help') { console.log(usage); return sub ? 0 : 2; }
+  if (parsed.error) { console.error(`${parsed.error}\n${usage}`); return 2; }
+  const { f, pos } = parsed;
+  try {
+    if (sub === 'list') return taskListCmd(root, today, f);
+    if (sub === 'conflicts') return taskConflictsCmd(root, f);
+    if (sub === 'create') return taskCreateCmd(root, today, pos, f);
+    if (TASK_OPS[sub] || sub === 'update') return taskChangeCmd(root, today, sub, pos, f);
+  } catch (e) {
+    if (e instanceof Refusal) { console.error(`refused: ${e.message}`); return 2; }
+    console.error(`task ${sub}: ${e.message}`); return 1;
+  }
+  console.error(`unknown task command "${sub}"\n${usage}`); return 2;
+}
+
+function projectFilter(root, name) { const r = resolveTaskProject(root, name); return (r.name || name).toLowerCase(); }
+
+function taskListCmd(root, today, f) {
+  const cfg = crmConfig();
+  let tasks = null, closed = null, snap = null, why = '';
+  if (cfg) {
+    const sc = taskSchema(cfg);
+    if (sc.reachable) {
+      try {
+        tasks = fetchTasks(cfg, sc);
+        writeTaskSnapshot(root, tasks, today.iso, "bin/harold task list");
+        if (f.all) closed = fetchTasks(cfg, sc, { open: false }).filter(t => !['pending', 'in_progress'].includes(t.status));
+      } catch (e) { why = `the database is not answering (${e.message})`; tasks = null; }
+    } else why = `the database is not answering (${sc.err})`;
+  } else why = 'no database key here (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)';
+  if (!tasks) { snap = readTaskSnapshot(root); if (snap) tasks = snap.tasks; }
+  if (!tasks) { console.error(`no task list available: ${why}, and no ${TASK_SNAPSHOT}. Writes still work: they queue in ${CRM_QUEUE} and are applied once the database answers.`); return 1; }
+  if (f.project) { const want = projectFilter(root, f.project); tasks = tasks.filter(t => (t.project || '').toLowerCase() === want); if (closed) closed = closed.filter(t => (t.project || '').toLowerCase() === want); }
+  const groups = groupTasks(tasks, today.iso);
+  const queued = readQueue(path.join(root, CRM_QUEUE)).filter(it => it.row && it.row.action === 'task' && queuePending(it.row)).length;
+  if (f.json) {
+    console.log(JSON.stringify({ source: snap ? 'snapshot' : 'live', ageHours: snap ? snap.ageH : 0, today: today.iso, tz: TZ, total: tasks.length, counts: Object.fromEntries(TASK_GROUPS.map(n => [n, groups[n].length])), groups, closed: closed || undefined, queued }, null, 2));
+    return 0;
+  }
+  const L = [`# Tasks — ${snap ? `snapshot, written ${new Date(snap.writtenMs).toISOString()} by ${snap.writer}, ${ageWords(snap.ageH)} old (${TASK_SNAPSHOT}; ${why})` : "live from Harold's task list"} — ${today.iso} ${TZ}${f.project ? ` — project: ${f.project}` : ''}`, ''];
+  if (!snap && cfg && !taskSchema(cfg).migrated) L.push(`Note: the database has not been migrated to the new task list yet (tools/harold-mcp/migrations/2026-11-18-task-list.sql). Refs are T-<8 characters>; projects and outside links are not stored.`, '');
+  if (snap && f.all) L.push('(--all needs the live database: the snapshot holds open tasks only)', '');
+  let out = L.join('\n') + taskTables(groups);
+  if (closed) out += `### Closed, most recent ${closed.length}\n${closed.length ? `${TASK_HEAD}\n${closed.map(taskRow).join('\n')}\n` : ''}`;
+  if (queued) out += `\n${queued} queued task write${queued === 1 ? '' : 's'} not yet in the database (${CLI(root)} replay applies them).\n`;
+  console.log(out.trimEnd());
+  return 0;
+}
+
+function offlineNote(cfg, sc) { return !cfg ? 'no database key here' : `the database is not answering (${sc.err})`; }
+
+function taskCreateCmd(root, today, pos, f) {
+  const title = pos.join(' ').trim();
+  if (!title) { console.error('usage: task create "<title>" [--project <name>] [--due YYYY-MM-DD] [--priority high|medium|low] [--contact <name>] [--desc "<text>"]'); return 2; }
+  if (taskSecret(title, f.desc)) { console.error('refused: the title or description looks like it contains a key or secret. Tasks are kept in the database and in a committed snapshot; put credentials in ~/.harold/env and describe the task without them.'); return 2; }
+  if (f.priority && !PRIORITIES.includes(f.priority)) { console.error(`refused: --priority must be one of ${PRIORITIES.join(', ')}`); return 2; }
+  if (f.due && !validDue(f.due)) { console.error('refused: --due must be a real date as YYYY-MM-DD'); return 2; }
+  let project = '';
+  if (f.project) { const r = resolveTaskProject(root, f.project); if (r.error) { console.error(`refused: ${r.error}`); return 2; } project = r.name; }
+  const rec = { title, description: f.desc || '', priority: f.priority || 'medium', due_date: f.due || undefined, project: project || undefined, contact_name: f.contact || undefined };
+  const cfg = crmConfig();
+  let sc = cfg ? taskSchema(cfg) : null;
+  if (cfg && sc.reachable) {
+    try {
+      const r = taskCreateOnline(cfg, sc, rec);
+      const bits = [project, f.due && `due ${f.due}`, f.priority].filter(Boolean).join(', ');
+      if (r.existed) console.log(`${r.ref} already open with the same title and project: "${r.task.title}", nothing created`);
+      else console.log(`created ${r.ref} "${title}"${bits ? ` (${bits})` : ''}${r.projectDropped ? `\nnote: the project was not stored because the database has not been migrated to the new task list yet` : ''}`);
+      return 0;
+    } catch (e) { if (!e.down) throw e; sc = { reachable: false, err: e.message }; }
+  }
+  const q = queueTask(root, today, { op: 'create', title, description: rec.description, priority: rec.priority, due_date: rec.due_date, project: rec.project, contact_name: rec.contact_name });
+  console.log(`queued ${q} "${title}" (${offlineNote(cfg, sc)}). It is written when the database answers (${CLI(root)} replay, or the next boot or close with the key).`);
+  return 0;
+}
+
+function taskChangeCmd(root, today, sub, pos, f) {
+  const ref = pos[0];
+  if (!ref || pos.length > 1) { console.error(`usage: task ${sub} <ref>${sub === 'update' ? ' [--title <t>] [--due YYYY-MM-DD|none] [--priority <p>] [--project <name>|none] [--desc <text>]' : ''}`); return 2; }
+  let patch, fields;
+  if (sub === 'update') {
+    fields = {};
+    if (f.title !== undefined) { if (!f.title.trim()) { console.error('refused: --title cannot be empty'); return 2; } fields.title = f.title.trim(); }
+    if (f.due !== undefined) { if (f.due === 'none') fields.due_date = null; else if (validDue(f.due)) fields.due_date = f.due; else { console.error('refused: --due must be YYYY-MM-DD, or none to clear it'); return 2; } }
+    if (f.priority !== undefined) { if (!PRIORITIES.includes(f.priority)) { console.error(`refused: --priority must be one of ${PRIORITIES.join(', ')}`); return 2; } fields.priority = f.priority; }
+    if (f.project !== undefined) { if (f.project === 'none') fields.project = null; else { const r = resolveTaskProject(root, f.project); if (r.error) { console.error(`refused: ${r.error}`); return 2; } fields.project = r.name; } }
+    if (f.desc !== undefined) fields.description = f.desc;
+    if (!Object.keys(fields).length) { console.error('nothing to update: give at least one of --title, --due, --priority, --project, --desc'); return 2; }
+    if (taskSecret(fields.title, fields.description)) { console.error('refused: the title or description looks like it contains a key or secret'); return 2; }
+    patch = fields;
+  } else patch = TASK_OPS[sub];
+  const cfg = crmConfig();
+  let sc = cfg ? taskSchema(cfg) : null;
+  if (cfg && sc.reachable) {
+    try {
+      const r = taskPatchOnline(cfg, sc, root, ref, patch);
+      console.log(sub === 'update' ? `updated ${r.ref} "${r.title}" [${r.status}${r.due ? `, due ${r.due}` : ''}${r.project ? `, ${r.project}` : ''}]${r.projectDropped ? '\nnote: the project was not stored because the database has not been migrated to the new task list yet' : ''}` : `${sub} ${r.ref} "${r.title}" → ${r.status}`);
+      return 0;
+    } catch (e) { if (!e.down) throw e; sc = { reachable: false, err: e.message }; }
+  }
+  const q = queueTask(root, today, sub === 'update' ? { op: 'update', ref, fields } : { op: sub, ref });
+  console.log(`queued ${q}: ${sub} ${ref} (${offlineNote(cfg, sc)}). It is applied when the database answers (${CLI(root)} replay, or the next boot or close with the key).`);
+  return 0;
+}
+
+// Unseen sync conflicts. The sync engine (the connector) writes sync_log rows; a table that is not there yet means no sync is set up.
+function syncConflictRows(cfg) {
+  const r = crmRequest(cfg, 'GET', 'sync_log?select=id,at,provider,task_id,detail&kind=eq.conflict&seen=eq.false&order=at.asc&limit=200', undefined, { timeout: 8 });
+  return r.ok ? { rows: r.data || [] } : { missing: isMissingTable(r), err: r.err };
+}
+function taskConflictsCmd(root, f) {
+  const cfg = crmConfig();
+  if (!cfg) { console.log('No database key here, so there is no way to read the sync log (it lives in the database). Run this where SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.'); return 0; }
+  const r = syncConflictRows(cfg);
+  if (r.err) { console.log(r.missing ? 'No sync log yet: the task sync is not set up on this database.' : `Could not read the sync log: ${r.err}`); return r.missing ? 0 : 1; }
+  if (!r.rows.length) { console.log('No unseen sync conflicts.'); return 0; }
+  const refs = {};
+  const ids = [...new Set(r.rows.map(x => x.task_id).filter(Boolean))];
+  if (ids.length) { const t = crmRequest(cfg, 'GET', `tasks?select=id,ref,title&id=in.(${ids.join(',')})`); if (t.ok) (t.data || []).forEach(x => { refs[x.id] = `${x.ref || 'T-' + String(x.id).slice(0, 8)} "${x.title}"`; }); }
+  console.log(`${r.rows.length} unseen sync conflict${r.rows.length === 1 ? '' : 's'} (both sides changed since they last agreed; the later change won, nothing was deleted):`);
+  for (const x of r.rows) {
+    const d = x.detail && typeof x.detail === 'object' ? JSON.stringify(x.detail) : String(x.detail || '');
+    console.log(`- #${x.id} ${String(x.at).slice(0, 16).replace('T', ' ')} ${x.provider} ${refs[x.task_id] || x.task_id || '(no task)'}: ${d.length > 300 ? d.slice(0, 299) + '…' : d}`);
+  }
+  if (f.seen) {
+    const ok = crmRequest(cfg, 'PATCH', `sync_log?id=in.(${r.rows.map(x => x.id).join(',')})`, { seen: true }, { prefer: 'return=minimal' });
+    if (!ok.ok) { console.error(`could not mark them seen: ${ok.err}`); return 1; }
+    console.log(`marked ${r.rows.length} seen.`);
+  } else console.log(`Mark them seen with: ${CLI(root)} task conflicts --seen`);
+  return 0;
+}
+
+// Boot's task section: the live list when this session has the database key (and the snapshot kept fresh), else the snapshot with its age.
+function taskBootLines(root, today) {
+  const cfg = crmConfig();
+  let tasks = null, snap = null, conflicts = 0, note = '', migrated = true;
+  if (cfg) {
+    const sc = taskSchema(cfg);
+    if (sc.reachable) {
+      migrated = sc.migrated;
+      try {
+        tasks = fetchTasks(cfg, sc);
+        writeTaskSnapshot(root, tasks, today.iso, "bin/harold boot", true);
+        if (sc.migrated) { const c = syncConflictRows(cfg); if (c.rows) conflicts = c.rows.length; }
+      } catch (e) { note = e.message; tasks = null; }
+    } else note = sc.err;
+  }
+  if (!tasks) snap = readTaskSnapshot(root);
+  const list = tasks || (snap && snap.tasks);
+  const L = [];
+  if (!list) {
+    L.push(`## Tasks (Harold's own list) — UNAVAILABLE: ${cfg ? `the database is not answering (${note})` : 'no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY here'}, and no ${TASK_SNAPSHOT}`);
+    L.push(`Action items and commitments still become tasks: ${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD queues the write in ${CRM_QUEUE} (ref Q-<id>) and applies it once the database answers. Or the connector's task_create.`);
+    return L;
+  }
+  const g = groupTasks(list, today.iso);
+  L.push(`## Tasks (Harold's own list) — ${tasks ? `live, ${list.length} open` : `no database key here; snapshot ${ageWords(snap.ageH)} old (${path.join(root, TASK_SNAPSHOT)}, written by ${snap.writer})`}`);
+  L.push(`Overdue ${g['Overdue'].length} · due today ${g['Due today'].length} · due this week ${g['Due this week'].length} · in progress ${g['In progress'].length} · later or undated ${g['Later or undated'].length}. Full list: ${CLI(root)} task list. Update: ${CLI(root)} task start|done <ref>; new: ${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD`);
+  if (!migrated) L.push(`The database has not been migrated to the new task list yet (tools/harold-mcp/migrations/2026-11-18-task-list.sql): refs are T-<8 characters>, projects and outside links are not stored.`);
+  const row = t => `- ${t.ref} [${t.status}${t.due ? `, due ${t.due}` : ''}, ${t.priority}] ${t.title}${t.project ? ` (${t.project})` : ''}${t.contact ? ` — ${t.contact}` : ''}${t.links && t.links.length ? ` [${t.links.join(', ')}]` : ''}`;
+  g['Overdue'].slice(0, 8).forEach(t => L.push(row(t)));
+  if (g['Overdue'].length > 8) L.push(`- ... ${g['Overdue'].length - 8} more overdue: ${CLI(root)} task list`);
+  g['Due today'].forEach(t => L.push(row(t)));
+  const queued = readQueue(path.join(root, CRM_QUEUE)).filter(it => it.row && it.row.action === 'task' && queuePending(it.row)).length;
+  if (queued) L.push(`${queued} queued task write${queued === 1 ? '' : 's'} not yet in the database.`);
+  if (conflicts) L.push(`${conflicts} new sync conflict${conflicts === 1 ? '' : 's'} — ${CLI(root)} task conflicts`);
+  return L;
+}
+
 // Where knowledge lives: the standard directories plus every project folder in harold/projects.md.
 // Derived from the project map, never hard-coded, so a new project is covered the moment it is mapped.
 function knowledgeDirs(root) {
@@ -1412,9 +1866,9 @@ function knowledgeDirs(root) {
   return [...new Set([...std, ...folders])];
 }
 
-// A task reference on an action item: a tracker ID (ABC-123), a URL, or "(no task: <reason>)".
+// A task reference on an action item: Harold's own ref (H-12), a queued write (Q-1a2b3c), any tracker key (ABC-123), a URL, or "(no task: <reason>)".
 // The ID is case-sensitive ("abc-123" in prose is not one); the no-task marker needs a reason.
-const TASK_REFS = [/\b[A-Z][A-Z0-9]{1,9}-\d+\b/, /https?:\/\/\S+/, /\(no task:\s*[^)\s][^)]*\)/i];
+const TASK_REFS = [/\b[A-Z][A-Z0-9]{0,9}-\d+\b/, /\bQ-[0-9a-f]{6,12}\b/, /\bT-[0-9a-f]{8}\b/, /https?:\/\/\S+/, /\(no task:\s*[^)\s][^)]*\)/i];
 const hasTaskRef = s => TASK_REFS.some(re => re.test(s));
 
 // Top-level list items under any heading matching /action items/i (until the next heading of the same or a
@@ -1513,7 +1967,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
   const sinceBase = gitChangedSet(root, baseCommit);
-  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/graph.json' && !f.endsWith('search.db') && (!sinceBase || sinceBase.has(f)));
+  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/tasks-snapshot.md' && f !== 'harold/graph.json' && !f.endsWith('search.db') && (!sinceBase || sinceBase.has(f)));
   // 2a. new work must belong to a project. A synthesis note or decision filed this session names its project in
   // frontmatter (`project: <name, alias or folder from harold/projects.md>`, or `project: global`), and a new
   // top-level folder must be a project's folder. Without this a venture lived for days as a person card plus a loose
@@ -1584,7 +2038,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     let text; try { text = readFull(path.join(root, f)); } catch (_) { continue; }
     for (const it of actionItemsWithoutTask(text)) { untaskedNotes.add(f); untasked.push(`${f}:${it.line}: ${it.text.length > 120 ? it.text.slice(0, 117) + '...' : it.text}`); }
   }
-  if (untasked.length) problems.push(`action items without a task in ${[...untaskedNotes].join(', ')}: every commitment in a meeting note becomes a task automatically. Create each one in the task manager (${path.join(root, 'bin', 'harold-linear')} create "<title>" --project <name> --due YYYY-MM-DD, or the task manager's own tool, e.g. task_create on the connector) and write its ID on the item, e.g. "- Send the revised deck (ABC-123)". An item that should not become a task says why: "(no task: <reason>)". Items:\n  ${untasked.slice(0, 12).join('\n  ')}${untasked.length > 12 ? `\n  (+${untasked.length - 12} more)` : ''}`);
+  if (untasked.length) problems.push(`action items without a task in ${[...untaskedNotes].join(', ')}: every commitment in a meeting note becomes a task automatically. Create each one in Harold's task list (${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD, or task_create on the connector) and write its ref on the item, e.g. "- Send the revised deck (H-12)". With no database key the command queues the write and prints a Q-<id> ref, which counts too, and so does any outside key such as ABC-123. An item that should not become a task says why: "(no task: <reason>)". Items:\n  ${untasked.slice(0, 12).join('\n  ')}${untasked.length > 12 ? `\n  (+${untasked.length - 12} more)` : ''}`);
 
   // 4. scheduled work recorded
   const c = runCheck(root, today);
@@ -1881,17 +2335,7 @@ function cmdWhere(root, args) {
   const q = args.join(' ').trim().toLowerCase();
   if (!q) { console.error('usage: harold where <topic|alias|keyword>'); return 2; }
   const { projects } = loadProjects(root);
-  const score = p => {
-    let s = 0; const name = p.name.toLowerCase();
-    if (name === q || p.aliasList.some(a => a.toLowerCase() === q)) s += 100;
-    if (name.includes(q) || q.includes(name)) s += 40;
-    p.aliasList.forEach(a => { const al = a.toLowerCase(); if (al && (q.includes(al) || al.includes(q))) s += 30; });
-    p.keywordList.forEach(k => { const kl = k.toLowerCase(); if (kl && (q.includes(kl) || kl.includes(q))) s += 10; });
-    const f = (p.folder || '').toLowerCase(); if (f && (f.includes(q.replace(/\s+/g, '_')) || f.includes(q.replace(/\s+/g, '-')))) s += 25;
-    if (p.status === 'archived') s -= 15;
-    return s;
-  };
-  const ranked = projects.map(p => ({ p, s: score(p) })).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+  const ranked = rankProjects(projects, q);
   if (!ranked.length) { console.log(`no project matches "${q}" — if this is a new project, run playbook/core/project-intake.md: create the folder, add the harold/projects.md entry, create the vault card, cross-link.`); return 1; }
   const top = ranked[0].p;
   console.log(`${top.name} [${top.status}]\nfolder: ${path.join(root, top.folder || '')}`);
@@ -1915,7 +2359,7 @@ function cmdWhere(root, args) {
 // While the job runs, harold close checks the job instead of session filing, on any machine (currentJob).
 const BRIEF_JOB = 'harold/.brief-job.json';
 const BRIEF_CONTEXT = 'harold/.brief-context.md';
-const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/alerts-archive.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/crm-queue.jsonl'];
+const BRIEF_PATHS = ['harold/briefs', 'harold/alerts.md', 'harold/alerts-archive.md', 'harold/trigger-log.jsonl', 'harold/linear-snapshot.md', 'harold/tasks-snapshot.md', 'harold/crm-queue.jsonl'];
 // Hourly retries stop this many hours after the brief time, so a job that keeps failing (a missing
 // credential, say) fails a few times, not all day. HAROLD_BRIEF_WINDOW_HOURS=0 removes the limit.
 const BRIEF_WINDOW_H = (() => { const v = setting('HAROLD_BRIEF_WINDOW_HOURS'); return v !== '' && !isNaN(+v) && +v >= 0 ? +v : 6; })();
@@ -2356,7 +2800,7 @@ const UPSTREAM_CHECK = 'upstream-check.json'; // in STATE_DIR (gitignored): boot
 // Never written by update, whatever a manifest says (seeds may create the harold/ ones when missing).
 const USER_CONTENT = ['AGENTS.md', 'CLAUDE.md', 'README.md', 'memory/', 'dashboard/', 'raw/', 'projects/', 'harold/active-sessions/', 'harold/briefs/2*', 'harold/briefs/housekeeping-notes.md',
   'harold/learnings.jsonl', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md', 'harold/facts.md', 'harold/projects.md', 'harold/crm-queue.jsonl',
-  'harold/trigger-log.jsonl', 'harold/sync-map.md', 'harold/housekeeping.json', 'harold/settings.env', 'harold/upstream.json', 'harold/graph.json', 'harold/linear-snapshot.md'];
+  'harold/trigger-log.jsonl', 'harold/sync-map.md', 'harold/housekeeping.json', 'harold/settings.env', 'harold/upstream.json', 'harold/graph.json', 'harold/linear-snapshot.md', 'harold/tasks-snapshot.md'];
 function readUpstream(root) { try { const j = JSON.parse(readFull(path.join(root, UPSTREAM_FILE))); return j && typeof j === 'object' ? j : {}; } catch (_) { return {}; } }
 function globRe(pat) { return new RegExp('^' + pat.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\0').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\0/g, '.*') + '$'); }
 function pathMatches(p, pat) { if (pat.endsWith('/')) return p.startsWith(pat); if (/[*?]/.test(pat)) return globRe(pat).test(p); return p === pat; }
@@ -2526,7 +2970,14 @@ function upstreamNotice(root) {
 }
 
 // ───────────────────────── main ─────────────────────────
+// A pipe is written asynchronously and this program ends with process.exit(), which cut any output over the pipe
+// buffer (64 KB) short for whoever read it through a pipe (a test, a hook, `harold check --json | jq`). Blocking
+// writes mean every byte is out before the exit.
+function blockingOutput() {
+  for (const st of [process.stdout, process.stderr]) { try { if (st && st._handle && typeof st._handle.setBlocking === 'function') st._handle.setBlocking(true); } catch (_) {} }
+}
 function main() {
+  blockingOutput();
   const argv = process.argv.slice(2);
   const cmd = argv[0];
   const via = ((argv.find(a => a.startsWith('--via=')) || '').slice(6) || '').toLowerCase() || null;
@@ -2580,6 +3031,7 @@ function main() {
     case 'close': code = cmdClose(root, today, opts, hook); break;
     case 'file': code = cmdFile(root, today, args, opts); break;
     case 'where': code = cmdWhere(root, args); break;
+    case 'task': code = cmdTask(root, today, argv.slice(1)); break;
     case 'replay': code = cmdReplay(root, opts); break;
     case 'brief': code = cmdBrief(root, today, argv.slice(1), now); break;
     case 'housekeeping': code = cmdHousekeeping(root, today, argv.slice(1), now); break;
@@ -2591,7 +3043,7 @@ function main() {
     default:
       console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  learnings [--project <slug>] [--severity <s>] [--all]   print learnings in full (default: the critical ones; with
                      --project, that project's critical and warning entries plus global ones)
-  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database; queues offline)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

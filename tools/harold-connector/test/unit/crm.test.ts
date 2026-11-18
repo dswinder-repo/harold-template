@@ -122,20 +122,3 @@ describe("pipeline", () => {
     expect(ok.text).toMatch(/\(client\)/);
   });
 });
-
-describe("tasks", () => {
-  it("creates a task linked to the resolved contact; complete requires task_id", async () => {
-    const r = await crm.crmTask(sb(), { action: "create", contact_name: "Jane Doe", title: "Send deck", due_date: "2026-10-03" });
-    expect(r.text).toMatch(/Created CRM task: "Send deck" → Jane Doe/);
-    expect(db.tables.tasks[0]).toMatchObject({ contact_id: "c-ext", status: "pending", priority: "medium", due_date: "2026-10-03" });
-    expect((await crm.crmTask(sb(), { action: "complete" })).isError).toBe(true);
-    const done = await crm.crmTask(sb(), { action: "complete", task_id: String(db.tables.tasks[0].id) });
-    expect(done.text).toMatch(/Completed: "Send deck"/);
-  });
-  it("shows a due date as its calendar day whatever HAROLD_TZ is (timestamptz stored at midnight UTC)", async () => {
-    setTestEnv({ HAROLD_TZ: "America/Los_Angeles" });
-    db.tables.tasks.push({ id: "t1", title: "Call back", status: "pending", priority: "high", due_date: "2026-10-03T00:00:00+00:00", contact_id: "c-ext" });
-    const r = await crm.crmTask(sb(), { action: "list" });
-    expect(r.text).toContain("(high, 10/3/2026)");
-  });
-});

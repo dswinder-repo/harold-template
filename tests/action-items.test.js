@@ -72,7 +72,8 @@ test('close blocks on a meeting note changed this session whose action items car
   assert.match(blocked.reason, /action items without a task in vault\/meetings\/[\d-]+-pilot-scoping\.md/);
   assert.match(blocked.reason, /pilot-scoping\.md:11: - \[ \] Send the revised deck to Jane Doe by Friday/);
   assert.match(blocked.reason, /pilot-scoping\.md:14: 1\. Book the venue/);
-  assert.match(blocked.reason, /harold-linear create/);
+  assert.match(blocked.reason, /bin\/harold task create "<title>" --project <name> --due YYYY-MM-DD, or task_create on the connector/);
+  assert.match(blocked.reason, /\(H-12\)/);
   assert.match(blocked.reason, /\(no task: <reason>\)/);
   assert.doesNotMatch(blocked.reason, /signed NDA/, 'an item with an ID passes');
   assert.doesNotMatch(blocked.reason, /context: she asked/, 'a nested sub-item is detail, not an item');
@@ -86,6 +87,26 @@ test('close blocks on a meeting note changed this session whose action items car
     '- Think about the logo (no task: just an idea, not a commitment)',
   ].join('\n')));
   assert.deepStrictEqual(json(run(w, ['close', '--via=claude'], claude('Stop', 'ai-1', { stop_hook_active: true }))), {});
+});
+
+test("an action item passes with Harold's own ref (H-12), a queued ref (Q-1a2b3c) or any outside key (ABC-123); a lookalike does not", () => {
+  const w = workspace();
+  run(w, ['boot', '--via=claude'], claude('SessionStart', 'ai-4', { source: 'startup' }));
+  const note = `vault/meetings/${w.today}-refs.md`;
+  fs.writeFileSync(path.join(w.ws, note), meeting([
+    '- Send the revised deck (H-12)',
+    '- Book the venue (Q-1a2b3c)',
+    '- Follow up with the bank (ENG-123)',
+    '- Draft the memo (T-0a1b2c3d)',
+    '- Call the minister (h-12)',
+    '- Email the partner (Q-xyz)',
+  ].join('\n')));
+  daily(w);
+  const r = json(run(w, ['close', '--via=claude'], claude('Stop', 'ai-4')));
+  assert.strictEqual(r.decision, 'block');
+  assert.match(r.reason, /refs\.md:\d+: - Call the minister \(h-12\)/);
+  assert.match(r.reason, /refs\.md:\d+: - Email the partner \(Q-xyz\)/);
+  assert.doesNotMatch(r.reason, /refs\.md:\d+: - (Send the revised deck|Book the venue|Follow up with the bank|Draft the memo)/, 'the four valid forms pass');
 });
 
 test('the heading match is case-insensitive at any level, an empty "(no task:)" is not a reason, and lowercase ids do not count', () => {

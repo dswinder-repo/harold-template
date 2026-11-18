@@ -3,7 +3,7 @@
 --
 -- Creates exactly the tables and columns the harold-mcp server reads and writes:
 --   contacts, contact_categories, contact_pipelines, pipeline_stages,
---   stage_changes, interactions, tasks
+--   stage_changes, interactions, tasks (Harold's own task list), task_links, sync_log, sync_state
 -- (bin/harold close also reads contacts.name / contacts.updated_at to see which
 -- contacts were written today.)
 --
@@ -158,7 +158,12 @@ drop trigger if exists interactions_touch_contact on public.interactions;
 create trigger interactions_touch_contact after insert on public.interactions
   for each row execute function public.harold_touch_contact();
 
--- ── tasks (contact-specific follow-ups; project work lives in your task manager) ──
+-- ── tasks: Harold's own task list ──────────────────────────────────────────
+-- One table, read and written by boot, close, bin/harold task, the connector and the CRM web app. A task may
+-- belong to a contact, a project, both or neither. Outside task managers (Linear first) are kept in step through
+-- task_links and the sync; Harold works with none connected. The block after the table (ref, project, source,
+-- changed_by, task_links, sync_log, sync_state) is also in migrations/2026-11-18-task-list.sql, which brings a
+-- database made before it up to date. Both are idempotent: running either twice changes nothing.
 create table if not exists public.tasks (
   id            uuid primary key default gen_random_uuid(),
   contact_id    uuid references public.contacts (id) on delete cascade,
@@ -180,6 +185,81 @@ drop trigger if exists tasks_updated_at on public.tasks;
 create trigger tasks_updated_at before update on public.tasks
   for each row execute function public.harold_set_updated_at();
 
+-- Task list additions: a readable ref (H-1, H-2, ...), a project, who made each change, links to outside tools
+-- and a sync log.
+-- A due date is a calendar day. It is stored as midnight UTC and read as the first 10 characters of the value,
+-- with no time-zone conversion. Only "today" uses your time zone (HAROLD_TZ).
+create sequence if not exists public.task_ref_seq;
+
+alter table public.tasks
+  add column if not exists ref        text,
+  add column if not exists project    text,
+  add column if not exists source     text not null default 'harold',
+  add column if not exists changed_by text not null default 'harold';
+
+update public.tasks set ref = 'H-' || nextval('public.task_ref_seq') where ref is null;
+alter table public.tasks alter column ref set default ('H-' || nextval('public.task_ref_seq'));
+alter table public.tasks alter column ref set not null;
+create unique index if not exists idx_tasks_ref     on public.tasks (ref);
+create index        if not exists idx_tasks_project on public.tasks (project);
+create index        if not exists idx_tasks_updated on public.tasks (updated_at);
+
+-- Who made this change. Default 'harold'. The sync engine sends the HTTP header
+-- "x-harold-origin: <provider>" through PostgREST, so its own writes are marked and never echoed back.
+create or replace function public.harold_task_origin() returns trigger
+language plpgsql as $$
+declare origin text;
+begin
+  begin
+    origin := nullif(current_setting('request.headers', true)::json ->> 'x-harold-origin', '');
+  exception when others then origin := null;
+  end;
+  new.changed_by := coalesce(origin, 'harold');
+  if tg_op = 'INSERT' and origin is not null and new.source = 'harold' then new.source := origin; end if;
+  if new.status = 'completed' and new.completed_at is null then new.completed_at := now(); end if;
+  if new.status <> 'completed' then new.completed_at := null; end if;
+  return new;
+end;
+$$;
+drop trigger if exists tasks_origin on public.tasks;
+create trigger tasks_origin before insert or update on public.tasks
+  for each row execute function public.harold_task_origin();
+
+create table if not exists public.task_links (
+  id                  uuid primary key default gen_random_uuid(),
+  task_id             uuid not null references public.tasks (id) on delete cascade,
+  provider            text not null,
+  external_id         text not null,
+  external_key        text,
+  external_url        text,
+  external_updated_at timestamptz,
+  synced_at           timestamptz,
+  synced_fields       jsonb,        -- the field values both sides last agreed on, for a field-level merge
+  created_at          timestamptz not null default now(),
+  unique (provider, external_id),
+  unique (task_id, provider)
+);
+
+alter table public.task_links add column if not exists synced_fields jsonb;
+
+create table if not exists public.sync_log (
+  id        bigserial primary key,
+  at        timestamptz not null default now(),
+  provider  text not null,
+  task_id   uuid references public.tasks (id) on delete set null,
+  kind      text not null check (kind in ('conflict', 'error', 'import', 'push', 'pull', 'skip')),
+  detail    jsonb not null default '{}'::jsonb,
+  seen      boolean not null default false
+);
+create index if not exists idx_sync_log_unseen on public.sync_log (at) where seen = false;
+
+create table if not exists public.sync_state (
+  provider   text primary key,
+  cursor     timestamptz,
+  detail     jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 -- ── row-level security: on everywhere, no policies (service_role only) ──────
 alter table public.contacts           enable row level security;
 alter table public.contact_categories enable row level security;
@@ -188,3 +268,6 @@ alter table public.contact_pipelines  enable row level security;
 alter table public.stage_changes      enable row level security;
 alter table public.interactions       enable row level security;
 alter table public.tasks              enable row level security;
+alter table public.task_links         enable row level security;
+alter table public.sync_log           enable row level security;
+alter table public.sync_state         enable row level security;

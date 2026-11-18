@@ -14,6 +14,7 @@
 - `competitors` — read by the analyst protocol
 - `card` — the `vault/projects` note
 - `next_step` — the one thing that moves it forward next (`bin/harold pulse` shows it; the card's frontmatter `next_step:` works too)
+- `linear_project` — optional: the exact name of the matching Linear project, when the Linear sync is on and the names differ. Without it, the sync matches a Linear project to this entry by its name or an alias.
 - `notes` — anything else
 
 **Ending an engagement = set `status: archived`.** Nothing else changes; the folder, cards and history stay. New projects are added by `playbook/core/project-intake.md`, usually without being asked: you start talking about something the map does not know, and Harold creates the folder, this entry, the vault card and the cross-links.

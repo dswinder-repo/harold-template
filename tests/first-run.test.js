@@ -116,11 +116,12 @@ firstRun('a clone still pointing at the public starter is warned about at boot (
   assert.ok(c.warnings.some(x => /looks like the public Harold starter.*PRIVATE repository.*remote set-url origin/.test(x)), JSON.stringify(c.warnings));
 });
 
-firstRun('a committed Linear snapshot is dated by its "Pulled" line, not by checkout time (review C-16)', () => {
+firstRun("a committed task snapshot is dated by its \"Written\" line, not by checkout time (review C-16)", () => {
   const w = freshInstall();
-  fs.writeFileSync(path.join(w.ws, 'harold/linear-snapshot.md'), '# Linear snapshot — team X\n\n*Pulled 2026-10-01T10:00:00.000Z (2026-10-01 06:00 America/New_York). 0 open issues.*\n');
-  const b = run(w, ['boot'], { HAROLD_NOW: '2026-10-03T10:00:00Z', LINEAR_API_KEY: '' });
-  assert.match(b.out, /committed snapshot 48h old/);
+  fs.writeFileSync(path.join(w.ws, 'harold/tasks-snapshot.md'), "# Harold task list snapshot\n\n*Written 2026-10-01T10:00:00.000Z by harold-connector sync.*\n\n### Overdue (0)\n\n### Due today (0)\n\n### Due this week (0)\n\n### In progress (0)\n\n### Later or undated (0)\n");
+  const b = run(w, ['boot'], { HAROLD_NOW: '2026-10-03T10:00:00Z' });
+  assert.match(b.out, /snapshot 2 days old/);
+  assert.match(b.out, /written by harold-connector sync/);
 });
 
 // A tool without hooks: the agent runs boot and close itself, each in its own shell, with no session id (review X-03).

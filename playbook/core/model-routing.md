@@ -46,7 +46,7 @@ Tasks that follow established patterns: playbooks, templates, multi-step but pre
 | **Email drafting** (from templates or playbooks) | "Draft a follow-up to Jane Doe", "Write the day-8 follow-up for Sam Lee" |
 | **Playbook execution** | Contact intake, blocker escalation, the document QC checklist |
 | **Task-manager management** | Creating tasks with context, bulk status updates, sprint planning |
-| **Alert sync** | Rebuilding `harold/alerts.md` from the task manager + `harold/blockers.md` + `harold/events.md` |
+| **Alert sync** | Rebuilding `harold/alerts.md` from Harold's task list + `harold/blockers.md` + `harold/events.md` |
 | **Daily note updates** | End-of-session flush to `vault/daily/` |
 | **File updates** | Updating `harold/facts.md`, `harold/events.md`, `harold/blockers.md` with new information |
 | **Standard document generation** | Meeting agendas, status reports, pipeline summaries |
@@ -133,7 +133,7 @@ When the morning brief (`playbook/core/morning-brief.md`) generates priority pro
 **Priority 2: Investor Follow-Up Emails (Day 3)** [MID]
 [Full prompt with context...]
 
-**Priority 3: Update Partner Pipeline in the task manager** [MID]
+**Priority 3: Update Partner Pipeline in Harold's task list** [MID]
 [Full prompt with context...]
 ```
 

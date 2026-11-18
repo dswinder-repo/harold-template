@@ -55,7 +55,7 @@ Before using any date reference:
 - [ ] **What is today, really?** Take it from the system (`date "+%Y-%m-%d %A"`, which `bin/harold boot` already prints). Never infer today's date from file contents or memory.
 - [ ] **Is the date correct?** Calculate actual days and weeks from the system date.
 - [ ] **Specific beats relative.** Write "Tuesday 14 [MONTH]" rather than "last week". If you use a relative phrase, you must have checked the date it refers to.
-- [ ] **Task dates come from the task manager (Linear by default), not memory.**
+- [ ] **Task dates come from Harold's task list (`bin/harold task list`), not memory.**
 - [ ] **Event dates come from `harold/events.md`, not memory.**
 - [ ] **Who is where?** Check whether relevant people are travelling (see section 4).
 
@@ -83,7 +83,7 @@ Before stating where someone is or what they are doing:
 Before stating a figure, metric or claim:
 
 - [ ] **Is it in `harold/facts.md`?** If so, cite it (for example "per facts.md"). If facts.md and another file disagree, facts.md is the source of truth; flag the other file for correction.
-- [ ] **Is it grounded or speculative?** Separate them visibly. Grounded = came from a file, the CRM, the task manager, or a source you just read. Speculative = your inference. Label inference as inference ("likely", "my read is").
+- [ ] **Is it grounded or speculative?** Separate them visibly. Grounded = came from a file, the CRM, Harold's task list, or a source you just read. Speculative = your inference. Label inference as inference ("likely", "my read is").
 - [ ] **Is it stale?** Check the fact's last-updated date. Anything older than the relevant cycle (a quarter for financials, a month for pipeline state) gets a caveat.
 
 **If data is missing:** say the fact could not be verified rather than filling the gap from memory.
@@ -99,7 +99,7 @@ Before creating or filing any document:
 - [ ] **Which project does it belong to?** Resolve the folder through `harold/projects.md` (`bin/harold where <topic>`). Never hard-code a project path.
 - [ ] **Project-specific or cross-project?** Project-specific goes to that project's folder; cross-project goes to the shared location `harold/projects.md` names.
 - [ ] **Committed event or one under consideration?** Committed → its own entry under `## Upcoming Events` in `harold/events.md`. Considering → noted as such, not in the upcoming table.
-- [ ] **Does the task in the task manager match the filing location?** A cross-project brief should not hang off a single project's task.
+- [ ] **Does the task in Harold's task list match the filing location?** A cross-project brief should not hang off a single project's task.
 
 **If data is missing:** if `bin/harold where` returns nothing for the topic, ask the operator where it belongs and add the answer to `harold/projects.md`.
 

@@ -11,9 +11,9 @@ The MCP server that connects Harold to your CRM and keeps the `harold/` markdown
 | `harold_search_contacts` | Find contacts by name, org, type, warmth, stage, purpose, project, keyword |
 | `harold_get_contact` | Full profile: labels, pipeline entries, interactions, open tasks, stage history |
 | `harold_pipeline` | The one pipeline: add (with a purpose), move, close, list |
-| `harold_cadence_check` | Relationships overdue for contact, plus overdue CRM tasks. The same rule as the connector's `crm_stale` (`cadence.js`): the tightest stage cadence among open pipeline entries, else warmth (Hot 7 days, Warm 14, Lukewarm 28); Cold or unset warmth is never flagged |
-| `harold_crm_task` | Contact-specific follow-ups: create, update, complete, cancel, list |
-| `harold_alerts_sync` | The alerts engine: events, blockers, CRM freshness, CRM tasks, task-manager input |
+| `harold_cadence_check` | Relationships overdue for contact, plus overdue tasks. The same rule as the connector's `crm_stale` (`cadence.js`): the tightest stage cadence among open pipeline entries, else warmth (Hot 7 days, Warm 14, Lukewarm 28); Cold or unset warmth is never flagged |
+| `harold_crm_task` | Harold's own task list (the `tasks` table): create, update, complete, cancel, list, by task id or ref (H-12) |
+| `harold_alerts_sync` | The alerts engine: events, blockers, CRM freshness and Harold's task list (the primary task source; Linear input is optional) |
 | `harold_fact` | Upsert a row in `harold/facts.md` |
 | `harold_alert` | Add, update or resolve an alert in `harold/alerts.md` |
 | `harold_blocker` | Add, update or resolve a blocker in `harold/blockers.md` |

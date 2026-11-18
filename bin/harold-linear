@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /*
- * harold-linear — Linear as Harold's task layer (due dates and task state, which markdown handles badly).
+ * harold-linear — a Linear helper. Harold's own task list is the Supabase `tasks` table (`bin/harold task ...`); the
+ * connector's sync keeps Linear and that list together, so boot, close and the morning brief no longer call this
+ * script. It stays for talking to Linear directly: a quick look, a comment, listing projects, or setting up the sync.
  *
  *   harold-linear tasks            open issues for your team: overdue, due today, due this week, in progress,
  *                                  high priority → prints markdown, writes harold/linear-snapshot.md
@@ -12,7 +14,7 @@
  * Config: LINEAR_API_KEY and LINEAR_TEAM_KEY (your team's issue prefix, e.g. ENG for ENG-123), from the
  * environment, then ~/.harold/env, then <root>/.env (gitignored). Never commit either. Without a key,
  * `tasks` prints the committed snapshot with its age and exits 3 so callers can tell the difference.
- * Optional: Harold works without Linear. Boot shows the task layer as unavailable until this is configured.
+ * Optional: Harold works without Linear. Its task list needs no outside tool.
  */
 'use strict';
 const fs = require('fs'); const path = require('path'); const os = require('os');

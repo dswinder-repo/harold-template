@@ -7,12 +7,14 @@ import { config, repoConfig, tokenKey } from "./config.js";
 import { open } from "./crypto.js";
 import { checkTokenIdentityOnce, type FetchLike } from "./identity.js";
 import { PAT_PREFIX, verifyPat } from "./pat.js";
+import { HaroldRepo } from "./github.js";
 import { instructions } from "./instructions.js";
 import * as oauth from "./oauth.js";
 import * as google from "./google.js";
 import { registerTools, defaultDeps, type ToolDeps } from "./tools.js";
+import { registerSyncRoutes, defaultSyncDeps, type SyncDeps } from "./sync/routes.js";
 
-export interface AppOptions { fetch?: FetchLike; tools?: ToolDeps; now?: () => number; lookup?: oauth.LookupLike }
+export interface AppOptions { fetch?: FetchLike; tools?: ToolDeps; now?: () => number; lookup?: oauth.LookupLike; sync?: SyncDeps }
 
 export function verifyAccessToken(fetchImpl: FetchLike) {
   return async (_req: Request, bearer?: string): Promise<AuthInfo | undefined> => {
@@ -38,8 +40,9 @@ export function createApp(opts: AppOptions = {}) {
   const fetchImpl: FetchLike = opts.fetch || ((i, init) => fetch(i, init));
   const deps: oauth.Deps = { fetch: fetchImpl, now: opts.now, lookup: opts.lookup };
   const tools = opts.tools || defaultDeps;
+  const sync = opts.sync || defaultSyncDeps(fetchImpl);
 
-  const mcp = createMcpHandler(server => registerTools(server, tools), {
+  const handler = createMcpHandler(server => registerTools(server, tools), {
     serverInfo: { name: "harold", version: "0.1.0" },
     instructions: instructions(),
     // Every request must finish as soon as its answer is sent: on Vercel, memory is billed for as long as a
@@ -49,6 +52,25 @@ export function createApp(opts: AppOptions = {}) {
     capabilities: { tools: { listChanged: false } },
     maxSubscriptions: 0,
   });
+
+  // The task sync's project-map cache and tasks snapshot need the owner's GitHub access, which only authenticated
+  // requests carry (src/sync/housekeeping.ts). It runs alongside the request, rate-limited, and a failure never
+  // changes the answer.
+  const mcp = async (req: Request): Promise<Response> => {
+    let housekeeping: Promise<void> = Promise.resolve();
+    try {
+      const info = (req as Request & { auth?: AuthInfo }).auth;
+      const gh = (info?.extra as { gh?: unknown } | undefined)?.gh;
+      if (typeof gh === "string" && gh) {
+        const c = repoConfig();
+        housekeeping = sync.housekeeping(new HaroldRepo(gh, c.repo, c.branch, fetchImpl)).catch(() => undefined);
+      }
+    } catch { /* not configured: skip housekeeping */ }
+    const res = await handler(req);
+    // Keep the function alive until housekeeping finishes, but never hold the answer more than 5 seconds for it.
+    await Promise.race([housekeeping, new Promise(r => setTimeout(r, 5_000).unref?.())]);
+    return res;
+  };
 
   const app = new Hono();
 
@@ -97,6 +119,9 @@ export function createApp(opts: AppOptions = {}) {
   })(req);
   app.all("/mcp", c => authed(c.req.raw));
   app.all("/mcp/", c => authed(new Request(c.req.url.replace(/\/mcp\/(\?|$)/, "/mcp$1"), c.req.raw)));
+
+  // Two-way task sync with Linear (src/sync): webhook in, push and catchup called by Supabase.
+  registerSyncRoutes(app, sync);
 
   app.notFound(c => c.text("Not found", 404));
   app.onError((e, c) => { console.error("harold-connector error:", e instanceof Error ? e.message : e); return c.text("Internal error", 500); });

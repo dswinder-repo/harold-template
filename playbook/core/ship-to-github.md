@@ -234,4 +234,4 @@ Record what shipped in today's daily note: `bin/harold file daily <slug> "Shippe
 - [ ] Pushed; `git log @{u}..HEAD` is empty
 - [ ] Deploy verified with curl or a browser (if the project deploys)
 - [ ] Release tagged if this was a milestone
-- [ ] Shipped work recorded in today's `vault/daily/` note and the task manager
+- [ ] Shipped work recorded in today's `vault/daily/` note and Harold's task list

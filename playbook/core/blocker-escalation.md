@@ -46,7 +46,7 @@ Answer, in writing, in the daily note:
 - What is preventing resolution, as far as we know?
 - What is the cost of continued delay? What downstream work is waiting?
 
-Search for context first: `bin/harold search "<blocker keywords>"`, the owner's vault profile in `vault/people/`, and any related task in the task manager (Linear by default).
+Search for context first: `bin/harold search "<blocker keywords>"`, the owner's vault profile in `vault/people/`, and any related task in Harold's task list (`bin/harold task list`).
 
 ### Step 2: Choose the escalation level
 
@@ -140,7 +140,7 @@ Does that work, or is there a firmer timeline for the original path?
 Every escalation updates, in the same session:
 1. `harold/blockers.md`: append the escalation step and date to the **Last Update** column. If resolved, move the row under `## Resolved` with date and resolution.
 2. `vault/daily/YYYY-MM-DD-<slug>.md`: the assessment, what was done, and the outcome (`bin/harold file daily <slug> "<text>"`).
-3. The related task in the task manager (Linear by default): a comment with the escalation status. If there is no task and follow-up is needed, create one ([TEAM]-123).
+3. The related task in Harold's task list: add the escalation status to its description (`bin/harold task update <ref> --desc "<text>"`). If there is no task and follow-up is needed, create one (`bin/harold task create`).
 4. `harold/alerts.md`: if the blocker is 8+ days old it should appear there; if resolved, remove it.
 5. The trigger record:
    ```bash
@@ -177,6 +177,6 @@ One of:
 - [ ] 15+ days: operator's decision recorded (resolve / re-scope / accept)
 - [ ] `harold/blockers.md` Last Update column updated (or row moved to `## Resolved`)
 - [ ] Daily note updated
-- [ ] Task manager comment added
+- [ ] Task updated (or created)
 - [ ] Touches filed in the CRM (or queued)
 - [ ] `bin/harold file trigger blocker-escalation:<ID> ran|skipped|deferred "<reason>"` recorded

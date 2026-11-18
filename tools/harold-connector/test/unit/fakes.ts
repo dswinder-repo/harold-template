@@ -89,7 +89,13 @@ function like(pattern: string): RegExp {
 }
 
 export class FakeSupabase {
-  tables: Record<string, Row[]> = { contacts: [], contact_categories: [], contact_pipelines: [], pipeline_stages: [], stage_changes: [], interactions: [], tasks: [] };
+  tables: Record<string, Row[]> = { contacts: [], contact_categories: [], contact_pipelines: [], pipeline_stages: [], stage_changes: [], interactions: [], tasks: [], task_links: [], sync_log: [], sync_state: [] };
+  /** Columns that do not exist yet (the old schema): a select, filter or write naming one fails like PostgREST. */
+  missingColumns: Record<string, string[]> = {};
+  /** Tables that do not exist yet. */
+  missingTables = new Set<string>();
+  /** What the database fills in on insert (defaults and triggers), e.g. the task ref. */
+  onInsert: Record<string, (row: Row, existing: Row[]) => Row> = {};
   inserts: { table: string; rows: Row[] }[] = [];
   updates: { table: string; values: Row }[] = [];
   private n = 0;
@@ -107,9 +113,11 @@ class Q implements PromiseLike<{ data: unknown; error: null | { message: string 
   private off = 0;
   private embeds: { table: string; cols: string[] }[] = [];
   private selected = false;
+  private cols: string[] = [];
   constructor(private db: FakeSupabase, private table: string) {}
   select(cols?: string) {
     this.selected = true;
+    this.cols.push(...(cols || "").replace(/\([^)]*\)/g, "").split(",").map(c => c.trim()).filter(c => c && c !== "*"));
     // One-to-many embeds from contacts, as PostgREST does: "interactions ( occurred_at, type )".
     for (const m of (cols || "").matchAll(/(\w+)\s*\(([^)]*)\)/g)) this.embeds.push({ table: m[1], cols: m[2].split(",").map(c => c.trim()).filter(Boolean) });
     return this;
@@ -117,13 +125,19 @@ class Q implements PromiseLike<{ data: unknown; error: null | { message: string 
   insert(r: Row | Row[]) { this.op = "insert"; this.payload = Array.isArray(r) ? r : [r]; return this; }
   upsert(r: Row | Row[]) { this.op = "upsert"; this.payload = Array.isArray(r) ? r : [r]; return this; }
   update(v: Row) { this.op = "update"; this.values = v; return this; }
-  eq(k: string, v: unknown) { this.filters.push(r => r[k] === v); return this; }
-  neq(k: string, v: unknown) { this.filters.push(r => r[k] !== v); return this; }
-  in(k: string, vs: unknown[]) { this.filters.push(r => vs.includes(r[k])); return this; }
-  is(k: string, v: unknown) { this.filters.push(r => (r[k] ?? null) === v); return this; }
+  eq(k: string, v: unknown) { this.cols.push(k); this.filters.push(r => r[k] === v); return this; }
+  neq(k: string, v: unknown) { this.cols.push(k); this.filters.push(r => r[k] !== v); return this; }
+  in(k: string, vs: unknown[]) { this.cols.push(k); this.filters.push(r => vs.includes(r[k])); return this; }
+  is(k: string, v: unknown) { this.cols.push(k); this.filters.push(r => (r[k] ?? null) === v); return this; }
   not(k: string, _op: string, v: unknown) { this.filters.push(r => (r[k] ?? null) !== v); return this; }
-  ilike(k: string, p: string) { const re = like(p); this.filters.push(r => re.test(String(r[k] ?? ""))); return this; }
-  or(_s: string) { return this; }
+  ilike(k: string, p: string) { this.cols.push(k); const re = like(p); this.filters.push(r => re.test(String(r[k] ?? ""))); return this; }
+  // PostgREST or(): "title.ilike.\"%x%\",description.ilike.\"%x%\"" -> any clause matches.
+  or(s: string) {
+    const clauses = [...s.matchAll(/(\w+)\.ilike\.(?:"([^"]*)"|([^,]*))/g)].map(m => ({ k: m[1], re: like(m[2] ?? m[3]) }));
+    clauses.forEach(c => this.cols.push(c.k));
+    this.filters.push(r => clauses.some(c => c.re.test(String(r[c.k] ?? ""))));
+    return this;
+  }
   order() { return this; }
   limit(n: number) { this.lim = n; return this; }
   range(from: number, to: number) { this.off = from; this.lim = to - from + 1; return this; }
@@ -133,10 +147,15 @@ class Q implements PromiseLike<{ data: unknown; error: null | { message: string 
     return Promise.resolve(this.run()).then(ok, bad);
   }
   private run(): { data: unknown; error: null | { message: string } } {
+    if (this.db.missingTables.has(this.table)) return { data: null, error: { message: `Could not find the table 'public.${this.table}' in the schema cache` } };
+    const miss = this.db.missingColumns[this.table] || [];
+    const used = [...this.cols, ...this.payload.flatMap(p => Object.keys(p)), ...Object.keys(this.values)];
+    const bad = used.find(c => miss.includes(c));
+    if (bad) return { data: null, error: { message: `column ${this.table}.${bad} does not exist` } };
     const t = (this.db.tables[this.table] ||= []);
     let rows: Row[];
     if (this.op === "insert" || this.op === "upsert") {
-      rows = this.payload.map(p => ({ id: this.db.id(), created_at: new Date().toISOString(), ...p }));
+      rows = this.payload.map(p => { const row: Row = { id: this.db.id(), created_at: new Date().toISOString(), ...p }; return Object.assign(row, this.db.onInsert[this.table]?.(row, t) || {}); });
       t.push(...rows);
       this.db.inserts.push({ table: this.table, rows });
     } else if (this.op === "update") {
