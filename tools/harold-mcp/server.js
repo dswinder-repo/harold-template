@@ -13,14 +13,14 @@
  *   harold_blocker          — Add or update a blocker in blockers.md
  *   harold_event            — Add or update an event in events.md
  *   harold_read             — Read any Harold file (for verification)
- *   harold_alerts_sync      — Compute derived alerts (events + blockers + CRM tasks)
+ *   harold_alerts_sync      — Compute derived alerts (events + blockers + Harold's task list + CRM freshness)
  *   harold_cadence_check    — Quick cadence review from CRM
  *   harold_log_interaction  — Log a CRM interaction (call, email, meeting, etc.)
  *   harold_upsert_contact   — Create or update a CRM contact
  *   harold_search_contacts  — Search/filter CRM contacts by any field combination
  *   harold_get_contact      — Full contact profile + interaction history + tasks
  *   harold_pipeline         — One generic pipeline: add/move/close/list, purpose-bound
- *   harold_crm_task         — Create/update/complete/cancel/list CRM tasks
+ *   harold_crm_task         — Create/update/complete/cancel/list tasks in Harold's own task list (the tasks table)
  *
  * Configuration (environment only; bin/harold-mcp loads ~/.harold/env for you):
  *   SUPABASE_URL                https://<project-ref>.supabase.co
@@ -116,10 +116,30 @@ async function queryStaleCrmContacts(staleDays = 14, hotDays = 7, type) {
 }
 
 /**
- * Query CRM for overdue and upcoming tasks.
- * Tasks are optional in the CRM — Linear is the primary task system.
- * CRM tasks capture contact-specific follow-ups that don't warrant a Linear ticket.
+ * Harold's task list: the `tasks` table, the same one boot, close, `bin/harold task` and the connector read and
+ * write. It is the primary task source for the alerts engine. Outside task managers (Linear) reach it through
+ * the sync, so alerts do not need a separate Linear input. A database made before the task-list migration
+ * (tools/harold-mcp/migrations/2026-11-18-task-list.sql) has no ref or project column: every query here falls
+ * back to the old columns instead of failing.
  */
+function isMissingColumn(error) {
+  return !!error && (error.code === "42703" || error.code === "PGRST204" || /does not exist|schema cache/i.test(error.message || ""));
+}
+// build(migrated) returns the query; it is run with the new columns first, then again without them on an old schema.
+async function withTaskColumns(build) {
+  let r = await build(true);
+  if (r.error && isMissingColumn(r.error)) r = await build(false);
+  return r;
+}
+async function resolveTaskId(supabase, task_id, ref) {
+  if (task_id) return task_id;
+  if (!ref) return null;
+  const { data, error } = await supabase.from("tasks").select("id").eq("ref", String(ref).toUpperCase()).maybeSingle();
+  if (error) throw new Error(isMissingColumn(error) ? "refs are not available: the database has not been migrated to the new task list (tools/harold-mcp/migrations/2026-11-18-task-list.sql); use task_id" : error.message);
+  if (!data) throw new Error(`no task ${ref}`);
+  return data.id;
+}
+
 async function queryCrmTasks(daysAhead = 7) {
   const supabase = getSupabase();
   if (!supabase) return { overdue: [], upcoming: [], source: "crm_unavailable" };
@@ -128,16 +148,16 @@ async function queryCrmTasks(daysAhead = 7) {
     const now = new Date();
     const futureDate = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000);
 
-    const { data: tasks, error } = await supabase
+    const { data: tasks, error } = await withTaskColumns((migrated) => supabase
       .from("tasks")
       .select(`
-        id, title, description, status, priority, due_date,
+        id, ${migrated ? "ref, project, " : ""}title, description, status, priority, due_date,
         contacts ( id, name, org, category, warmth )
       `)
       .in("status", ["pending", "in_progress"])
       .not("due_date", "is", null)
       .lte("due_date", futureDate.toISOString())
-      .order("due_date");
+      .order("due_date"));
 
     if (error) throw error;
     if (!tasks || !tasks.length) return { overdue: [], upcoming: [], source: "crm_no_tasks" };
@@ -145,14 +165,12 @@ async function queryCrmTasks(daysAhead = 7) {
     const overdue = [];
     const upcoming = [];
 
-    // Compare calendar days only, avoiding timezone shifts.
-    // due_date is stored as "YYYY-MM-DD" — parse the string directly
-    // instead of using new Date() which interprets it as UTC midnight
-    // and shifts backward in US timezones (e.g., Feb 20 UTC = Feb 19 EST).
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    // Compare calendar days only. A due date is a day stored as UTC midnight: read its UTC day (taskDay) and compare
+    // it with today's date in HAROLD_TZ, with no time-zone conversion of the due date itself.
+    const todayStr = todayInHaroldTz(now);
 
     for (const task of tasks) {
-      const dueStr = (task.due_date || "").slice(0, 10);  // "YYYY-MM-DD"
+      const dueStr = taskDay(task.due_date);  // "YYYY-MM-DD"
       // Parse both as local-midnight dates from their string components
       const [tY, tM, tD] = todayStr.split("-").map(Number);
       const [dY, dM, dD] = dueStr.split("-").map(Number);
@@ -162,6 +180,8 @@ async function queryCrmTasks(daysAhead = 7) {
       const contact = task.contacts || {};
       const item = {
         id: task.id,
+        ref: task.ref || "",
+        project: task.project || "",
         title: task.title,
         priority: task.priority,
         dueDate: task.due_date,
@@ -180,6 +200,29 @@ async function queryCrmTasks(daysAhead = 7) {
     console.error("CRM tasks query error:", err.message);
     return { overdue: [], upcoming: [], source: "crm_error", error: err.message };
   }
+}
+
+// Due dates are calendar days stored as UTC midnight (YYYY-MM-DDT00:00:00Z), the same everywhere (bin/harold, the
+// connector, the sync). Read one by taking the first 10 characters of its UTC ISO string: no time-zone conversion.
+// "Today" is the date in HAROLD_TZ (default: this machine's zone), compared with that day.
+function taskDay(v) {
+  if (!v) return "";
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? String(v).slice(0, 10) : new Date(t).toISOString().slice(0, 10);
+}
+function dueAsUtcMidnight(v) {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00Z` : v;
+}
+function todayInHaroldTz(d = new Date()) {
+  const tz = (process.env.HAROLD_TZ || "").trim();
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || undefined }).format(d); }
+  catch (_) { return new Intl.DateTimeFormat("en-CA").format(d); }
+}
+
+// Who or what a task belongs to, for an alert line: its contact, its project, or neither.
+function taskWho(t) {
+  const who = [t.contactName ? `${t.contactName}${t.contactOrg ? ` (${t.contactOrg})` : ""}` : "", t.project].filter(Boolean);
+  return who.length ? who.join(" | ") : "no contact or project";
 }
 
 // Helpers
@@ -761,7 +804,7 @@ function parseCadenceTable(content, sectionHeader) {
 
 server.tool(
   "harold_alerts_sync",
-  "Run the Alerts Engine — compute derived alerts from events.md, blockers.md, CRM relationship data, and optionally Linear tasks. Returns structured alert summary with severity levels. Use at session start instead of manually reading and computing.\n\nSources:\n- Events (events.md) → prep deadlines, debrief reminders\n- Blockers (blockers.md) → stale blockers\n- CRM (Supabase) → stale relationships across ALL contact types\n- CRM Tasks → contact-specific follow-ups with due dates\n- Linear (optional input) → overdue/upcoming project tasks\n- Outreach cadence table (alerts.md, optional) → fallback when the CRM is not configured or unreachable",
+  "Run the Alerts Engine — compute derived alerts from events.md, blockers.md, CRM relationship data and Harold's own task list. Returns structured alert summary with severity levels. Use at session start instead of manually reading and computing.\n\nSources:\n- Events (events.md) → prep deadlines, debrief reminders\n- Blockers (blockers.md) → stale blockers\n- CRM (Supabase) → stale relationships across ALL contact types\n- Harold's task list (the tasks table; primary task source) → overdue and upcoming tasks, with their contact and project\n- Linear (optional input) → only for a Linear that is not yet synced into the task list\n- Outreach cadence table (alerts.md, optional) → fallback when the CRM is not configured or unreachable",
   {
     linear_overdue: z.array(z.object({
       id: z.string(),
@@ -886,29 +929,29 @@ server.tool(
       }
       // If CRM returned data but had 0 stale contacts, great — nothing to alert on
 
-      // ── 4. CRM Tasks (supplementary — Linear is primary) ──
+      // ── 4. Harold's task list (the primary task source; Linear is kept in step with it by the sync) ──
       const crmTasks = await queryCrmTasks(7);
       if (crmTasks.source === "crm") {
-        if (crmTasks.overdue.length || crmTasks.upcoming.length) dataSources.push("CRM tasks");
+        if (crmTasks.overdue.length || crmTasks.upcoming.length) dataSources.push("task list");
         for (const t of crmTasks.overdue) {
           warning.push({
-            source: "crm-task",
-            alert: `OVERDUE CRM task: ${t.title}`,
-            context: `${t.contactName} (${t.contactOrg}) | Due: ${t.dueDate?.slice(0,10)} (${Math.abs(t.daysDiff)}d ago) | ${t.priority}`,
+            source: "task",
+            alert: `OVERDUE task${t.ref ? ` ${t.ref}` : ""}: ${t.title}`,
+            context: `${taskWho(t)} | Due: ${taskDay(t.dueDate)} (${Math.abs(t.daysDiff)}d ago) | ${t.priority}`,
             action: "Complete or reschedule",
           });
         }
         for (const t of crmTasks.upcoming) {
           watch.push({
-            source: "crm-task",
-            alert: `CRM task due ${t.daysDiff === 0 ? "today" : t.daysDiff === 1 ? "tomorrow" : `in ${t.daysDiff}d`}: ${t.title}`,
-            context: `${t.contactName} (${t.contactOrg}) | ${t.priority}`,
+            source: "task",
+            alert: `Task${t.ref ? ` ${t.ref}` : ""} due ${t.daysDiff === 0 ? "today" : t.daysDiff === 1 ? "tomorrow" : `in ${t.daysDiff}d`}: ${t.title}`,
+            context: `${taskWho(t)} | ${t.priority}`,
             action: "Address before deadline",
           });
         }
       }
 
-      // ── 5. Linear (if provided — this is the primary task system) ──
+      // ── 5. Linear (optional input: Linear reaches the task list through the sync, so this only matters for a Linear that is not synced yet) ──
       if (linear_overdue) {
         if (linear_overdue.length) dataSources.push("Linear");
         for (const t of linear_overdue)
@@ -988,19 +1031,19 @@ server.tool(
           sections.push(`**${cat.toUpperCase()} (${group.length}):**\n${items.join("\n")}`);
         }
 
-        // Also check CRM tasks
+        // Also check Harold's task list
         const crmTasks = await queryCrmTasks(7);
         if (crmTasks.overdue.length) {
           const taskItems = crmTasks.overdue.map(t =>
-            `- ${t.title} — ${t.contactName} (${t.contactOrg}) [${Math.abs(t.daysDiff)}d overdue]`
+            `- ${t.ref ? `${t.ref} ` : ""}${t.title} — ${taskWho(t)} [${Math.abs(t.daysDiff)}d overdue]`
           );
-          sections.unshift(`**🔴 OVERDUE CRM TASKS:**\n${taskItems.join("\n")}`);
+          sections.unshift(`**🔴 OVERDUE TASKS:**\n${taskItems.join("\n")}`);
         }
         if (crmTasks.upcoming.length) {
           const taskItems = crmTasks.upcoming.map(t =>
-            `- ${t.title} — ${t.contactName} (${t.contactOrg}) [${t.daysDiff === 0 ? "today" : `in ${t.daysDiff}d`}]`
+            `- ${t.ref ? `${t.ref} ` : ""}${t.title} — ${taskWho(t)} [${t.daysDiff === 0 ? "today" : `in ${t.daysDiff}d`}]`
           );
-          sections.push(`**📅 UPCOMING CRM TASKS:**\n${taskItems.join("\n")}`);
+          sections.push(`**📅 UPCOMING TASKS:**\n${taskItems.join("\n")}`);
         }
 
         return { content: [{ type: "text", text: `## Cadence Check — ${refDate.toLocaleDateString("en-CA")}\n\n${sections.join("\n\n")}\n\n---\n*Source: CRM (${contacts.length} stale contacts)*` }] };
@@ -1660,10 +1703,12 @@ server.tool(
 
 server.tool(
   "harold_crm_task",
-  "Create, update, or complete a contact-specific CRM task. These are relationship follow-ups tied to a contact (e.g., 'Follow up with Jane re: term sheet', 'Send deck to Sam'). They feed into the alerts engine for overdue/upcoming tracking.\n\nFor project work, use the task manager (Linear by default) instead. CRM tasks are for contact-specific relationship actions only.\n\nActions: create, update, complete, cancel, list",
+  "Create, update, complete, cancel or list tasks in Harold's own task list (the tasks table). A task may belong to a contact (e.g., 'Follow up with Jane re: term sheet'), a project, both or neither. Each has a readable ref (H-12). The list is the same one boot, close, bin/harold task and the connector's task_list use, and it feeds the alerts engine. Outside task managers such as Linear are kept in step with it by the sync.\n\nUpdate, complete and cancel take task_id or ref. list filters by contact when one is given.\n\nActions: create, update, complete, cancel, list",
   {
     action: z.enum(["create", "update", "complete", "cancel", "list"]).describe("Action to perform"),
-    task_id: z.string().optional().describe("Task UUID — required for update/complete/cancel"),
+    task_id: z.string().optional().describe("Task UUID — for update/complete/cancel (or give ref)"),
+    ref: z.string().optional().describe("Task ref such as H-12 — for update/complete/cancel (or give task_id)"),
+    project: z.string().optional().describe("Canonical project name from harold/projects.md (create/update)"),
     contact_name: z.string().optional().describe("Contact name for lookup (create/list). Fuzzy match."),
     contact_id: z.string().optional().describe("Direct contact UUID (create/list)"),
     org: z.string().optional().describe("Organization to disambiguate contact lookup"),
@@ -1673,36 +1718,37 @@ server.tool(
     due_date: z.string().optional().describe("Due date (ISO format, e.g., '2026-02-20')"),
     status: z.enum(["pending", "in_progress", "completed", "cancelled"]).optional().describe("Task status (for update)"),
   },
-  async ({ action, task_id, contact_name, contact_id, org, title, description, priority, due_date, status }) => {
+  async ({ action, task_id, ref, project, contact_name, contact_id, org, title, description, priority, due_date, status }) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return { content: [{ type: "text", text: CRM_NOT_CONFIGURED }], isError: true };
 
       // ── LIST ──
       if (action === "list") {
-        let query = supabase
-          .from("tasks")
-          .select("id, title, description, status, priority, due_date, completed_at, contact_id")
-          .in("status", ["pending", "in_progress"])
-          .order("due_date", { ascending: true, nullsFirst: false });
-
         // Filter by contact if provided
-        if (contact_id) {
-          query = query.eq("contact_id", contact_id);
-        } else if (contact_name) {
+        let filterContactId = contact_id;
+        if (!filterContactId && contact_name) {
           // Resolve contact first
           const resolved = await resolveContact(supabase, contact_name, org);
           if (resolved.error) return resolved.error;
           if (resolved.multiple) return resolved.multiple;
-          query = query.eq("contact_id", resolved.id);
+          filterContactId = resolved.id;
         }
 
-        query = query.limit(20);
-        const { data: tasks, error } = await query;
+        const { data: tasks, error } = await withTaskColumns((migrated) => {
+          let query = supabase
+            .from("tasks")
+            .select(`id, ${migrated ? "ref, project, " : ""}title, description, status, priority, due_date, completed_at, contact_id`)
+            .in("status", ["pending", "in_progress"])
+            .order("due_date", { ascending: true, nullsFirst: false });
+          if (filterContactId) query = query.eq("contact_id", filterContactId);
+          if (project && migrated) query = query.eq("project", project);
+          return query.limit(50);
+        });
         if (error) throw error;
 
         if (!tasks || tasks.length === 0) {
-          return { content: [{ type: "text", text: `No open CRM tasks found${contact_name ? ` for "${contact_name}"` : ""}.` }] };
+          return { content: [{ type: "text", text: `No open tasks found${contact_name ? ` for "${contact_name}"` : ""}${project ? ` in "${project}"` : ""}.` }] };
         }
 
         // Fetch contact names for display
@@ -1713,22 +1759,24 @@ server.tool(
         const contactMap = Object.fromEntries((contacts || []).map(c => [c.id, `${c.name} (${c.org || "no org"})`]));
 
         const lines = tasks.map((t, i) => {
-          const due = t.due_date ? new Date(t.due_date).toLocaleDateString() : "no due date";
+          const due = t.due_date ? taskDay(t.due_date) : "no due date";
           const contact = t.contact_id ? contactMap[t.contact_id] || t.contact_id : "unlinked";
-          return `${i + 1}. [${t.status}] **${t.title}** — ${contact} (${t.priority}, ${due})\n   id: ${t.id}`;
+          const where = [contact, t.project].filter(Boolean).join(" | ");
+          return `${i + 1}. [${t.status}] ${t.ref ? `${t.ref} ` : ""}**${t.title}** — ${where} (${t.priority}, ${due})\n   id: ${t.id}`;
         });
 
-        return { content: [{ type: "text", text: `Open CRM tasks (${tasks.length}):\n\n${lines.join("\n\n")}` }] };
+        return { content: [{ type: "text", text: `Open tasks (${tasks.length}):\n\n${lines.join("\n\n")}` }] };
       }
 
       // ── COMPLETE ──
       if (action === "complete") {
-        if (!task_id) return { content: [{ type: "text", text: "Error: task_id required for complete action" }], isError: true };
+        const id = await resolveTaskId(supabase, task_id, ref);
+        if (!id) return { content: [{ type: "text", text: "Error: task_id or ref required for complete action" }], isError: true };
 
         const { data, error } = await supabase
           .from("tasks")
           .update({ status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq("id", task_id)
+          .eq("id", id)
           .select("id, title, status, completed_at")
           .single();
 
@@ -1738,12 +1786,13 @@ server.tool(
 
       // ── CANCEL ──
       if (action === "cancel") {
-        if (!task_id) return { content: [{ type: "text", text: "Error: task_id required for cancel action" }], isError: true };
+        const id = await resolveTaskId(supabase, task_id, ref);
+        if (!id) return { content: [{ type: "text", text: "Error: task_id or ref required for cancel action" }], isError: true };
 
         const { data, error } = await supabase
           .from("tasks")
           .update({ status: "cancelled", updated_at: new Date().toISOString() })
-          .eq("id", task_id)
+          .eq("id", id)
           .select("id, title, status")
           .single();
 
@@ -1753,28 +1802,30 @@ server.tool(
 
       // ── UPDATE ──
       if (action === "update") {
-        if (!task_id) return { content: [{ type: "text", text: "Error: task_id required for update action" }], isError: true };
+        const id = await resolveTaskId(supabase, task_id, ref);
+        if (!id) return { content: [{ type: "text", text: "Error: task_id or ref required for update action" }], isError: true };
 
         const updates = { updated_at: new Date().toISOString() };
+        if (project !== undefined) updates.project = project === "" ? null : project;
         if (title !== undefined) updates.title = title;
         if (description !== undefined) updates.description = description;
         if (priority !== undefined) updates.priority = priority;
-        if (due_date !== undefined) updates.due_date = due_date;
+        if (due_date !== undefined) updates.due_date = due_date === "" ? null : dueAsUtcMidnight(due_date);
         if (status !== undefined) {
           updates.status = status;
           if (status === "completed") updates.completed_at = new Date().toISOString();
         }
 
-        const { data, error } = await supabase
-          .from("tasks")
-          .update(updates)
-          .eq("id", task_id)
-          .select("id, title, status, priority, due_date")
-          .single();
+        const { data, error } = await withTaskColumns((migrated) => {
+          const u = { ...updates };
+          if (!migrated) delete u.project;
+          return supabase.from("tasks").update(u).eq("id", id)
+            .select(`id, ${migrated ? "ref, " : ""}title, status, priority, due_date`).single();
+        });
 
         if (error) throw error;
-        const due = data.due_date ? new Date(data.due_date).toLocaleDateString() : "no due date";
-        return { content: [{ type: "text", text: `✏️ Updated: "${data.title}" [${data.status}] (${data.priority}, ${due})\n   ID: ${data.id}` }] };
+        const due = data.due_date ? taskDay(data.due_date) : "no due date";
+        return { content: [{ type: "text", text: `✏️ Updated: ${data.ref ? `${data.ref} ` : ""}"${data.title}" [${data.status}] (${data.priority}, ${due})\n   ID: ${data.id}` }] };
       }
 
       // ── CREATE ──
@@ -1800,25 +1851,27 @@ server.tool(
         };
 
         if (resolvedContactId) record.contact_id = resolvedContactId;
-        if (due_date) record.due_date = due_date;
+        if (due_date) record.due_date = dueAsUtcMidnight(due_date);
+        if (project) record.project = project;
 
-        const { data, error } = await supabase
-          .from("tasks")
-          .insert(record)
-          .select("id, title, status, priority, due_date, contact_id")
-          .single();
+        const { data, error } = await withTaskColumns((migrated) => {
+          const r = { ...record };
+          if (!migrated) delete r.project;
+          return supabase.from("tasks").insert(r)
+            .select(`id, ${migrated ? "ref, project, " : ""}title, status, priority, due_date, contact_id`).single();
+        });
 
         if (error) throw error;
 
-        const due = data.due_date ? new Date(data.due_date).toLocaleDateString() : "no due date";
+        const due = data.due_date ? taskDay(data.due_date) : "no due date";
         const contactStr = resolvedContactName ? ` → ${resolvedContactName}` : (data.contact_id ? ` → ${data.contact_id}` : "");
 
-        return { content: [{ type: "text", text: `✅ Created CRM task: "${data.title}"${contactStr}\n   Priority: ${data.priority} | Due: ${due}\n   ID: ${data.id}` }] };
+        return { content: [{ type: "text", text: `✅ Created task ${data.ref ? `${data.ref} ` : ""}"${data.title}"${contactStr}${data.project ? ` [${data.project}]` : ""}\n   Priority: ${data.priority} | Due: ${due}\n   ID: ${data.id}${project && !data.project ? "\n   Note: the project was not stored because the database has not been migrated to the new task list yet." : ""}` }] };
       }
 
       return { content: [{ type: "text", text: `Unknown action: ${action}` }], isError: true };
     } catch (e) {
-      return { content: [{ type: "text", text: `CRM task error: ${e.message}` }], isError: true };
+      return { content: [{ type: "text", text: `Task error: ${e.message}` }], isError: true };
     }
   }
 );

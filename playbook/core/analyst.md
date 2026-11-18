@@ -40,7 +40,7 @@ Name the signal precisely. Not "Acme Corp is using AI" but "Acme Corp moved its 
 | **Key relationships** | Does it touch an active contact, a pipeline entry, or a target? | `crm_search_contacts` / `harold_search_contacts`, `crm_pipeline list` / `harold_pipeline list`, `bin/harold search "<name or company>"` |
 | **Strategy and narrative** | Does it strengthen or weaken your positioning, fundraising story or pitch to partners? | `dashboard/strategy.md` |
 | **Product / offering** | Roadmap, priorities, pricing, competitive position | the relevant project folder |
-| **Live tasks** | Does it change an open task (its timing, owner or approach)? | the task manager: open, overdue, due this week |
+| **Live tasks** | Does it change an open task (its timing, owner or approach)? | Harold's task list: open, overdue, due this week |
 | **Recent calls and meetings** | Does it bear on something said or promised in the last few weeks? | `vault/meetings/`, recent `vault/daily/` notes, a meeting-notes connector |
 | **Policies, markets and places** | Only those a project, task, person or event above names. There is no standing watchlist: if a policy or region matters, the item that makes it matter is where it is recorded | the item itself |
 | **Current priorities** | Does it change what matters this week? | `memory/working-memory.md` |
@@ -57,7 +57,7 @@ For each real connection, update the file or system it touches:
 | An upcoming meeting | Add a "Current events — talking points" section to the meeting prep | `crm_task` / `harold_crm_task` → "Mention [intel] to [contact]" if actionable |
 | Investor / buyer conversations | Talking points or objection handling in the project folder | `crm_task` / `harold_crm_task` → "Reference [intel] in next touch with [contact]" if relevant |
 | Strategy | Positioning, messaging or competitive analysis in `dashboard/strategy.md` or the project folder | — |
-| Product / roadmap | Flag it to whoever owns the roadmap (a task in the task manager, Linear by default) | — |
+| Product / roadmap | Flag it to whoever owns the roadmap (a task in Harold's task list) | — |
 | A contact's situation changed (they raised, moved, got promoted) | Their `vault/people/` profile (`last_updated`) | `crm_upsert_contact` / `harold_upsert_contact` → notes, maybe warmth |
 | A company changed | `vault/companies/<Company>.md` | — |
 | A blocker | `harold/blockers.md` (resolve, update, or add) | — |
@@ -102,7 +102,7 @@ The 📌 callouts in the morning brief are the output of this playbook's steps 1
 After Step 1 of the brief:
 - Apply every callout the operator confirms as relevant (step 3).
 - Log all applications in today's daily note (step 4).
-- If an insight creates work, create the task in the task manager.
+- If an insight creates work, create the task in Harold's task list.
 
 ---
 
