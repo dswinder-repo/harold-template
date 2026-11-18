@@ -14,7 +14,7 @@ If someone has pointed you at this repository or at harold.works and asked you t
 
 - They read and write files in the workspace: the session file in `harold/active-sessions/`, Harold's state files in `harold/`, and the search index `harold/search.db`.
 - They run `git`. `bin/harold close` commits the workspace and pushes it to `origin` at the end of every turn. Boot runs `git ls-remote` against the starter at most twice a day, only to say whether an update is available.
-- They use the network only for services the operator has configured: the CRM (Supabase, called with `curl`, only once its credentials are in `~/.harold/env`), the task manager (`bin/harold-linear`, only with `LINEAR_API_KEY`), and the phone notice for the morning brief (ntfy, only with `NTFY_TOPIC`).
+- They use the network only for services the operator has configured: the CRM (Supabase, called with `curl`, only once its credentials are in `~/.harold/env`), Linear, only if you turn on the optional sync (`LINEAR_API_KEY`), and the phone notice for the morning brief (ntfy, only with `NTFY_TOPIC`).
 - They never push to the public starter. While `origin` still points at it, close, the scheduled brief and housekeeping commit locally, say how to make a private copy, and exit 1 without attempting the push.
 
 `bin/harold check` only reads; it is the safe first command to run.
@@ -25,7 +25,7 @@ If someone has pointed you at this repository or at harold.works and asked you t
 2. **Run `bin/harold check`** (step 2). It should print `RESULT: PASS`.
 3. **Ask the operator for their details and fill in the placeholders yourself** (step 3): name, role, time zone, git identity, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
 4. **Set up the CRM** (step 4): the Supabase database, reached through the hosted connector or the local `harold-mcp`. It is part of Harold, not an add-on: close checks that every contact touched was filed in it.
-5. **Offer the optional parts one at a time** (steps 5 and 6): the CRM web app, a task manager, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
+5. **Offer the optional parts one at a time** (steps 5 and 6): the CRM web app, Linear sync for your task list, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
 6. **Run `bin/harold check`, then a first boot and close**, and follow `AGENTS.md` from there. Until setup is complete, boot opens with a short "not set up yet" notice that names what is left.
 
 ## What makes 2.0 different
@@ -38,7 +38,7 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 ## Quick start
 
-**Required:** your own private repository, your details, and the CRM (a Supabase database reached through the hosted connector or the local `harold-mcp`). **Optional:** the CRM web app, a task manager, scheduled jobs and extra harnesses. The setup playbook, `playbook/core/setup.md`, walks through all of it in conversation: ask your AI tool to "set up Harold".
+**Required:** your own private repository, your details, and the CRM (a Supabase database reached through the hosted connector or the local `harold-mcp`). **Optional:** the CRM web app, Linear sync for your task list, scheduled jobs and extra harnesses. The setup playbook, `playbook/core/setup.md`, walks through all of it in conversation: ask your AI tool to "set up Harold".
 
 These steps are a condensed version of [Initial Setup](https://harold.works/docs/#getting-started/initial-setup) in the docs, which splits them into more, smaller steps; each step below names the docs steps it covers.
 
@@ -91,7 +91,7 @@ These steps are a condensed version of [Initial Setup](https://harold.works/docs
    - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
    - Optional AI (contact research, enrichment, meeting prep) runs on Google Gemini, whose free tier covers it: get a free API key at [Google AI Studio](https://aistudio.google.com/apikey) and set it as `GEMINI_API_KEY` in the host's environment variables (and in `tools/harold-crm/.env.local` for local development). Without it, the AI buttons say AI is off.
 
-5. **Optional: tasks in Linear** (docs, Step 8). Add `LINEAR_API_KEY` and `LINEAR_TEAM_KEY` (your issue prefix, e.g. `ENG`) to `~/.harold/env`. `bin/harold-linear tasks` then feeds boot. Without it, boot says the task layer is unavailable and carries on. Action items become tasks automatically: paste call notes or a transcript, or forward an email, and every commitment in it (yours, or something someone owes you) becomes a task without you asking, with its ID written into the meeting note's `## Action items`. From a chat app, set the same two variables on the connector (`task_list`, `task_create`).
+5. **Harold's task list, and optional Linear sync** (docs, Step 8). Tasks live in your CRM database, in Harold's own task list, so you need no outside tool. Boot lists the ones that are due, and `bin/harold task list|create|start|done|update` manage them. Action items become tasks automatically: paste call notes or a transcript, or forward an email, and every commitment in it (yours, or something someone owes you) becomes a task without you asking, with its ref (for example `H-12`) written into the meeting note's `## Action items`. From a chat app, the connector's `task_list`, `task_create` and `task_update` do the same. If you also use Linear, the connector can keep the task list and one Linear team in step in both directions. The steps are in `playbook/core/setup.md` (step 9) and `tools/harold-connector/README.md`. Without the database key, writes are queued and the list is read from `harold/tasks-snapshot.md`.
 
 6. **Optional: the connector and the scheduled jobs.** The hosted connector is the standard way to reach Harold from any tool that supports remote MCP servers (a chat app on your phone or in a browser, a coding agent, a scheduled job with a token): it reads and writes the knowledge base and the CRM, with or without the workspace folder ([below](#from-any-chat-app-the-hosted-connector)). You deploy it once. The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
 
@@ -204,7 +204,7 @@ bin/
   harold-index             SQLite FTS5 search index and link graph over every markdown file, archives included
                            (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
-  harold-linear            optional Linear task layer
+  harold-linear            optional direct Linear helper (the task list itself is `bin/harold task`)
   harold-setup-crm         stores your Supabase URL + key outside the repo and tests them
   harold-agent-auth        scheduled jobs: keeps a subscription sign-in file fresh between runs (encrypted
                            in the Actions cache), and passes a custom agent only the secrets it names
@@ -269,7 +269,7 @@ Run them all with `node --test tests/*.test.js` (Node 22+ and Python 3.8+). `tes
 
 ### The CRM model
 
-Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks`; the web app adds its own tables around them.
+Every contact has exactly **one type**, from a short list you choose (for example investor, partner, founder, team, other), **any number of labels**, and a **warmth**: Hot, Warm, Lukewarm, Cold, or unrated. There is **one pipeline**; every entry in it has a required **purpose** ("Raising the seed round") and one of seven stages: Identified, Reached Out, In Conversation, Advancing, Committed, Active, Dormant. `tools/harold-mcp/schema.sql` creates exactly the tables the MCP server uses: `contacts`, `contact_categories` (labels), `contact_pipelines`, `pipeline_stages`, `stage_changes`, `interactions`, `tasks` (Harold's task list), `task_links`, `sync_log`, `sync_state`; the web app adds its own tables around them.
 
 Every conversation with a contact is logged, and every contact is filed the same way, whatever its type. The one exception is a person whose vault card says `crm: none`: they are deliberately kept out of the CRM, and only their vault profile is updated. `playbook/core/crm-filing.md` describes the full procedure.
 
