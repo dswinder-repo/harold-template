@@ -15,7 +15,7 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 
 | Tool | Kind | What it does |
 |---|---|---|
-| `harold_today` | read | Today's date in `HAROLD_TZ`, today's morning brief draft (`harold/briefs/<date>.md`, if you use the scheduled brief), the Current Alerts section of `harold/alerts.md`, the critical lessons from `harold/learnings.jsonl`, the housekeeping notes waiting under `## New` in `harold/briefs/housekeeping-notes.md`, the active projects that have gone quiet (as `harold_pulse`), the five latest daily notes, and the brief's Step 0: show the draft, ask what came in overnight, then the day's priorities. |
+| `harold_today` | read | Today's date in `HAROLD_TZ`, today's morning brief draft (`harold/briefs/<date>.md`, if you use the scheduled brief), the Current Alerts section of `harold/alerts.md`, the critical lessons from `harold/learnings.jsonl`, the housekeeping notes waiting under `## New` in `harold/briefs/housekeeping-notes.md`, the active projects that have gone quiet (as `harold_pulse`), Harold's open tasks that are overdue or due today (when the task list is configured), the five latest daily notes, and the brief's Step 0: show the draft, ask what came in overnight, then the day's priorities. |
 | `harold_search` | read | Searches the repository (GitHub code search; falls back to matching file names). |
 | `harold_read` | read | Reads one text file by repo path. Refuses binaries, truncates very long files. |
 | `harold_list` | read | Lists a folder. |
@@ -34,13 +34,14 @@ You deploy it once, to a host you control, and add its URL in each tool ([Connec
 | `crm_log_interaction` | write | Logs a touchpoint with a contact and freshens their vault card. Every contact is logged the same way, whatever its type. |
 | `crm_upsert_contact` | write | Creates or updates a contact. The type is free text from your own list (as in `dashboard/people.md`). Never places anyone in the pipeline. |
 | `crm_pipeline` | write | The one pipeline: add (a purpose is required), move, close, list. |
-| `crm_task` | write | Contact follow-up tasks: create, update, complete, cancel, list. |
-| `task_list` | read | Open tasks in your task manager (Linear, team `LINEAR_TEAM_KEY`), most recently updated first, with ID, project, state, due date and URL; optional text filter. The model calls it before `task_create` so nothing is created twice. |
-| `task_create` | write | One task in your task manager: title, optional description, due date (`YYYY-MM-DD`), project (by name) and priority, the same calls as `bin/harold-linear create`. An open task with the same title is returned instead of a duplicate. Refuses secrets. The instructions tell the model to create one per commitment whenever you paste meeting notes, a transcript or a forwarded email, without being asked, and to write each task ID into the meeting note's `## Action items`. |
+| `crm_task` | write | The same task list, filtered to a contact: create, update, complete, cancel, list. Kept for compatibility; `task_id` takes a ref, an outside key or a task id. |
+| `task_list` | read | Open tasks in Harold's own task list (the Supabase `tasks` table), by due date, with ref (`H-12`), project, contact, status, due date, priority, and the key and URL of the same work in an outside tool when it is linked (`task_links`, for example `ENG-123`). Optional text, `project` and `include_done` filters. The model calls it before `task_create` so nothing is created twice. |
+| `task_create` | write | One task in Harold's task list: title, optional description, due date (`YYYY-MM-DD`), priority, `contact_name` or `contact_id` (CRM lookup) and `project`. The project is checked against `harold/projects.md` and stored under its canonical name; an unknown project is refused with the close matches. An open task with the same title in the same project is returned instead of a duplicate. Returns the ref. Refuses secrets. The instructions tell the model to create one per commitment whenever you paste meeting notes, a transcript or a forwarded email, without being asked, and to write each ref into the meeting note's `## Action items`. The database sets `changed_by`; the connector never writes it. |
+| `task_update` | write | Update one task by ref (`H-12`), by outside key (`ENG-123`, through `task_links`) or by task id. State: `todo` or `pending`, `start` or `in progress`, `done` or `complete`, `cancel`. All of them are reversible and nothing is ever deleted. Also title, description, priority, due date (`none` clears it) and project. Only the fields you pass change, and the reply shows the before and after of each. Refuses secrets. |
 | `calendar_list` | read | The calendars the connector's own Google Calendar access can read: name, id, primary, access role, time zone. Configured once on the connector, so every connected tool reads the same calendars. |
 | `calendar_events` | read | Events from your Google calendars, today through the next 7 days by default (`from`/`to` `YYYY-MM-DD`, at most 31 days; `calendar` narrows to one), as a day-by-day table in your time zone (`HAROLD_TZ`). All-day and multi-day events are labeled, recurring events expanded per day, cancelled ones omitted. For the morning brief, meeting prep and scheduling. A calendar outside Google is not included; read its export file in the vault, if there is one. |
 
-Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "not configured" and everything else works. Without `LINEAR_API_KEY` and `LINEAR_TEAM_KEY`, `task_list` and `task_create` say so plainly and point the model at `crm_task` for contact follow-ups. Without `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN`, `calendar_list` and `calendar_events` say "not configured" and point at the chat's own calendar connector or a calendar export file in the vault.
+Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "not configured" and everything else works. The same two settings carry Harold's task list, so without them `task_list`, `task_create`, `task_update` and `crm_task` say that the task list is not configured. Before the task-list migration is applied (`tools/harold-mcp/migrations/2026-11-18-task-list.sql`), the tools fall back to the old `tasks` columns (no refs, projects or outside keys) and say so. Linear is optional and has its own settings: without them the task list works on its own and nothing syncs. Without `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REFRESH_TOKEN`, `calendar_list` and `calendar_events` say "not configured" and point at the chat's own calendar connector or a calendar export file in the vault.
 
 ## Security model
 
@@ -111,10 +112,12 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `HAROLD_HUB_DEGREE` | no | `40` (default) | `harold_related`: a note with more links than this is a hub and no longer makes its neighbours related. Same setting as in `~/.harold/env`. |
 | `HAROLD_PULSE_DAYS` | no | `14` (default) | `harold_pulse`: days without activity after which an active project is quiet. Unset, it uses the value the workspace wrote into `harold/graph.json` (its `HAROLD_PULSE_DAYS`), else 14. |
 | `HAROLD_COMMIT_EMAIL` | no | `you@example.com` | Commit author email. Default `harold-connector@users.noreply.github.com`. |
-| `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM. Without it the CRM tools say "not configured". |
-| `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM (server side only; never in the repository). |
-| `LINEAR_API_KEY` | no | a Linear personal API key | The task manager, for `task_list` and `task_create` (server side only; never in the repository). Without it those two tools say "not configured". |
-| `LINEAR_TEAM_KEY` | no | `ENG` | Your Linear team's issue prefix (`ENG` for `ENG-123`). Same settings as in `~/.harold/env`. |
+| `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM and Harold's task list. Without it those tools say "not configured". |
+| `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM and the task list (server side only; never in the repository). |
+| `LINEAR_API_KEY` | no | a Linear personal API key | The optional two-way Linear sync (server side only; never in the repository). Without it the sync routes answer 503 and nothing syncs. |
+| `LINEAR_TEAM_KEY` | no | `ENG` | The Linear team's issue prefix (`ENG` for `ENG-123`). Same setting as in `~/.harold/env`. |
+| `LINEAR_WEBHOOK_SECRET` | no | the secret Linear shows for the webhook | The optional sync: verifies the webhook Linear sends. |
+| `SYNC_SECRET` | no | `openssl rand -hex 32` | The optional sync: the shared secret Supabase sends to `/sync/push` and `/sync/catchup`. The same value goes into Supabase Vault as `harold_sync_secret`. |
 | `GOOGLE_CLIENT_ID` | no | from the Google OAuth client | The calendars, for `calendar_list` and `calendar_events` (server side only). Without it those two tools say "not configured". See "Optional: the calendars (Google)" below. |
 | `GOOGLE_CLIENT_SECRET` | no | from the Google OAuth client | The calendars (server side only; never in the repository). |
 | `ALLOWED_GOOGLE_EMAILS` | no | `you@example.com` | The only Google accounts the calendar connect flow will bind, comma-separated. Required with the pair above. |
@@ -131,6 +134,44 @@ curl -s <PUBLIC_BASE_URL>/.well-known/oauth-authorization-server | head -c 200  
 curl -s <PUBLIC_BASE_URL>/.well-known/oauth-protected-resource/mcp                # "resource": "<PUBLIC_BASE_URL>/mcp"
 curl -si -X POST <PUBLIC_BASE_URL>/mcp -H 'content-type: application/json' -d '{}' | grep -i www-authenticate   # 401 + resource_metadata
 ```
+
+## Optional: two-way task sync with Linear
+
+Harold's task list works on its own. If you also use Linear, the connector can keep the task list and one Linear team in step, in both directions. This section is for the person who deploys the connector. The numbered setup steps are in `playbook/core/setup.md`, step 9.
+
+Three routes do the work. All are `POST` and answer JSON. The code is in `src/sync/`. The Supabase side is in `supabase/sync.sql`.
+
+| Route | Called by | How it is checked | What it does |
+|---|---|---|---|
+| `POST /webhooks/linear` | Linear's webhook (Issue events) | `Linear-Signature`: HMAC-SHA256 of the raw body with `LINEAR_WEBHOOK_SECRET`, compared in constant time. `webhookTimestamp` must be within 60 seconds. | Create or update: re-reads the issue and upserts it into Harold (header `x-harold-origin: linear`). Remove: an open task becomes `cancelled`. Nothing is ever deleted. |
+| `POST /sync/push` | A database trigger on `tasks` (through `pg_net`) | Header `x-harold-sync-secret` equals `SYNC_SECRET` | Body `{"task_id": "<uuid>"}`. Sends one Harold change to Linear. Creates the issue and its `task_links` row when there is none. Skips rows whose `changed_by` is not `harold`, because those are the sync's own writes. |
+| `POST /sync/catchup` | `pg_cron`, every 10 minutes | Same as `/sync/push` | Pulls every issue of your team updated since `sync_state.cursor`. Pushes Harold rows with `changed_by = 'harold'` and `updated_at > task_links.synced_at` (or open and never linked). Advances the cursor and returns counts. Body `{"import": true}` runs the first import instead: every open issue plus those completed in the last 30 days, logged as `import`. It is safe to run twice. `npm run sync:import` does the same from a shell. |
+
+**Mapping.**
+- Linear state types map to Harold status: backlog and unstarted to `pending`, started to `in_progress`, completed to `completed`, canceled to `cancelled`.
+- Linear priority 1 and 2 map to `high`, 3 to `medium`, 4 and 0 to `low`. Harold `high` goes out as 2, `medium` as 3, `low` as 4. A field is sent only when its mapped value differs, so an Urgent issue is never downgraded.
+- A Linear project maps to the entry in `harold/projects.md` whose `linear_project:` matches, otherwise whose name or alias matches (not case-sensitive). An unmapped project leaves the task's project empty, and the Linear name is kept in `sync_log`.
+- A due date is a calendar day. It is stored as midnight UTC and read as the first 10 characters, with no time-zone conversion. Only "today" uses `HAROLD_TZ`.
+
+**Merging.** `task_links.synced_fields` holds the field values both sides last agreed on. It is written after every successful sync.
+- A field changed on one side only is taken from that side.
+- Different fields changed on each side are merged, with no conflict.
+- The same field changed on both sides to different values is a conflict. The later timestamp wins (a tie goes to Harold). A `sync_log` row of kind `conflict` keeps both values, the agreed value and the winner. `bin/harold task conflicts` lists the ones you have not seen.
+- A link with no `synced_fields` yet (its first sync) uses a simpler rule: if both sides changed, the later version wins.
+
+**No loops.** Sync writes carry the header `x-harold-origin`. The database trigger then marks the row `changed_by = 'linear'`, and the push trigger does not fire for it. A webhook for our own push finds both sides equal and only refreshes the link.
+
+**The connector has no GitHub token of its own.** The sync routes therefore cannot read your repository. Authenticated MCP requests carry your token, so they do two small jobs in passing (`src/sync/housekeeping.ts`). Each runs alongside the request and never holds the answer more than 5 seconds.
+- The project-map cache: `harold/projects.md`, parsed and stored in `sync_state` (row `harold-projects`), refreshed at most every 10 minutes. The sync routes read only this cache. With no cache they answer 503 and nothing syncs, because the project mapping cannot be checked. A cache older than 7 days is still used, and a `skip` row is logged.
+- `harold/tasks-snapshot.md`: the open tasks grouped Overdue, Due today, Due this week, In progress and Later, in your time zone (`HAROLD_TZ`). It is rewritten only when the list changed since the last write, and at most every 30 minutes. Sessions without database access read this file.
+
+**Settings.** `LINEAR_API_KEY`, `LINEAR_TEAM_KEY`, `LINEAR_WEBHOOK_SECRET`, `SYNC_SECRET`, plus `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (see the settings table above).
+
+**Supabase side** (`supabase/sync.sql`, which you run by hand once, after the task-list migration and after the connector is deployed with the settings above):
+- Two Vault secrets: `harold_connector_url` (the connector's address) and `harold_sync_secret` (the same value as `SYNC_SECRET`).
+- A helper function `public.harold_sync_call(path, body, timeout)`. It reads both secrets and calls `net.http_post`. Only the service role may run it.
+- A trigger `tasks_sync_push` on `public.tasks`, after insert or update, only when `changed_by = 'harold'`. It calls `/sync/push`. If the call cannot be queued, the write still succeeds and the next catch-up covers it.
+- A `pg_cron` job `harold-sync-catchup`, every 10 minutes, calling `/sync/catchup`.
 
 ## Connect your tool
 
@@ -257,7 +298,8 @@ Local server: `PORT=8787 npm run dev` with the variables from `.env.example` and
 - `src/kb.ts`: knowledge-base reads and writes. `src/github.ts`: GitHub API. `src/text.ts`: dates, frontmatter, secret scan.
 - `src/projects.ts`, `src/learnings.ts`: ports of `bin/harold where` and `bin/harold file learning`.
 - `src/graph.ts`: `harold_related`, a port of `bin/harold related` over `harold/graph.json`. `src/stale.ts`: `crm_stale`. `src/pulse.ts`: `harold_pulse`, the same procedure as `bin/harold pulse` (`test/unit/pulse-fixture.json` is shared with the workspace's Python tests, so both give the same text for the same repository). `src/morning.ts`: the critical lessons, housekeeping notes and Step 0 in `harold_today`.
-- `src/tasks.ts`: `task_list` and `task_create`, Linear's GraphQL API as `bin/harold-linear` calls it.
+- `src/tasks.ts`: `task_list`, `task_create`, `task_update` and `crm_task`, over Harold's own task list in Supabase (with the old-schema fallback).
+- `src/sync/`: the optional two-way Linear sync. `provider.ts` (the provider interface), `linear.ts` (Linear's API, webhook check, mapping), `projectmap.ts`, `engine.ts` (reconcile, field-level merge, conflicts, catch-up, import), `store.ts` (Supabase), `snapshot.ts`, `housekeeping.ts`, `routes.ts`. Also `scripts/linear-import.ts` (`npm run sync:import`) and `supabase/sync.sql`.
 - `src/crm.ts`: the CRM, ported from `tools/harold-mcp/server.js` against the same schema. `src/config.ts`: every setting.
 - `src/google.ts`: the connector's own Google sign-in for calendar access (`/google/authorize`, `/google/callback`). `src/calendar.ts`: `calendar_list` and `calendar_events`.
 

@@ -16,15 +16,12 @@ import * as calendar from "./calendar.js";
 import { googleAccountsFromEnv, type GoogleConfig } from "./google.js";
 import type { FetchLike } from "./identity.js";
 import { localParts, truncate } from "./text.js";
+import { parseProjects } from "./projects.js";
 
 export interface ToolDeps {
   repoFor: (ctx: ServerContext) => HaroldRepo;
   supabase: () => crm.Sb | null;
   now?: () => Date;
-  /** The task manager (Linear); default: LINEAR_API_KEY + LINEAR_TEAM_KEY from the environment. */
-  linear?: () => tasks.LinearConfig | null;
-  /** fetch for the task manager's API; injected in tests. */
-  linearFetch?: FetchLike;
   /** The calendars (Google); default: GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET + GOOGLE_REFRESH_TOKEN from the environment. */
   google?: () => GoogleConfig | null;
   /** fetch for Google's APIs; injected in tests. */
@@ -45,9 +42,10 @@ export const defaultDeps: ToolDeps = {
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
-// The task tools reach a third-party service (the owner's task manager), not only the owner's Harold.
-const TASK_READ = { ...READ, openWorldHint: true } as const;
-const TASK_WRITE = { ...WRITE, openWorldHint: true } as const;
+
+// The calendar tools reach a third-party service (Google), not only the owner's Harold.
+const CAL_READ = { ...READ, openWorldHint: true } as const;
+const CAL_WRITE = { ...WRITE, openWorldHint: true } as const;
 
 const out = (text: string, isError = false): CallToolResult => ({ content: [{ type: "text", text: truncate(text, MAX_RESULT_CHARS - 500, "result truncated") }], ...(isError ? { isError: true } : {}) });
 
@@ -58,8 +56,11 @@ async function guard(fn: () => Promise<{ text: string; isError?: boolean }>): Pr
 
 export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
   const now = () => (deps.now ? deps.now() : new Date());
-  const linear = () => (deps.linear || tasks.linearFromEnv)();
-  const linearFetch: FetchLike = deps.linearFetch || ((i, init) => fetch(i, init));
+  // Harold's task list lives in Supabase; project names are checked against harold/projects.md.
+  const projectsFor = (ctx: ServerContext): tasks.ProjectsLoader => async () => {
+    const pf = await deps.repoFor(ctx).getText("harold/projects.md");
+    return pf ? parseProjects(pf.text) : [];
+  };
   const googleAccounts = () => deps.googleAccounts ? deps.googleAccounts() : deps.google ? (d => d ? [d] : [])(deps.google()) : googleAccountsFromEnv();
   const googleFetch: FetchLike = deps.googleFetch || ((i, init) => fetch(i, init));
   const withSb = async (fn: (sb: crm.Sb) => Promise<crm.CrmResult>) => { const sb = deps.supabase(); return sb ? fn(sb) : crm.NOT_CONFIGURED; };
@@ -75,10 +76,14 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("harold_today", {
     title: "Harold: today",
-    description: "Start here when the conversation is about the owner's work day. Returns today's date in the owner's time zone (HAROLD_TZ; UTC if unset), today's morning brief draft if one exists (harold/briefs/<date>.md), the Current Alerts section of harold/alerts.md, the critical lessons from harold/learnings.jsonl, the housekeeping notes waiting in harold/briefs/housekeeping-notes.md, the active projects that have gone quiet (as harold_pulse), the five most recent daily notes with their first lines, and how to start the day (show the draft, ask what came in overnight, then the day's priorities).",
+    description: "Start here when the conversation is about the owner's work day. Returns today's date in the owner's time zone (HAROLD_TZ; UTC if unset), today's morning brief draft if one exists (harold/briefs/<date>.md), the Current Alerts section of harold/alerts.md, the critical lessons from harold/learnings.jsonl, the housekeeping notes waiting in harold/briefs/housekeeping-notes.md, the active projects that have gone quiet (as harold_pulse), Harold's open tasks that are overdue or due today (when the task list is configured), the five most recent daily notes with their first lines, and how to start the day (show the draft, ask what came in overnight, then the day's priorities).",
     inputSchema: z.object({}),
     annotations: READ,
-  }, async (_args, ctx) => guard(() => kb.today(deps.repoFor(ctx), now())));
+  }, async (_args, ctx) => guard(async () => {
+    const r = await kb.today(deps.repoFor(ctx), now());
+    const due = await tasks.dueTodayText(deps.supabase(), localParts(now()).iso);
+    return due ? { ...r, text: `${r.text}\n\n## ${due}` } : r;
+  }));
 
   server.registerTool("harold_search", {
     title: "Harold: search",
@@ -344,10 +349,10 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 
   server.registerTool("crm_task", {
     title: "CRM: follow-up task",
-    description: "Create, update, complete, cancel or list contact-specific follow-up tasks (e.g. 'Send the deck to Jane Doe'). Use it alongside task_create when a follow-up is tied to a contact; project work without a contact goes to task_create only.",
+    description: "The same task list as task_list / task_create / task_update (Harold's own list, one table), filtered to contacts: create, update, complete, cancel or list follow-up tasks tied to a contact (e.g. 'Send the deck to Jane Doe'). Kept for compatibility; task_id accepts a ref (H-12), an outside key (ENG-123) or a task id. Project work without a contact goes to task_create.",
     inputSchema: z.object({
       action: z.enum(["create", "update", "complete", "cancel", "list"]),
-      task_id: z.string().optional().describe("Required for update/complete/cancel"),
+      task_id: z.string().optional().describe("Required for update/complete/cancel: a ref (H-12), an outside key (ENG-123) or a task id"),
       contact_name: z.string().optional(),
       contact_id: z.string().optional(),
       org: z.string().optional(),
@@ -358,35 +363,55 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       status: z.enum(["pending", "in_progress", "completed", "cancelled"]).optional(),
     }),
     annotations: WRITE,
-  }, async (args, ctx) => guard(() => withSb(async sb => {
-    const r = await crm.crmTask(sb, args);
+  }, async (args, ctx) => guard(async () => {
+    const r = await tasks.crmTask(deps.supabase(), projectsFor(ctx), args);
     return args.action === "create" ? vaultFollowUp(ctx, r) : r;
-  })));
+  }));
 
-  // ───────────── the task manager ─────────────
+  // ───────────── Harold's task list ─────────────
 
   server.registerTool("task_list", {
     title: "Tasks: list open",
-    description: "List the open tasks (not completed or canceled) in the owner's task manager (Linear, team LINEAR_TEAM_KEY), most recently updated first, each with its ID, title, project, state, due date, priority and URL. Optional text filter on title and description. Call it before task_create so nothing is created twice. Says plainly when no task manager is configured.",
+    description: "List the open tasks (pending or in progress) in Harold's own task list, by due date, each with its ref (H-12), title, project, contact, status, due date, priority and the same work's key and URL in an outside tool when linked (e.g. ENG-123). Optional text filter on title and description, project filter (canonical name, as harold_where gives it) and include_done for completed and cancelled tasks too. Call it before task_create so nothing is created twice. Says plainly when the task list is not configured.",
     inputSchema: z.object({
       query: z.string().max(200).optional().describe("Only tasks whose title or description contains this text, e.g. 'deck' or a person's name"),
+      project: z.string().max(120).optional().describe("Only tasks in this project (name or alias from harold/projects.md)"),
+      include_done: z.boolean().optional().describe("true: completed and cancelled tasks too (default: open only)"),
       limit: z.number().int().min(1).max(100).optional().describe("Maximum tasks (default 50)"),
     }),
-    annotations: TASK_READ,
-  }, async (args) => guard(() => tasks.listTasks(linearFetch, linear(), args)));
+    annotations: READ,
+  }, async (args, ctx) => guard(() => tasks.listTasks(deps.supabase(), projectsFor(ctx), args)));
 
   server.registerTool("task_create", {
     title: "Tasks: create",
-    description: "Create one task in the owner's task manager (Linear, team LINEAR_TEAM_KEY): one per commitment in shared meeting notes, a transcript or an email, without being asked. The owner's own to-dos as plain actions ('Send the revised deck to Jane Doe'); things owed to the owner as 'Follow up: <who> owes <what>'. due_date when stated or clearly implied; project by name (from harold_where; matched against the team's projects). An open task with the same title is returned instead of a duplicate. Returns the task ID and URL: write the ID into the meeting note's Action items. Refuses secrets. Says plainly when no task manager is configured (use crm_task for a contact follow-up then).",
+    description: "Create one task in Harold's own task list: one per commitment in shared meeting notes, a transcript or an email, without being asked. The owner's own to-dos as plain actions ('Send the revised deck to Jane Doe'); things owed to the owner as 'Follow up: <who> owes <what>'. due_date when stated or clearly implied. project: the name or alias from harold/projects.md (harold_where gives it); it is stored as the canonical name, and an unknown project is refused with the close matches. contact_name (or contact_id) ties it to a person in the CRM. An open task with the same title in the same project is returned instead of a duplicate. Returns the ref (H-12): write it into the meeting note's Action items. Refuses secrets. Says plainly when the task list is not configured.",
     inputSchema: z.object({
-      title: z.string().min(1).max(250).describe("The action, starting with a verb, or 'Follow up: <who> owes <what>'"),
-      description: z.string().max(10_000).optional().describe("Context: where it came from (meeting, date), who is involved, the exact commitment"),
+      title: z.string().min(1).max(250),
+      description: z.string().max(10_000).optional(),
       due_date: z.string().optional().describe("YYYY-MM-DD, when stated or clearly implied"),
-      project: z.string().max(120).optional().describe("Project name in the task manager (harold_where gives the owner's project)"),
-      priority: z.enum(tasks.PRIORITIES).optional().describe("urgent | high | medium (default) | low"),
+      project: z.string().max(120).optional().describe("Project name or alias from harold/projects.md (harold_where gives the owner's project)"),
+      priority: z.enum(tasks.PRIORITIES).optional().describe("high | medium (default) | low (urgent is stored as high)"),
+      contact_name: z.string().max(120).optional().describe("The person this is tied to, matched in the CRM"),
+      contact_id: z.string().optional(),
+      org: z.string().max(200).optional().describe("Organisation, to disambiguate contact_name"),
     }),
-    annotations: TASK_WRITE,
-  }, async (args) => guard(() => tasks.createTask(linearFetch, linear(), args)));
+    annotations: WRITE,
+  }, async (args, ctx) => guard(async () => vaultFollowUp(ctx, await tasks.createTask(deps.supabase(), projectsFor(ctx), args))));
+
+  server.registerTool("task_update", {
+    title: "Tasks: update",
+    description: "Update one existing task in Harold's task list, found by its ref (H-12), by the key of the same work in an outside tool (ENG-123, through its link) or by task id. Only the fields passed change: state (todo/pending, start/in progress, done/complete, cancel; all reversible and nothing is ever deleted), title, description (an empty string clears it), priority, due_date ('none' clears it) and project. Use it when the owner says a task is done, canceled or no longer needed, or when something about it is wrong, so the list stays real instead of going stale. Reports the before and after of each changed field. Says plainly when the task list is not configured.",
+    inputSchema: z.object({
+      task: z.string().min(2).max(60).describe("The ref (H-12), an outside key (ENG-123) or a task id"),
+      state: z.string().max(60).optional().describe("todo | start | done | cancel (or pending, in progress, complete); reversible"),
+      title: z.string().min(1).max(250).optional(),
+      description: z.string().max(10_000).optional().describe("Pass an empty string to clear it"),
+      due_date: z.string().optional().describe("YYYY-MM-DD, or 'none' to clear it"),
+      priority: z.enum(tasks.PRIORITIES).optional().describe("high | medium | low (urgent is stored as high)"),
+      project: z.string().max(120).optional().describe("Project name or alias from harold/projects.md; 'none' clears it"),
+    }),
+    annotations: WRITE,
+  }, async (args, ctx) => guard(() => tasks.updateTask(deps.supabase(), projectsFor(ctx), args)));
 
   // ───────────── the calendars ─────────────
 
@@ -394,7 +419,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     title: "Calendar: list calendars",
     description: "List the calendars the connector's own Google Calendar access can read: name, id, whether primary, access role and time zone. This access belongs to the connector, so it works the same from every connected tool. Read-only. Says plainly when no calendar is configured.",
     inputSchema: z.object({}),
-    annotations: TASK_READ,
+    annotations: CAL_READ,
   }, async () => guard(() => calendar.listCalendars(googleFetch, googleAccounts())));
 
   server.registerTool("calendar_events", {
@@ -405,7 +430,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       to: z.string().optional().describe("YYYY-MM-DD, inclusive, default from + 6 days; at most a 31-day span"),
       calendar: z.string().max(200).optional().describe("Only calendars whose name contains this text, or an exact calendar id"),
     }),
-    annotations: TASK_READ,
+    annotations: CAL_READ,
   }, async (args) => guard(() => calendar.listEvents(googleFetch, googleAccounts(), args, now())));
 
   // ───────────── event writes (review only: not deployed, scope not granted) ─────────────
@@ -422,7 +447,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       description: z.string().max(2000).optional(),
       attendees: z.array(z.string().email()).max(50).optional().describe("Attendee email addresses"),
     }),
-    annotations: TASK_WRITE,
+    annotations: CAL_WRITE,
   }, async (args) => guard(() => calendar.createEvent(googleFetch, googleAccounts(), args)));
 
   server.registerTool("calendar_event_update", {
@@ -438,7 +463,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       description: z.string().max(2000).optional(),
       attendees: z.array(z.string().email()).max(50).optional().describe("Full replacement attendee list (emails)"),
     }),
-    annotations: TASK_WRITE,
+    annotations: CAL_WRITE,
   }, async (args) => guard(() => calendar.updateEvent(googleFetch, googleAccounts(), args)));
 
   server.registerTool("calendar_event_cancel", {
@@ -448,14 +473,14 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       eventId: z.string().max(300).describe("The event id to cancel"),
       calendar: z.string().max(200).optional().describe("Calendar name substring or exact id; omit only when exactly one calendar is connected - with several, the owner is asked to choose first"),
     }),
-    annotations: TASK_WRITE,
+    annotations: CAL_WRITE,
   }, async (args) => guard(() => calendar.cancelEvent(googleFetch, googleAccounts(), args)));
 }
 
 export const TOOL_NAMES = [
   "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
   "harold_capture", "harold_note", "harold_update", "harold_learning", "harold_person_create", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
-  "task_list", "task_create",
+  "task_list", "task_create", "task_update",
   "calendar_list", "calendar_events", "calendar_event_create", "calendar_event_update", "calendar_event_cancel",
 ];
 
