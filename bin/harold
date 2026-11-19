@@ -1515,7 +1515,27 @@ function readTaskSnapshot(root) {
   const m = text.match(/\*Written (\S+) by ([^.\n]+?)\.\*/);
   const writtenMs = m ? Date.parse(m[1]) : fs.statSync(sp).mtimeMs;
   const tasks = [];
+  // Two writers, two formats: this script writes markdown tables; the connector's sync writes one bullet per task
+  // ("- **H-7** · title · project · due 2026-11-19 · medium · [PRI-9](url)") under "## <group> (n)" headings.
+  // Reading only the tables made every connector-written snapshot look empty.
+  let heading = '';
   for (const l of text.split('\n')) {
+    const h = l.match(/^#{2,3}\s+(.+?)\s*(?:\(\d+\))?\s*$/); if (h) { heading = h[1].toLowerCase(); continue; }
+    const b = l.match(/^\s*[-*]\s+\*\*([^*]+)\*\*\s*(.*)$/);
+    if (b) {
+      const rest = b[2].replace(/^\s*·\s*/, '').split(/\s+·\s+/).map(x => x.trim());
+      const t = { ref: b[1].trim(), title: rest[0] || '', project: '', contact: '', status: /progress/.test(heading) ? 'in_progress' : 'pending', due: '', priority: '', links: [] };
+      rest.slice(1).forEach((x, i) => {
+        let m;
+        if ((m = x.match(/^due\s+(\d{4}-\d{2}-\d{2})$/i))) t.due = m[1];
+        else if (/^(high|medium|low|urgent)$/i.test(x)) t.priority = x.toLowerCase();
+        else if ((m = x.match(/^\[([^\]]+)\]\([^)]*\)$/))) t.links.push(m[1]);
+        else if (/^status\s+/i.test(x)) t.status = x.replace(/^status\s+/i, '').replace(/\s+/g, '_').toLowerCase();
+        else if (i === 0) t.project = /^no project$/i.test(x) ? '' : x;
+        else if (!t.contact) t.contact = x;
+      });
+      tasks.push(t); continue;
+    }
     if (!l.startsWith('| ') || /^\| Ref \|/.test(l)) continue;
     const c = l.trim().slice(1, -1).split(/(?<!\\)\|/).map(x => x.replace(/\\\|/g, '|').trim());
     if (c.length < 8) continue;
