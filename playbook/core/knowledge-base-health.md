@@ -226,6 +226,8 @@ Every session loads a few files at startup, so their size is a cost paid on ever
 
 For each file over budget, move the sections that are clearly stale (superseded, finished, or older than 90 days and not referenced by an active project in `harold/projects.md`) into an archive file beside it, `<same folder>/<name>-archive.md`, leaving a one-line pointer where they were. `bin/harold search` still finds them; sessions no longer load them. Never move rules, instructions or anything current. If a file cannot get under budget without a judgment call, leave the rest and tell the operator in one line. Nothing is deleted.
 
+**Heartbeats.** `bin/harold close` rolls each project's live `heartbeats.jsonl` (last 14 days, never fewer than 10 entries, at most 40,000 bytes; older entries go to `heartbeats/YYYY-MM.jsonl` beside it). Check that it is working: no live file over 40,000 bytes, and no single heartbeat over about 600 characters of `done`, `running` and `waiting` together. A long heartbeat means detail is going into the status line: name the project in the report, so the detail moves to the file the heartbeat links.
+
 ### Step 12: Learnings ledger review
 
 **Purpose:** keep `harold/learnings.jsonl` from growing into context without bound. Boot lists every `critical` entry (one line each, within a fixed budget; `bin/harold check` warns past 15), and `boot --full` (the scheduled jobs) prints the whole ledger. A fact correction (a name, a title, a project detail) is fixed in place, never kept as a learning.
