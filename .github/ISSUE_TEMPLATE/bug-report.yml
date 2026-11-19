@@ -1,0 +1,31 @@
+name: Bug report
+description: Something in Harold does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public. Remove names, keys, contact details and anything else private from what you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: AI tool and model
+      description: The harness you ran Harold in (for example Codex, Gemini CLI, Cursor, Claude Code), and the model if you know it.
+  - type: input
+    id: version
+    attributes:
+      label: Starter version
+      description: The commit in harold/upstream.json, or the date you copied the starter.
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of bin/harold check
+      description: With anything private removed.
+      render: text

@@ -436,7 +436,7 @@ bin/harold update             # do it; review with git diff, harold close commit
 
 ## Contributing to Harold
 
-Improvements to Harold itself are welcome, through pull requests: fork the public starter, make the change on a branch of your fork, and open a pull request against `main`. Nothing reaches the public project by pushing to it, and your own workspace is never the place to make such a change, because it holds your private content. Keep a contribution to Harold's machinery (its structure, playbooks, boot and close, connectors), never your own notes or settings, and run `node --test tests/*.test.js` before you open it.
+Improvements to Harold itself are welcome. Report a problem or ask for a new task tool or CRM with the issue forms, and propose a change through a pull request from a fork; never from your own workspace, which holds your private content. [CONTRIBUTING.md](CONTRIBUTING.md) has the steps.
 
 ## License and credit
 
