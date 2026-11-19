@@ -14,7 +14,7 @@ Tier names are generic on purpose. Map them to whatever your provider currently 
 | Tier | Example | Best for | Cost |
 |------|---------|----------|------|
 | **Fast** | your provider's fastest, least expensive model | Lookups, status checks, simple reads, rote updates | Lowest |
-| **Mid** | your provider's mid-range model | Playbook execution, drafting, task-manager management, structured tasks | Medium |
+| **Mid** | your provider's mid-range model | Playbook execution, drafting, task-list updates, structured tasks | Medium |
 | **Top** | your provider's most capable model | Strategy, synthesis, complex analysis, meeting prep, research, morning briefs | Highest |
 
 ---
@@ -27,10 +27,10 @@ Reading data and returning it, or making simple mechanical updates. No synthesis
 
 | Task pattern | Examples |
 |-------------|----------|
-| **CRM / task-manager lookups** | "What's the status of [TEAM]-144?", "Who owns the Acme Corp contract task?", "List overdue tasks" |
+| **CRM / task-list lookups** | "What's the status of H-144?", "Who owns the Acme Corp contract task?", "List overdue tasks" |
 | **File reads** | "What does `harold/blockers.md` say about B004?", "Read the Acme Corp profile" |
 | **Simple status checks** | "When is [EVENT]?", "What's Jane Doe's last touch date?" |
-| **Mechanical updates** | "Mark [TEAM]-187 done", "Add a comment to [TEAM]-144: waiting on Sam" |
+| **Mechanical updates** | "Mark H-187 done", "Add a note to H-144: waiting on Sam" |
 | **Fact retrieval** | "Which fund is Sam Lee at?" |
 | **Calendar reads** | "What's on the calendar tomorrow?" |
 | **Alert checks** | "Any urgent alerts?" |
@@ -133,7 +133,7 @@ When the morning brief (`playbook/core/morning-brief.md`) generates priority pro
 **Priority 2: Investor Follow-Up Emails (Day 3)** [MID]
 [Full prompt with context...]
 
-**Priority 3: Update Partner Pipeline in Harold's task list** [MID]
+**Priority 3: Update the partner pipeline in the CRM** [MID]
 [Full prompt with context...]
 ```
 

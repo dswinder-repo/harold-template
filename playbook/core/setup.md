@@ -46,7 +46,7 @@ Write the same name, email and GitHub account into the **Git & GitHub Workflow**
 
 ## Step 3: Check the workspace
 
-Run `bin/harold check`. It only reads, and it should end with `RESULT: PASS`. Warnings about the time zone or placeholders are expected at this point; this playbook clears them. If it fails, read the failure to the operator in plain words and fix it before going on.
+Run `bin/harold check`. It only reads, and it should end with `RESULT: PASS`. Warnings about the time zone and `origin` (and a missing search index) are expected at this point; this playbook clears them. Placeholders are not checked here: boot's NOT SET UP YET notice lists them. If it fails, read the failure to the operator in plain words and fix it before going on.
 
 ## Step 4: Time zone and settings
 
@@ -124,7 +124,7 @@ Offer each in turn, with one sentence on what it gives. "Skip for now" is always
 - **Two-way sync with the task tool the operator already uses.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. Ask whether the operator uses Linear, Todoist, Asana or Notion. If they do, they keep using it: the hosted connector syncs Harold's task list with it in both directions, and any mix of the four works at once. Each sync needs the hosted connector. Steps: the sections "Optional: two-way sync with Linear", "... with Todoist", "... with Asana" and "... with Notion" below. Skip: tasks stay in Harold's task list only.
 - **The hosted connector**, if step 8 used harold-mcp: it adds access from chat apps and other computers. Skip: sessions in the workspace folder do everything.
 - **Scheduled jobs**: the morning brief written before the operator sits down, and the weekly, monthly and month-end housekeeping, run on GitHub Actions or any scheduler (README, "Scheduled jobs in the cloud"). Skip: the brief runs live when the operator says good morning, and housekeeping runs in sessions when it is due.
-- **More AI tools.** Harold already works in every harness listed in `AGENTS.md`; some need a one-time step (trusting the hooks, or copying a snippet into the user's own configuration). Ask which tools they use besides this one and do that step for each. Skip: the tool they are using now is enough.
+- **More AI tools.** Harold already works in every harness listed in `AGENTS.md`; some need a one-time step (trusting the hooks, or copying a snippet into the operator's own configuration). Ask which tools they use besides this one and do that step for each. Skip: the tool they are using now is enough.
 
 ### Optional: two-way sync with Linear
 
@@ -271,7 +271,7 @@ Do this only if the operator uses Notion and wants the same tasks in both places
 
 ## Step 10: Check, boot and close
 
-1. Run `bin/harold check`. It should print `RESULT: PASS` with no warnings about the time zone, placeholders or `origin`.
+1. Run `bin/harold check`. It should print `RESULT: PASS` with no warnings about the time zone or `origin`.
 2. Run `bin/harold boot` (or start a fresh session, where hooks run it). The `⚠ NOT SET UP YET` notice must be gone. If it is still there, it names what is left: go back to that step.
 3. Write today's daily note in `vault/daily/` saying Harold was set up, with the projects added and the optional parts chosen or skipped.
 4. Run `bin/harold close`. It commits everything and pushes to the operator's private repository, and must end with a line saying the commits were pushed. If it says NOT PUSHED, read the reason and fix it (usually `origin` or the git credentials), then close again.

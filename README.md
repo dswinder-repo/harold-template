@@ -13,7 +13,7 @@ If someone has pointed you at this repository or at harold.works and asked you t
 **What `bin/harold` is.** A single Node script with no dependencies (`bin/harold`), plus a search-index helper that uses only Python's standard library (`bin/harold-index`). Both are plain text; read them first if your tool asks you to review unfamiliar scripts before running them. They install nothing, start no server, need no administrator rights, and write only inside the workspace folder, apart from `~/.harold/env`, the operator's private credentials file, which `bin/harold-setup-crm` writes when the operator sets up the CRM. Specifically:
 
 - They read and write files in the workspace: the session file in `harold/active-sessions/`, Harold's state files in `harold/`, and the search index `harold/search.db`.
-- They run `git`. `bin/harold close` commits the workspace and pushes it to `origin` at the end of every turn. Boot runs `git ls-remote` against the starter at most twice a day, only to say whether an update is available.
+- They run `git`. `bin/harold close` commits the workspace and pushes it to `origin` at the end of every turn. Boot runs `git ls-remote` against the starter at most twice a day, only to say whether an update is available (`HAROLD_UPDATE_CHECK="0"` in `harold/settings.env` turns this off).
 - They use the network only for services the operator has configured: the CRM (Supabase, called with `curl`, only once its credentials are in `~/.harold/env`), Linear, Todoist, Asana or Notion, only if you turn on the optional sync for that tool (`LINEAR_API_KEY`, `TODOIST_API_TOKEN`, `ASANA_ACCESS_TOKEN`, `NOTION_TOKEN`), and the phone notice for the morning brief (ntfy, only with `NTFY_TOPIC`).
 - They never push to the public starter. While `origin` still points at it, close, the scheduled brief and housekeeping commit locally, say how to make a private copy, and exit 1 without attempting the push.
 
@@ -22,10 +22,10 @@ If someone has pointed you at this repository or at harold.works and asked you t
 **The order of first steps.** `playbook/core/setup.md` is the full procedure; in short:
 
 1. **Point `origin` at the operator's own private repository, and give git a name and email** (Quick start, step 1). Do this before anything runs `bin/harold close`, because close commits and pushes on every turn. A clone of the public starter still has the starter as `origin`, and Harold refuses to push there.
-2. **Run `bin/harold check`** (step 2). It should print `RESULT: PASS`.
-3. **Ask the operator for their details and fill in the placeholders yourself** (step 3): name, role, time zone, git identity, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
-4. **Set up the CRM** (step 4): the Supabase database, reached through the hosted connector or the local `harold-mcp`. It is part of Harold, not an add-on: close checks that every contact touched was filed in it.
-5. **Offer the optional parts one at a time** (steps 4c, 5 and 6): the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
+2. **Run `bin/harold check`** (Quick start, step 2). It should print `RESULT: PASS`.
+3. **Ask the operator for their details and fill in the placeholders yourself** (Quick start, step 3): name, role, time zone, git identity, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
+4. **Set up the CRM** (Quick start, step 4; `playbook/core/setup.md`, step 8): the Supabase database, reached through the hosted connector or the local `harold-mcp`. It is part of Harold, not an add-on: close checks that every contact touched was filed in it.
+5. **Offer the optional parts one at a time** (Quick start, steps 4c, 5 and 6): the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
 6. **Run `bin/harold check`, then a first boot and close**, and follow `AGENTS.md` from there. Until setup is complete, boot opens with a short "not set up yet" notice that names what is left.
 
 ## What makes 2.0 different
@@ -33,7 +33,7 @@ If someone has pointed you at this repository or at harold.works and asked you t
 Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/harold`, a zero-dependency Node program that runs at the start and end of every session.
 
 - **`bin/harold boot`** gets the real date, verifies that the constitution, every core file and every playbook can be read, loads the lessons, the project map, alerts, blockers, the projects that have gone quiet and the scheduled work that is due, and registers the session. If anything cannot be read, it **refuses** rather than letting the session start blind.
-- **The context gate.** Harnesses pass only so much hook output to the model (Claude Code shows a 2 KB preview of anything over about 10 KB). When boot's context is larger than `HAROLD_HOOK_BUDGET` (9000 characters by default), boot hands the model a short digest and writes the rest as parts; `bin/harold context` prints them one at a time. Until every part is read, the pre-tool hook `bin/harold gate` holds every other tool (Claude Code, the Claude desktop app, Codex, Gemini CLI, Qwen Code, Cursor, Copilot CLI, Grok Build, Kimi Code, Hermes Agent) and close blocks the turn (everywhere). The gate fails open. Lessons are listed one line each within a fixed budget, and `bin/harold learnings` prints them in full, so boot does not grow as lessons pile up.
+- **The context gate.** Harnesses pass only so much hook output to the model (Claude Code, for example, shows a 2 KB preview of anything over about 10 KB; other harnesses set their own limits). When boot's context is larger than `HAROLD_HOOK_BUDGET` (9000 characters by default), boot hands the model a short digest and writes the rest as parts; `bin/harold context` prints them one at a time. Until every part is read, the pre-tool hook `bin/harold gate` holds every other tool (Claude Code, the Claude desktop app, Codex, Gemini CLI, Qwen Code, Cursor, Copilot CLI, Grok Build, Kimi Code, Hermes Agent) and close blocks the turn (everywhere). The gate fails open. Lessons are listed one line each within a fixed budget, and `bin/harold learnings` prints them in full, so boot does not grow as lessons pile up.
 - **`bin/harold close`** runs at the end of every turn. It checks that changed knowledge was written to today's daily note, that every contact touched was filed, that every action item in a meeting note written this session carries its task ID, that due scheduled work was recorded, that every boot context part was read, and that new work belongs to a project (a new intel or decision note names its project in `project:` frontmatter, and a new top-level folder has an entry in the project map). If something is missing it blocks the turn with the exact list. When everything passes, it scans for secrets and commits and pushes the workspace.
 
 ## Quick start
@@ -61,7 +61,7 @@ These steps are a condensed version of [Initial Setup](https://harold.works/docs
 
 2. **Check it works as-is** (docs, Step 2).
    ```bash
-   bin/harold check     # → RESULT: PASS, with a warning that HAROLD_TZ is not set until you set it in step 3
+   bin/harold check     # → RESULT: PASS, with warnings that HAROLD_TZ is not set and origin is still the starter (both clear during setup)
    ```
 
 3. **Fill in the placeholders and set your time zone** (docs, Steps 3 to 5). The easiest way is to ask your AI tool to "set up Harold": it follows `playbook/core/setup.md`, asks for your details and fills everything in. By hand, search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/working-memory.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `harold/settings.env` (uncomment the line and put your zone):
@@ -201,8 +201,9 @@ CLAUDE.md                  one line: @AGENTS.md
 .amp/plugins/harold.ts     Amp plugin: boot on agent.start, close on agent.end
 .mcp.example.json          Claude Code MCP config for bin/harold-mcp (copy to .mcp.json, gitignored)
 bin/
-  harold                   boot | check | close | file (learning|trigger|daily|crm) | replay | brief | housekeeping |
-                           update | where | search | related | backlinks | pulse | index | root
+  harold                   boot | context | gate | check | close | file (learning|trigger|daily|crm|heartbeat) |
+                           learnings | replay | task | brief | housekeeping | update | where | search | related |
+                           backlinks | pulse | heartbeats | index | root
   harold-index             SQLite FTS5 search index and link graph over every markdown file, archives included
                            (Python stdlib)
   harold-mcp               launches the MCP server with credentials from ~/.harold/env
@@ -220,7 +221,7 @@ harold/                    operational state
   settings.env             your non-secret settings (HAROLD_TZ, HAROLD_BRIEF_TIME, ...), committed
   update-manifest.txt      which files are Harold's machinery (what bin/harold update may change)
   upstream.json            where updates come from, and the starter commit last applied
-memory/                    CLAUDE.md (working memory), glossary.md
+memory/                    working-memory.md (working memory), glossary.md
 dashboard/                 index.md, status.md, processes.md (Context Engine), people.md, strategy.md
 vault/                     people/ companies/ projects/ intel/ decisions/ meetings/ daily/ templates/
 raw/                       inbox for unprocessed sources
@@ -265,6 +266,8 @@ tests/
   context-gate.test.js     a boot context larger than the hook budget is served as parts, and the gate holds until all are read
   update.test.js           bin/harold update and the committed harold/settings.env
   setup.test.js            boot's "not set up yet" notice, and close, brief and housekeeping never pushing to the public starter
+  tasks.test.js            Harold's task list: the commands, the offline queue and the snapshot, against a mock database
+  heartbeats.test.js       close rolls each heartbeats.jsonl, keeping recent entries and moving older ones to monthly files
 ```
 
 Run them all with `node --test tests/*.test.js` (Node 22+ and Python 3.8+). `tests/crm.test.js` also runs the CRM app's migration checks once `pnpm install` has run in `tools/harold-crm`.
@@ -337,7 +340,7 @@ What to run once, on your own computer, for each:
   gh secret set GEMINI_OAUTH_CREDS < "$SIGNIN_HOME/.gemini/oauth_creds.json"
   rm -rf "$SIGNIN_HOME"
   ```
-  The job sets `GOOGLE_GENAI_USE_GCA=true` so Gemini CLI uses it. Note: some reports say Google stopped serving Pro and Ultra personal sign-in in Gemini CLI on 2026-06-18 in favour of Antigravity CLI; Gemini CLI's own documentation (October 2026) still recommends that sign-in for subscribers, and nothing in its repository confirms the cut-off. If it no longer works for you, use `GEMINI_API_KEY`.
+  The job sets `GOOGLE_GENAI_USE_GCA=true` so Gemini CLI uses it. If personal sign-in does not work for your account, set `GEMINI_API_KEY` instead.
 - **Copilot CLI.** Create a fine-grained personal access token at github.com/settings/personal-access-tokens/new with the "Copilot Requests" permission, and store it as `COPILOT_GITHUB_TOKEN`. Each prompt uses your plan's premium requests.
 - **Grok Build.** `GROK_HOME="$HOME/.grok-harold" grok login` (or `--device-auth`), then `gh secret set GROK_AUTH_JSON < "$HOME/.grok-harold/auth.json"` and delete that folder. The renewal and cache handling is the same as for Codex.
 - **Kimi Code CLI.** Store your Kimi Code API key (the one its `/login` asks for) as `KIMI_API_KEY`. The job writes the provider settings its documentation gives (`https://api.kimi.com/coding/v1`, model `kimi-for-coding`).

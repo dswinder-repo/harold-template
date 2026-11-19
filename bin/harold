@@ -3030,7 +3030,7 @@ function cmdUpdate(root, today, argv) {
 // Boot's one line when the starter has moved past what this workspace last updated from. One `git ls-remote`, at
 // most every 12 hours, inside a 2.5-second budget; skipped in scheduled jobs, with no recorded update, and on failure.
 function upstreamNotice(root) {
-  if (isJobEnv() || process.env.HAROLD_HOUSEKEEPING_JOB || process.env.HAROLD_UPDATE_CHECK === '0') return null;
+  if (isJobEnv() || process.env.HAROLD_HOUSEKEEPING_JOB || setting('HAROLD_UPDATE_CHECK') === '0') return null;
   const up = readUpstream(root); if (!up.commit) return null;
   const url = up.url || UPSTREAM_DEFAULT.url, ref = up.ref || UPSTREAM_DEFAULT.ref;
   const cp = path.join(root, STATE_DIR, UPSTREAM_CHECK); let c = null;

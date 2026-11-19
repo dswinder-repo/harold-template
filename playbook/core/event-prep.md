@@ -14,7 +14,7 @@
 ```
 | Event | Dates | Project | Task | Prep Status | Debrief Due | Debrief Status |
 |-------|-------|---------|------|-------------|-------------|----------------|
-| Globex Summit | YYYY-MM-DD to YYYY-MM-DD | [PROJECT] | [TEAM]-123 | Not Started | YYYY-MM-DD | Open |
+| Globex Summit | YYYY-MM-DD to YYYY-MM-DD | [PROJECT] | H-12 | Not Started | YYYY-MM-DD | Open |
 ```
 
 - **Prep Status:** `Not Started`, `In Progress` or `Complete`.

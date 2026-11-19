@@ -1,7 +1,7 @@
 # Playbook: Expedition HQ (Launch the Visualizer)
 
-**Purpose:** Start the Expedition HQ live dashboard so you can watch every session's activity in a browser.
-**Trigger:** "Open Expedition HQ", "start the visualizer", "show me the dashboard", or at session start when live monitoring is wanted.
+**Purpose:** Start Expedition HQ, the live session visualizer, so you can watch every session's activity in a browser.
+**Trigger:** "Open Expedition HQ", "start the visualizer", "show me the sessions", or at session start when live monitoring is wanted.
 
 Expedition HQ is a small zero-dependency Node server at `tools/visualizer/serve.js`. It reads the session files in `harold/active-sessions/*.json` and serves a page that refreshes every 3 seconds.
 

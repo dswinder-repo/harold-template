@@ -115,7 +115,7 @@ Before presenting any draft:
 - [ ] **What did the original say?** Reference the actual content, not a paraphrase from memory.
 - [ ] **Who is "we"?** Confirm who is attending or participating.
 - [ ] **Does it follow the operator's style rules?** See "Your style rules" below.
-- [ ] **Any earlier corrections?** Check `harold/learnings.jsonl` for lessons about this contact or this kind of message.
+- [ ] **Any earlier lessons?** Check `harold/learnings.jsonl` for lessons about this kind of message. Facts about the contact are in their vault profile and CRM record.
 
 **Rule:** Follow-ups must reference real dates and real content from the original outreach.
 
