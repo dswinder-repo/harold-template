@@ -48,7 +48,7 @@ Playbooks live in `playbook/`, not in the dashboard. The full index is `playbook
 
 > **Prefer MCP tools over hand edits** for the files they own (facts, alerts, blockers, events). They keep the formats boot depends on.
 >
-> **Data source hierarchy:** CRM (relationships) → task manager (tasks and due dates) → markdown (events, blockers, facts). Each system owns its domain; nothing is duplicated by hand.
+> **Data source hierarchy:** CRM (relationships) → Harold's task list (tasks and due dates) → markdown (events, blockers, facts). Each system owns its domain; nothing is duplicated by hand.
 
 ---
 

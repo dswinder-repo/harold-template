@@ -78,9 +78,9 @@ When called with a topic (for example `/compile acme-corp`):
 2. Existing vault notes: `bin/harold search "<topic>"`.
 3. Project docs mentioning it (via `harold/projects.md`).
 4. CRM contact and interaction history if it's a person or company (`crm_get_contact` / `harold_get_contact`).
-5. Related tasks in the task manager (Linear by default).
+5. Related tasks in Harold's task list.
 
-**If a source is unreachable** (CRM or task manager down): continue with what's available and say which sources were missing in the report.
+**If a source is unreachable** (CRM or task list down): continue with what's available and say which sources were missing in the report.
 
 ### Step 2: Synthesize
 

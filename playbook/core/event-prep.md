@@ -141,7 +141,7 @@ Harold's job on event days is to make capture cheap:
    - File all three together: `crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the `vault/people/` profile (warmth, last_updated). If the CRM is unreachable, queue with `bin/harold file crm '{...}'`.
    - Pipeline: only add a pipeline entry if a conversation established a purpose. Never auto-place someone because you met them.
 
-3. **Create follow-up tasks** in the task manager (Linear by default): thank-you notes within 48 hours, meeting requests within a week.
+3. **Create follow-up tasks** in Harold's task list: thank-you notes within 48 hours, meeting requests within a week.
 
 4. **Extract content.** Identify 2-3 content pieces from the observations; draft hooks or outlines; save them in the project folder.
 
@@ -228,7 +228,7 @@ Harold's job on event days is to make capture cheap:
 **Post-event**
 - [ ] Raw impressions and day-of notes gathered
 - [ ] Contacts filed (log + upsert + vault profile, or queued)
-- [ ] Follow-up tasks created in the task manager
+- [ ] Follow-up tasks created in Harold's task list
 - [ ] Debrief note written to `vault/meetings/`
 - [ ] Intel and facts filed
 - [ ] Debrief Status closed and row moved to `## Completed Events`

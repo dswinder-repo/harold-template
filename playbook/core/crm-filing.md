@@ -61,7 +61,7 @@ The queue is a fallback for outages, not a workflow: `bin/harold boot` and `bin/
 
 ## Corrections
 
-When a contact detail is corrected (warmth, a name, a title, any field), the CRM contact record is the most important update. Never correct the vault or the task manager and skip the CRM. A correction is not an interaction: do not log one for it.
+When a contact detail is corrected (warmth, a name, a title, any field), the CRM contact record is the most important update. Never correct the vault or a task and skip the CRM. A correction is not an interaction: do not log one for it.
 
 ---
 

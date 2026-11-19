@@ -50,7 +50,7 @@ When you edit any file below, check its cascade column. If the field you are cha
 | Field | Authoritative Source | Also Appears In | Cascade |
 |-------|---------------------|-----------------|---------|
 | Which projects exist, where they live | `harold/projects.md` | `vault/projects/`, `dashboard/status.md` | Map entry first (`playbook/core/project-intake.md`) → vault card → status dashboard |
-| Task state and due dates | **Task manager** (Linear by default) | weekly summary, `memory/working-memory.md` | Never duplicated by hand: summaries pull from the task manager |
+| Task state and due dates | **Harold's task list** (`H-n`) | weekly summary, `memory/working-memory.md` | Never duplicated by hand: summaries pull from the task list |
 | Project deadlines | `dashboard/status.md` | `harold/events.md` (if date-specific), `memory/working-memory.md` | Status dashboard → events.md → memory |
 | Current priorities | `memory/working-memory.md` | weekly summary | Memory is authoritative; the summary mirrors it |
 
@@ -68,8 +68,8 @@ When you edit any file below, check its cascade column. If the field you are cha
 
 | File | Built From |
 |------|------------|
-| `harold/alerts.md` | blockers.md, events.md, the task manager, CRM freshness |
-| Weekly summary | task manager (completed / in progress), blockers.md, events.md, `vault/daily/` notes, memory's priorities |
+| `harold/alerts.md` | blockers.md, events.md, Harold's task list, CRM freshness |
+| Weekly summary | Harold's task list (completed / in progress), blockers.md, events.md, `vault/daily/` notes, memory's priorities |
 | `harold/search.db` | every markdown file (rebuilt by `bin/harold`; gitignored) |
 
 **Validation rule:** anything in a derived file that does not trace to its source is deleted from the derived file.

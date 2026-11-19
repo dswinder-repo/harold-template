@@ -12,7 +12,7 @@
 *Which tools Harold may use in which harness, and anything that must be initialized first. Examples:*
 
 - Calendar: [how Harold reads your calendar, e.g. the calendar connector, or "ask me"]
-- Task manager: [Linear by default; team key `[TEAM]`]
+- Tasks: Harold's task list (`bin/harold task`, or `task_list` / `task_create` / `task_update` on the connector)[; synced with Linear, Todoist, Asana or Notion if you use one]
 - CRM: the hosted connector (`crm_*` tools) or harold-mcp (`harold_*` tools), whichever this harness has. A connector write on a computer without CRM credentials: `bin/harold file crm '{...,"applied":"connector"}'`. CRM unreachable: queue with `bin/harold file crm` and say so.
 
 ---
