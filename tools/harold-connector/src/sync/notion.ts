@@ -52,10 +52,10 @@
 // page that is no longer in the configured data source (moved out, or another database entirely) reads as not found:
 // it stops syncing and nothing in Harold changes. The sync never deletes or trashes a Notion page.
 //
-// Webhooks (POST /webhooks/notion). When a subscription is created, Notion sends one unsigned request whose body is
+// Webhooks (POST /webhooks/notion). When a subscription is created, Notion sends one request whose body is
 // {"verification_token": "..."}; the owner pastes that token into Notion's Verify form, and every later event is
-// signed with it: X-Notion-Signature: sha256=<hex HMAC-SHA256 of the raw body>. Because the token request is
-// unsigned, anyone could send one, so it is accepted only while the owner has said one is expected
+// signed with it: X-Notion-Signature: sha256=<hex HMAC-SHA256 of the raw body>. The token request carries the very
+// token that signs it, so it cannot be checked and anyone could send one; it is accepted only while the owner has said one is expected
 // (sync_setup_notion webhook "expect", a 30-minute window); otherwise 403 and Notion's "Resend token" retries later.
 // The accepted token is kept in sync_state detail.webhook (never in sync_log or the function log) and shown to the
 // owner only when sync_setup_notion is asked to reveal it. Signatures are checked with NOTION_WEBHOOK_SECRET when it
