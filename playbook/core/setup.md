@@ -90,7 +90,7 @@ Then ask whether to remove the starter's example content (Jane Doe, Acme Corp, "
 
 ## Step 8: The CRM
 
-The CRM is part of Harold, not an add-on: every person the operator deals with is filed there as well as in the vault, and `bin/harold close` checks that each contact touched was filed. It is a Supabase database in the operator's own account, which the free plan covers.
+Harold has its own CRM, and it is part of Harold, not an add-on: every person the operator deals with is filed there as well as in the vault, and `bin/harold close` checks that each contact touched was filed. It is a Supabase database in the operator's own account, which the free plan covers.
 
 1. **The database.** The operator creates a Supabase project at supabase.com. In its SQL editor, they run the contents of `tools/harold-mcp/schema.sql` (you can show them the file or paste it for them).
 2. **The tools that reach it.** Choose one with the operator:
@@ -106,7 +106,7 @@ The CRM is part of Harold, not an add-on: every person the operator deals with i
    - Report how many were created, how many were skipped as duplicates, and how many rows could not be read and why.
 
    The optional CRM web app (step 9) also has a CSV import screen, if the operator prefers to do it there.
-5. **Harold's task list.** Tasks live in the same database, in a table called `tasks`. They work with no outside tool connected.
+5. **Harold's task list.** Harold has its own task list, in the same database, in a table called `tasks`; every task gets a ref such as `H-12`. It works with no outside tool connected.
    - **A database made just now** from `tools/harold-mcp/schema.sql` already has everything the task list needs. Nothing more to do.
    - **A database made before the task list existed** needs one more script. Tell the operator these steps in plain words:
      1. Open the Supabase project and choose **SQL Editor** in the left menu, then **New query**.
@@ -121,7 +121,7 @@ The CRM is part of Harold, not an add-on: every person the operator deals with i
 Offer each in turn, with one sentence on what it gives. "Skip for now" is always a good answer; each can be set up at any time by asking for it.
 
 - **The CRM web app** (`tools/harold-crm`): the CRM in a browser, with contacts, a pipeline, tasks and CSV import and export, on the same database. Steps: `tools/harold-crm/README.md`. Skip: the CRM works fully through the AI tool.
-- **Two-way sync with an outside task tool.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. For an operator who also uses Linear, Todoist, Asana or Notion, the connector can keep the task list and that tool in step, in both directions. Any mix of the four works at once. Steps: the sections "Optional: two-way sync with Linear", "... with Todoist", "... with Asana" and "... with Notion" below. Skip: tasks stay in Harold's task list only.
+- **Two-way sync with the task tool the operator already uses.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. Ask whether the operator uses Linear, Todoist, Asana or Notion. If they do, they keep using it: the hosted connector syncs Harold's task list with it in both directions, and any mix of the four works at once. Each sync needs the hosted connector. Steps: the sections "Optional: two-way sync with Linear", "... with Todoist", "... with Asana" and "... with Notion" below. Skip: tasks stay in Harold's task list only.
 - **The hosted connector**, if step 8 used harold-mcp: it adds access from chat apps and other computers. Skip: sessions in the workspace folder do everything.
 - **Scheduled jobs**: the morning brief written before the operator sits down, and the weekly, monthly and month-end housekeeping, run on GitHub Actions or any scheduler (README, "Scheduled jobs in the cloud"). Skip: the brief runs live when the operator says good morning, and housekeeping runs in sessions when it is due.
 - **More AI tools.** Harold already works in every harness listed in `AGENTS.md`; some need a one-time step (trusting the hooks, or copying a snippet into the user's own configuration). Ask which tools they use besides this one and do that step for each. Skip: the tool they are using now is enough.
@@ -131,7 +131,7 @@ Offer each in turn, with one sentence on what it gives. "Skip for now" is always
 Do this only if the operator uses Linear and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Linear and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
 
 **Tell the operator first, in plain words:**
-- Every task in the chosen Linear team is copied into Harold's task list, and every Harold task is copied into that team. A change on either side reaches the other within seconds. If the same field changes on both sides at once, the later change wins and Harold keeps a note of the conflict.
+- Every task in the chosen Linear team is copied into Harold's task list, and every Harold task is copied into that team. A change on either side reaches the other within seconds. Changes to different fields on the two sides are both kept. If the same field changed on both sides, the later change wins and Harold logs the conflict (`bin/harold task conflicts` lists them).
 - Linear's free plan has no private teams. Anyone in the Linear workspace can see the team's tasks. An operator who wants them private should use a Linear workspace of their own.
 
 1. **Create a Linear personal API key.** In Linear: click the workspace name (top left), choose **Settings**, then **Account**, then **Security & access**, then **Personal API keys**, then **Create key**. Name it "Harold". Copy the key. It starts with `lin_api_`. It is a secret: it goes only into the places in step 3, never into a file in the repository or the chat.
@@ -165,6 +165,7 @@ Do this only if the operator uses Todoist and wants the same tasks in both place
 
 **Tell the operator first, in plain words:**
 - Every open Todoist task is copied into Harold's task list, and every Harold task is copied into Todoist. A change in Harold reaches Todoist within seconds. A change in Todoist reaches Harold within seconds if you set up the webhook (step 5), otherwise within 10 minutes.
+- Changes to different fields on the two sides are both kept. If the same field changed on both sides, the later change wins and Harold logs the conflict (`bin/harold task conflicts` lists them).
 - Todoist has no "in progress" or "cancelled" state. Harold marks them with the labels `in-progress` and `cancelled` (a cancelled task is also completed). The operator's other labels are left alone.
 - The sync never deletes anything in Todoist. A task deleted in Todoist cancels the open Harold task.
 - The sync can cover every project, or one project only (step 2).
@@ -198,6 +199,7 @@ Do this only if the operator uses Asana and wants the same tasks in both places.
 
 **Tell the operator first, in plain words:**
 - Tasks in the chosen Asana workspace are copied into Harold's task list, and every Harold task is copied into Asana. A change in Harold reaches Asana within seconds. A change in Asana reaches Harold within seconds if you set up the webhooks (step 6), otherwise within 10 minutes.
+- Changes to different fields on the two sides are both kept. If the same field changed on both sides, the later change wins and Harold logs the conflict (`bin/harold task conflicts` lists them).
 - Asana has no priority on a task, so priority is not synced at all. Harold's priority is never sent to Asana and never changed by it.
 - Asana has no "in progress" or "cancelled" state. Harold marks them with the tags `in-progress` and `cancelled` (a cancelled task is also completed). The tags are created in the workspace the first time they are needed. The operator's other tags are left alone.
 - The sync never deletes anything in Asana. A task deleted in Asana is seen only through the webhook, which cancels the open Harold task.
@@ -235,6 +237,7 @@ Do this only if the operator uses Notion and wants the same tasks in both places
 
 **Tell the operator first, in plain words:**
 - The tasks live in one Notion database, which the operator chooses. Its pages are copied into Harold's task list, and every Harold task becomes a page in that database. A change in Harold reaches Notion within seconds. A change in Notion reaches Harold within seconds if you set up the webhook (step 7), otherwise within 10 minutes.
+- Changes to different fields on the two sides are both kept. If the same field changed on both sides, the later change wins and Harold logs the conflict (`bin/harold task conflicts` lists them).
 - Notion databases are free-form, so Harold asks which property holds each field (title, status, due date, priority, notes, project) and which option means to do, in progress, done and cancelled. You propose a mapping in plain words, and nothing is saved until the operator says yes.
 - Without the webhook, a page moved to Notion's trash is not noticed by the catch-up. Only the webhook cancels the Harold task.
 - The sync never deletes a page.
