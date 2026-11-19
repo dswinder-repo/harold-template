@@ -58,12 +58,17 @@ export class MemoryStore implements SyncStore {
     if (this.links.some(l => l.provider === link.provider && (l.external_id === link.external_id || l.task_id === link.task_id))) throw new DuplicateError("duplicate key");
     this.links.push({ ...link });
   }
-  async updateLink(p: string, e: string, patch: Partial<LinkRow>) { const l = this.links.find(x => x.provider === p && x.external_id === e); if (l) Object.assign(l, patch); }
+  async updateLink(p: string, e: string, patch: Partial<LinkRow>) {
+    const l = this.links.find(x => x.provider === p && x.external_id === e);
+    if (patch.external_id && patch.external_id !== e && this.links.some(x => x.provider === p && x.external_id === patch.external_id)) throw new DuplicateError("duplicate key");
+    if (l) Object.assign(l, patch);
+  }
+  async pendingLinks(p: string) { return this.links.filter(l => l.provider === p && l.synced_at === null).map(l => ({ ...l })); }
   async deleteLink(p: string, e: string) { this.links = this.links.filter(x => !(x.provider === p && x.external_id === e)); }
   async log(e: LogEntry) { this.logs.push(e); }
   async getState(p: string) { const s = this.state.get(p); return s ? { cursor: s.cursor, detail: { ...s.detail } } : null; }
   async setState(p: string, s: SyncStateRow) { this.state.set(p, { cursor: s.cursor, detail: { ...s.detail } }); }
-  async haroldChangedTasks() { return [...this.tasks.values()].filter(t => t.changed_by === "harold").map(t => ({ ...t })); }
+  async haroldChangedTasks(except?: string) { return [...this.tasks.values()].filter(t => except ? t.changed_by !== except : t.changed_by === "harold").map(t => ({ ...t })); }
   async openTasks() { return [...this.tasks.values()].filter(t => t.status === "pending" || t.status === "in_progress").map(t => ({ ...t })); }
 }
 

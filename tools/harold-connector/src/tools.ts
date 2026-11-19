@@ -17,6 +17,8 @@ import { googleAccountsFromEnv, type GoogleConfig } from "./google.js";
 import type { FetchLike } from "./identity.js";
 import { localParts, truncate } from "./text.js";
 import { parseProjects } from "./projects.js";
+import { setupNotion } from "./sync/notion-setup.js";
+import { syncStoreFromEnv, type SyncStore } from "./sync/store.js";
 
 export interface ToolDeps {
   repoFor: (ctx: ServerContext) => HaroldRepo;
@@ -27,6 +29,10 @@ export interface ToolDeps {
   /** fetch for Google's APIs; injected in tests. */
   googleFetch?: FetchLike;
   googleAccounts?: () => GoogleConfig[];
+  /** The task sync's store (sync_state holds the Notion setup); default: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. */
+  syncStore?: () => SyncStore | null;
+  /** fetch for Notion's API; injected in tests. */
+  notionFetch?: FetchLike;
 }
 
 export function githubTokenFrom(ctx: ServerContext): string {
@@ -43,9 +49,9 @@ export const defaultDeps: ToolDeps = {
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 
-// The calendar tools reach a third-party service (Google), not only the owner's Harold.
-const CAL_READ = { ...READ, openWorldHint: true } as const;
-const CAL_WRITE = { ...WRITE, openWorldHint: true } as const;
+// The calendar tools reach Google and the Notion setup tool reaches Notion: third-party services, not only the owner's Harold.
+const OPEN_READ = { ...READ, openWorldHint: true } as const;
+const OPEN_WRITE = { ...WRITE, openWorldHint: true } as const;
 
 const out = (text: string, isError = false): CallToolResult => ({ content: [{ type: "text", text: truncate(text, MAX_RESULT_CHARS - 500, "result truncated") }], ...(isError ? { isError: true } : {}) });
 
@@ -413,13 +419,39 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     annotations: WRITE,
   }, async (args, ctx) => guard(() => tasks.updateTask(deps.supabase(), projectsFor(ctx), args)));
 
+  // ───────────── task sync setup ─────────────
+
+  const nullableName = z.string().max(200).nullable().optional();
+  server.registerTool("sync_setup_notion", {
+    title: "Task sync: set up Notion",
+    description: "Set up the two-way sync between Harold's task list and a Notion database, in plain English the owner confirms. With no arguments: lists the Notion databases shared with the integration, the saved setup and the webhook state, and proposes a mapping when only one database is shared. With database (a name, id or Notion URL): proposes which property holds each of Harold's fields (title; status, a Status or Select property, with which option means to do / in progress / done / cancelled; due date; priority; notes, a text property; project, a select) and checks it against the real properties. Show the proposal to the owner and save only after the owner says yes, by calling again with confirm: true and the same choices; to change a choice pass fields, status_map or priority_map. webhook: 'expect' lets Notion's one-time verification token in for 30 minutes (then create the subscription in Notion); 'reveal_token' shows that token once, for the owner to paste into Notion's Verify form. Nothing is written to Notion by this tool.",
+    inputSchema: z.object({
+      database: z.string().max(500).optional().describe("The Notion database holding the tasks: its name, id or URL"),
+      fields: z.object({
+        title: z.string().max(200).optional(), status: z.string().max(200).optional(),
+        due: nullableName, priority: nullableName, notes: nullableName, project: nullableName,
+      }).optional().describe("Property names to use instead of the proposal; 'none' (or null) for an optional field not to sync it"),
+      status_map: z.object({ pending: nullableName, in_progress: nullableName, completed: nullableName, cancelled: nullableName }).optional()
+        .describe("Which status option Harold writes for each of its statuses"),
+      priority_map: z.object({ high: nullableName, medium: nullableName, low: nullableName }).optional()
+        .describe("Which priority option means high, medium and low"),
+      confirm: z.boolean().optional().describe("true only after the owner has said yes to the proposed mapping: saves it"),
+      webhook: z.enum(["expect", "reveal_token"]).optional().describe("expect: accept Notion's verification token for 30 minutes; reveal_token: show the received token"),
+    }),
+    annotations: OPEN_WRITE,
+  }, async args => guard(() => setupNotion(args, {
+    store: deps.syncStore || syncStoreFromEnv,
+    fetch: deps.notionFetch || ((i, init) => fetch(i, init)),
+    now: () => now().getTime(),
+  })));
+
   // ───────────── the calendars ─────────────
 
   server.registerTool("calendar_list", {
     title: "Calendar: list calendars",
     description: "List the calendars the connector's own Google Calendar access can read: name, id, whether primary, access role and time zone. This access belongs to the connector, so it works the same from every connected tool. Read-only. Says plainly when no calendar is configured.",
     inputSchema: z.object({}),
-    annotations: CAL_READ,
+    annotations: OPEN_READ,
   }, async () => guard(() => calendar.listCalendars(googleFetch, googleAccounts())));
 
   server.registerTool("calendar_events", {
@@ -430,7 +462,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       to: z.string().optional().describe("YYYY-MM-DD, inclusive, default from + 6 days; at most a 31-day span"),
       calendar: z.string().max(200).optional().describe("Only calendars whose name contains this text, or an exact calendar id"),
     }),
-    annotations: CAL_READ,
+    annotations: OPEN_READ,
   }, async (args) => guard(() => calendar.listEvents(googleFetch, googleAccounts(), args, now())));
 
   // ───────────── event writes (review only: not deployed, scope not granted) ─────────────
@@ -447,7 +479,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       description: z.string().max(2000).optional(),
       attendees: z.array(z.string().email()).max(50).optional().describe("Attendee email addresses"),
     }),
-    annotations: CAL_WRITE,
+    annotations: OPEN_WRITE,
   }, async (args) => guard(() => calendar.createEvent(googleFetch, googleAccounts(), args)));
 
   server.registerTool("calendar_event_update", {
@@ -463,7 +495,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       description: z.string().max(2000).optional(),
       attendees: z.array(z.string().email()).max(50).optional().describe("Full replacement attendee list (emails)"),
     }),
-    annotations: CAL_WRITE,
+    annotations: OPEN_WRITE,
   }, async (args) => guard(() => calendar.updateEvent(googleFetch, googleAccounts(), args)));
 
   server.registerTool("calendar_event_cancel", {
@@ -473,7 +505,7 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
       eventId: z.string().max(300).describe("The event id to cancel"),
       calendar: z.string().max(200).optional().describe("Calendar name substring or exact id; omit only when exactly one calendar is connected - with several, the owner is asked to choose first"),
     }),
-    annotations: CAL_WRITE,
+    annotations: OPEN_WRITE,
   }, async (args) => guard(() => calendar.cancelEvent(googleFetch, googleAccounts(), args)));
 }
 
@@ -482,5 +514,6 @@ export const TOOL_NAMES = [
   "harold_capture", "harold_note", "harold_update", "harold_learning", "harold_person_create", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
   "task_list", "task_create", "task_update",
   "calendar_list", "calendar_events", "calendar_event_create", "calendar_event_update", "calendar_event_cancel",
+  "sync_setup_notion",
 ];
 

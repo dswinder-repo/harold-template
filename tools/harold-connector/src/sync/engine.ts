@@ -17,6 +17,18 @@
 // synced_at is set to the Harold row's own updated_at (and external_updated_at to the item's updatedAt)
 // rather than to the wall clock: both stamps then come from the clock that wrote them, so app/DB clock
 // skew can neither hide an edit nor invent one, and an edit landing mid-sync is still seen next time.
+//
+// Several providers. One engine runs per provider. "Harold changed", from one provider's point of view, means
+// the row's last change came from anyone but that provider (changed_by <> provider): the owner, or another
+// provider whose change this one has not seen yet. With a single provider that is exactly changed_by = 'harold'.
+//
+// Providers that cannot take a caller-chosen id (Todoist). The link row is still written before the item is
+// created, under a placeholder id `pending:<epoch ms>:<uuid>`, and re-keyed to the real id once the provider
+// answers. The placeholder doubles as the provider's idempotency key, so a create retried after a crash returns
+// the item already made instead of a second one. A webhook or catchup that sees the new item before the re-key
+// finds no link for its real id; it then looks for a pending placeholder link whose task has the same title and
+// waits (outcome 'pending') instead of importing a twin. A placeholder older than PENDING_RECOVER_MS is
+// treated as abandoned: catchup re-issues the create under the same key, or a pull of the matching item adopts it.
 
 import { createHash, randomUUID } from "node:crypto";
 import type { SyncProvider } from "./provider.js";
@@ -46,6 +58,14 @@ export function derivedTaskId(provider: string, externalId: string): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${v}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
+export const PLACEHOLDER_PREFIX = "pending:";
+export const PENDING_RECOVER_MS = 120_000;
+export const placeholderId = (now: number) => `${PLACEHOLDER_PREFIX}${now}:${randomUUID()}`;
+export const isPlaceholder = (id: string) => id.startsWith(PLACEHOLDER_PREFIX);
+/** The epoch ms a placeholder was made at (0 when unreadable, so it counts as old). */
+const placeholderAge = (id: string, now: number) => now - (Number(id.slice(PLACEHOLDER_PREFIX.length).split(":")[0]) || 0);
+const sameTitle = (a: string | null | undefined, b: string | null | undefined) => (a || "").trim() === (b || "").trim();
+
 export const fieldsOf = (t: TaskRow): HaroldFields => ({ title: t.title, notes: t.notes, status: t.status, priority: t.priority, due: t.due, project: t.project });
 
 const normNotes = (s: string | null) => (s || "").trim() || null;
@@ -54,12 +74,13 @@ const normNotes = (s: string | null) => (s || "").trim() || null;
 export function diffFromItem(h: HaroldFields, item: ExternalItem): Partial<HaroldFields> {
   const f = item.fields;
   const out: Partial<HaroldFields> = {};
-  if (h.title !== f.title) out.title = f.title;
-  if (normNotes(h.notes) !== normNotes(f.notes)) out.notes = f.notes;
-  if (h.status !== f.status) out.status = f.status;
-  if (h.priority !== f.priority) out.priority = f.priority;
-  if (h.due !== f.due) out.due = f.due;
-  if (!item.projectUnmapped && (h.project || "").toLowerCase() !== (f.project || "").toLowerCase()) out.project = f.project;
+  const held = (k: FieldKey) => !item.unmapped?.includes(k);
+  if (h.title !== f.title && held("title")) out.title = f.title;
+  if (normNotes(h.notes) !== normNotes(f.notes) && held("notes")) out.notes = f.notes;
+  if (h.status !== f.status && held("status")) out.status = f.status;
+  if (h.priority !== f.priority && held("priority")) out.priority = f.priority;
+  if (h.due !== f.due && held("due")) out.due = f.due;
+  if (!item.projectUnmapped && held("project") && (h.project || "").toLowerCase() !== (f.project || "").toLowerCase()) out.project = f.project;
   return out;
 }
 
@@ -88,7 +109,16 @@ export function agreedFields(h: HaroldFields, item: ExternalItem): HaroldFields 
   return { ...h, ...diffFromItem(h, item) };
 }
 
-export interface EngineOptions { teamKey: string; importWindowDays?: number; defaultLookbackMs?: number; now?: () => number }
+export interface EngineOptions {
+  /** The provider's team / workspace / project key; items with a different key are ignored. null: no restriction. */
+  teamKey: string | null;
+  importWindowDays?: number; defaultLookbackMs?: number; now?: () => number;
+}
+
+const outOfScope = (key: string | null | undefined, want: string | null) => !!key && !!want && key.toUpperCase() !== want.toUpperCase();
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** An HTTP 4xx other than 429 from a provider: retrying the same request will not help. */
+const definitive = (e: unknown) => { const st = (e as { status?: unknown })?.status; return typeof st === "number" && st >= 400 && st < 500 && st !== 429; };
 
 export class SyncEngine {
   private now: () => number;
@@ -96,6 +126,9 @@ export class SyncEngine {
     this.now = opts.now || Date.now;
   }
   private get p() { return this.provider.name; }
+  private get chosenIds() { return this.provider.callerChosenIds !== false; }
+  /** Whether the row's last change is one this provider has not made itself (see the header). */
+  private notMine(task: TaskRow) { return task.changed_by !== null && task.changed_by !== this.p; }
 
   private log(kind: Parameters<SyncStore["log"]>[0]["kind"], taskId: string | null | undefined, externalId: string | null | undefined, detail: Record<string, unknown>) {
     return this.store.log({ kind, provider: this.p, task_id: taskId ?? null, external_id: externalId ?? null, detail });
@@ -105,10 +138,16 @@ export class SyncEngine {
 
   /** One item seen on the provider's side (webhook, catchup or import). */
   async fromProvider(item: ExternalItem, kind: "pull" | "import" = "pull"): Promise<Result> {
-    if (item.teamKey && item.teamKey.toUpperCase() !== this.opts.teamKey.toUpperCase()) return { outcome: "skipped" };
+    if (outOfScope(item.teamKey, this.opts.teamKey)) return { outcome: "skipped" };
     if (item.removed) return this.remove(item.externalId, item.updatedAt);
     const link = await this.store.findLink(this.p, item.externalId);
-    if (!link) return this.pullNew(item, kind);
+    if (!link) {
+      if (!this.chosenIds) {
+        const waiting = await this.pendingCreateFor(item);
+        if (waiting) return waiting;
+      }
+      return this.pullNew(item, kind);
+    }
     if (link.synced_at === null) return { outcome: "pending", taskId: link.task_id }; // our own create is still in flight
     const task = await this.store.getTask(link.task_id);
     if (!task) {
@@ -117,6 +156,42 @@ export class SyncEngine {
     }
     return this.merge(task, link, item);
   }
+
+  /** An item with no link, from a provider without caller-chosen ids: is it one of our own creates still in flight? */
+  private async pendingCreateFor(item: ExternalItem): Promise<Result | null> {
+    for (const l of await this.store.pendingLinks(this.p)) {
+      if (!isPlaceholder(l.external_id)) continue;
+      const task = await this.store.getTask(l.task_id);
+      if (!task || !sameTitle(task.title, item.fields.title)) continue;
+      if (placeholderAge(l.external_id, this.now()) < PENDING_RECOVER_MS) return { outcome: "pending", taskId: task.id };
+      // An abandoned create whose item did get made: adopt it rather than import a twin.
+      return this.adopt(task, l.external_id, item);
+    }
+    return null;
+  }
+
+  /** Re-keys a placeholder link to the item it turned out to be, then reconciles the two like a first sync. */
+  private async adopt(task: TaskRow, placeholder: string, item: ExternalItem): Promise<Result> {
+    const patch: Partial<LinkRow> = { external_id: item.externalId, external_key: item.externalKey, external_url: item.externalUrl, external_updated_at: item.updatedAt, synced_at: new Date(0).toISOString(), synced_fields: null };
+    if (!(await this.rekey(task.id, placeholder, patch, item))) return { outcome: "error", taskId: task.id };
+    return this.merge(task, { task_id: task.id, provider: this.p, external_key: null, external_url: null, external_updated_at: null, synced_at: null, synced_fields: null, ...patch } as LinkRow, item);
+  }
+
+  /** Moves a placeholder link onto the real external id. False (and logged) when that id is already linked elsewhere. */
+  private async rekey(taskId: string, placeholder: string, patch: Partial<LinkRow>, item: ExternalItem): Promise<boolean> {
+    try {
+      await this.store.updateLink(this.p, placeholder, patch);
+      return true;
+    } catch (e) {
+      if (!(e instanceof DuplicateError)) throw e;
+      await this.store.deleteLink(this.p, placeholder);
+      await this.log("error", taskId, item.externalId, { action: "create", key: item.externalKey, reason: `the ${this.noun} created for this task is already linked to another Harold task (imported before the create was recorded)` });
+      return false;
+    }
+  }
+
+  private get display() { return this.provider.displayName || this.p; }
+  private get noun() { return this.provider.itemNoun || "item"; }
 
   private async pullNew(item: ExternalItem, kind: "pull" | "import"): Promise<Result> {
     const id = derivedTaskId(this.p, item.externalId);
@@ -139,7 +214,9 @@ export class SyncEngine {
     } catch (e) { if (e instanceof DuplicateError) return { outcome: "skipped", taskId: task.id }; throw e; }
     await this.log(kind, task.id, item.externalId, {
       key: item.externalKey, title: item.fields.title, project: item.fields.project,
-      ...(item.providerProject && !item.fields.project ? { linear_project: item.providerProject, unmapped_project: true } : item.providerProject ? { linear_project: item.providerProject } : {}),
+      // provider_project is the generic key; `<provider>_project` (linear_project) is kept for existing readers.
+      ...(item.providerProject ? { provider_project: item.providerProject, [`${this.p}_project`]: item.providerProject } : {}),
+      ...(item.providerProject && !item.fields.project ? { unmapped_project: true } : {}),
     });
     return { outcome: kind === "import" ? "imported" : "pulled", taskId: task.id };
   }
@@ -160,7 +237,7 @@ export class SyncEngine {
   async webhook(events: WebhookEvent[]): Promise<Result[]> {
     const out: Result[] = [];
     for (const ev of events) {
-      if (ev.teamKey && ev.teamKey.toUpperCase() !== this.opts.teamKey.toUpperCase()) { out.push({ outcome: "skipped" }); continue; }
+      if (outOfScope(ev.teamKey, this.opts.teamKey)) { out.push({ outcome: "skipped" }); continue; }
       if (ev.action === "remove") { out.push(await this.remove(ev.externalId, ev.updatedAt)); continue; }
       // Re-read the issue rather than trusting the payload: always the current version, never a replayed one.
       const item = await this.provider.getOne(ev.externalId);
@@ -173,9 +250,21 @@ export class SyncEngine {
 
   /** A Harold change (the pg_net trigger's /sync/push, or catchup). */
   async fromHarold(task: TaskRow, o: { recoverStalePending?: boolean } = {}): Promise<Result> {
-    if (task.changed_by !== "harold") return { outcome: "skipped", taskId: task.id }; // the sync's own write: never echoed
+    if (!this.notMine(task)) return { outcome: "skipped", taskId: task.id }; // this provider's own write: never echoed
     let link = await this.store.linkForTask(this.p, task.id);
     if (!link) return this.createExternal(task);
+    if (link.synced_at === null && isPlaceholder(link.external_id)) {
+      // A create without a caller-chosen id that was never confirmed. Wait while it may still be in flight; after
+      // that (catchup only) re-issue it under the same idempotency key, which returns the item if it was made.
+      if (!o.recoverStalePending || placeholderAge(link.external_id, this.now()) < PENDING_RECOVER_MS) return { outcome: "pending", taskId: task.id };
+      // Finished before its create was confirmed: re-issuing could make an item only to close it. The link stays, so
+      // if the item was made after all, a pull of it adopts the link instead of importing a twin.
+      if (!OPEN_STATUSES.includes(task.status)) return { outcome: "skipped", taskId: task.id };
+      let item: ExternalItem;
+      try { item = await this.provider.create(fieldsOf(task), link.external_id); }
+      catch (e) { return this.createFailed(task, link.external_id, e); }
+      return this.adopt(task, link.external_id, item);
+    }
     if (link.synced_at === null) {
       // A create that has not been confirmed. If the item exists, adopt it; if it never got made, start over (catchup only).
       const made = await this.provider.getOne(link.external_id);
@@ -191,7 +280,7 @@ export class SyncEngine {
     }
     const item = await this.provider.getOne(link.external_id);
     if (!item || item.removed) {
-      await this.log("skip", task.id, link.external_id, { reason: "the linked issue no longer exists in Linear", key: link.external_key });
+      await this.log("skip", task.id, link.external_id, { reason: `the linked ${this.noun} no longer exists in ${this.display}`, key: link.external_key });
       return { outcome: "skipped", taskId: task.id };
     }
     return this.merge(task, link, item);
@@ -199,8 +288,9 @@ export class SyncEngine {
 
   private async createExternal(task: TaskRow): Promise<Result> {
     if (!OPEN_STATUSES.includes(task.status)) return { outcome: "skipped", taskId: task.id };
-    const externalId = randomUUID();
-    // The link exists before the issue does, so the provider's own webhook for the new issue finds it and waits.
+    // A caller-chosen id where the provider takes one; otherwise a placeholder that is re-keyed after the create.
+    const externalId = this.chosenIds ? randomUUID() : placeholderId(this.now());
+    // The link exists before the item does, so the provider's own webhook for the new item finds it and waits.
     try {
       await this.store.insertLink({ task_id: task.id, provider: this.p, external_id: externalId, external_key: null, external_url: null, external_updated_at: null, synced_at: null, synced_fields: null });
     } catch (e) { if (e instanceof DuplicateError) return { outcome: "pending", taskId: task.id }; throw e; }
@@ -208,20 +298,28 @@ export class SyncEngine {
     try {
       item = await this.provider.create(fieldsOf(task), externalId);
     } catch (e) {
-      await this.store.deleteLink(this.p, externalId);
-      await this.log("error", task.id, null, { action: "create", error: e instanceof Error ? e.message : String(e) });
-      return { outcome: "error", taskId: task.id };
+      return this.createFailed(task, externalId, e);
     }
-    await this.store.updateLink(this.p, externalId, { external_key: item.externalKey, external_url: item.externalUrl, external_updated_at: item.updatedAt, synced_at: task.updated_at, synced_fields: agreedFields(fieldsOf(task), item) });
-    await this.log("push", task.id, externalId, { action: "create", key: item.externalKey, title: task.title, project: task.project });
+    const agreed = { external_key: item.externalKey, external_url: item.externalUrl, external_updated_at: item.updatedAt, synced_at: task.updated_at, synced_fields: agreedFields(fieldsOf(task), item) };
+    if (this.chosenIds) await this.store.updateLink(this.p, externalId, agreed);
+    else if (!(await this.rekey(task.id, externalId, { external_id: item.externalId, ...agreed }, item))) return { outcome: "error", taskId: task.id };
+    await this.log("push", task.id, item.externalId, { action: "create", key: item.externalKey, title: task.title, project: task.project });
     return { outcome: "created", taskId: task.id };
+  }
+
+  private async createFailed(task: TaskRow, externalId: string, e: unknown): Promise<Result> {
+    // A caller-chosen id is simply dropped. A placeholder is the idempotency key: it is kept (so the retry cannot make
+    // a second item if this one was made after all) unless the provider refused the request outright.
+    if (this.chosenIds || definitive(e)) await this.store.deleteLink(this.p, externalId);
+    await this.log("error", task.id, null, { action: "create", error: errMsg(e) });
+    return { outcome: "error", taskId: task.id };
   }
 
   // ───────────── both ─────────────
 
   async merge(task: TaskRow, link: LinkRow, item: ExternalItem): Promise<Result> {
-    const haroldChanged = task.changed_by === "harold" && ts(task.updated_at) > ts(link.synced_at);
-    const providerChanged = ts(item.updatedAt) > ts(link.external_updated_at);
+    const haroldChanged = this.notMine(task) && ts(task.updated_at) > ts(link.synced_at);
+    const providerChanged = ts(item.updatedAt) > ts(link.external_updated_at) || this.sameMinuteEdit(link, item);
     if (!haroldChanged && !providerChanged) return { outcome: "unchanged", taskId: task.id };
     const h = fieldsOf(task);
     if (sameAsItem(h, item)) {
@@ -244,6 +342,12 @@ export class SyncEngine {
     return haroldChanged ? this.apply(task, item, diffToPush(h, item), {}) : this.apply(task, item, {}, diffFromItem(h, item));
   }
 
+  /** A coarse-timestamp provider (Notion): the item's timestamp equals the agreed one, yet its fields moved on. */
+  private sameMinuteEdit(link: LinkRow, item: ExternalItem): boolean {
+    if (!this.provider.coarseTimestamps || !link.synced_fields || ts(item.updatedAt) !== ts(link.external_updated_at)) return false;
+    return FIELD_KEYS.some(k => !(k === "project" && item.projectUnmapped) && !item.unmapped?.includes(k) && !sameField(k, item.fields[k], link.synced_fields![k]));
+  }
+
   /**
    * Field-level three-way merge against the values both sides last agreed on (link.synced_fields).
    * A field changed on one side only is taken from that side; fields changed on different sides are merged
@@ -259,7 +363,7 @@ export class SyncEngine {
     for (const k of FIELD_KEYS) {
       const hD = haroldChanged && !sameField(k, h[k], base[k]);
       // A provider project that maps to no Harold project says nothing about Harold's project.
-      const lD = providerChanged && !(k === "project" && item.projectUnmapped) && !sameField(k, l[k], base[k]);
+      const lD = providerChanged && !(k === "project" && item.projectUnmapped) && !item.unmapped?.includes(k) && !sameField(k, l[k], base[k]);
       if (hD && lD && !sameField(k, h[k], l[k])) {
         conflicts.push({ field: k, harold: h[k], [this.p]: l[k], base: base[k], winner: later === "harold" ? "harold" : this.p });
         if (later === "harold") set(toPush, k, h[k]); else set(toPull, k, l[k]);
@@ -305,8 +409,21 @@ export class SyncEngine {
     const counts = zeroCounts();
     const startedAt = this.now();
     const state = (await this.store.getState(this.p)) ?? { cursor: null, detail: {} };
+    const lookback = new Date(startedAt - (this.opts.defaultLookbackMs ?? 86_400_000)).toISOString();
     const base = state.cursor ?? new Date(startedAt - (o.import ? 0 : this.opts.defaultLookbackMs ?? 86_400_000)).toISOString();
-    const items = o.import ? await this.provider.listForImport(this.opts.importWindowDays ?? 30) : await this.provider.listChangedSince(base);
+    // A provider with its own opaque cursor (listChanges) keeps it in sync_state.detail.cursor_token, since
+    // sync_state.cursor is a timestamp column; there sync_state.cursor only records when the last catchup ran.
+    const opaque = typeof this.provider.listChanges === "function";
+    const token = typeof state.detail.cursor_token === "string" ? state.detail.cursor_token : null;
+    let nextToken: string | null = token;
+    let items: ExternalItem[];
+    if (o.import) {
+      const got = await this.provider.listForImport(this.opts.importWindowDays ?? 30);
+      if (Array.isArray(got)) items = got; else { items = got.items; nextToken = got.cursor ?? token; }
+    } else if (opaque) {
+      const got = await this.provider.listChanges!(token, lookback);
+      items = got.items; nextToken = got.cursor ?? token;
+    } else items = await this.provider.listChangedSince(base);
 
     const handled = new Set<string>();
     let newest: string | null = null;
@@ -323,7 +440,7 @@ export class SyncEngine {
     }
 
     // Harold rows whose last change is Harold's own and that the provider has not seen yet.
-    const tasks = (await this.store.haroldChangedTasks()).filter(t => !handled.has(t.id));
+    const tasks = (await this.store.haroldChangedTasks(this.p)).filter(t => !handled.has(t.id));
     const links = new Map((await this.store.linksForTasks(this.p, tasks.map(t => t.id))).map(l => [l.task_id, l]));
     for (const t of tasks) {
       const link = links.get(t.id);
@@ -342,11 +459,15 @@ export class SyncEngine {
     // overlap: an issue edited while we paged is then picked up next time (re-reading is harmless).
     const ceiling = new Date(startedAt - 5_000).toISOString();
     const candidate = newest && ts(newest) > ts(ceiling) ? ceiling : newest;
-    const cursor = laterIso(o.import ? (state.cursor ?? ceiling) : base, candidate);
+    const cursor = opaque ? ceiling : laterIso(o.import ? (state.cursor ?? ceiling) : base, candidate);
     const latest = (await this.store.getState(this.p)) ?? state;
     await this.store.setState(this.p, {
       cursor,
-      detail: { ...latest.detail, last_catchup_at: new Date(startedAt).toISOString(), last_counts: counts, ...(o.import ? { imported_at: new Date(startedAt).toISOString() } : {}) },
+      detail: {
+        ...latest.detail, last_catchup_at: new Date(startedAt).toISOString(), last_counts: counts,
+        ...(o.import ? { imported_at: new Date(startedAt).toISOString() } : {}),
+        ...(opaque || nextToken !== token ? { cursor_token: nextToken } : {}),
+      },
     });
     return { counts, cursor, previousCursor: state.cursor };
   }

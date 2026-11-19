@@ -1,0 +1,13 @@
+{
+  "sync_token": "GSg4kDBAKWU7TZA_a-gcuSpxmO1lXT5bhLqUGd1F-AH69_qKEdkN_fJoBq3c",
+  "sync_status": {
+    "32eaa699-e9d7-47ed-91ea-e58d475791f1": {
+      "error_code": 15,
+      "error": "Invalid temporary id",
+      "error_tag": "INVALID_TEMPID",
+      "http_code": 400,
+      "error_extra": {}
+    }
+  },
+  "temp_id_mapping": {}
+}

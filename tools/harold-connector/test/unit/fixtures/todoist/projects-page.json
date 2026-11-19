@@ -1,0 +1,7 @@
+{
+  "results": [
+    { "id": "6Jf8VQXxpwv56VQ7", "name": "Inbox", "inbox_project": true, "is_deleted": false, "is_archived": false, "color": "grey", "parent_id": null, "child_order": 0, "updated_at": "2025-01-21T21:28:43Z" },
+    { "id": "6AcmePilot00000", "name": "Acme Pilot", "inbox_project": false, "is_deleted": false, "is_archived": false, "color": "blue", "parent_id": null, "child_order": 1, "updated_at": "2025-01-21T21:28:43Z" }
+  ],
+  "next_cursor": null
+}

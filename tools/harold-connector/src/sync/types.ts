@@ -67,11 +67,19 @@ export interface ExternalItem {
   teamKey: string | null;
   /** Deleted (trashed) on the provider's side. */
   removed: boolean;
+  /** Provider-specific state the provider needs back in update() (e.g. Todoist's labels); the engine never reads it. */
+  extra?: Record<string, unknown>;
+  /** Fields this provider cannot hold at all (Asana has no priority): the engine never pulls them and never counts a
+   *  difference in them as a change, so Harold's own value is left alone. */
+  unmapped?: FieldKey[];
 }
 
 export type WebhookAction = "create" | "update" | "remove";
 export interface WebhookEvent { action: WebhookAction; externalId: string; updatedAt: string | null; teamKey: string | null }
-export type VerifyResult = { ok: true; events: WebhookEvent[] } | { ok: false; status: number; reason: string };
+/** `reply`: a webhook handshake the provider answers itself (Asana: 200 with the secret echoed in a header); the route
+ *  sends it as is and runs no sync. */
+export interface WebhookReply { status: number; headers: Record<string, string> }
+export type VerifyResult = { ok: true; events: WebhookEvent[]; reply?: WebhookReply } | { ok: false; status: number; reason: string };
 
 /** Milliseconds of a timestamp; Postgres' microseconds are cut to milliseconds. Missing -> -Infinity. */
 export const ts = (s: string | null | undefined): number => {

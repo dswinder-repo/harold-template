@@ -120,7 +120,7 @@ export function createApp(opts: AppOptions = {}) {
   app.all("/mcp", c => authed(c.req.raw));
   app.all("/mcp/", c => authed(new Request(c.req.url.replace(/\/mcp\/(\?|$)/, "/mcp$1"), c.req.raw)));
 
-  // Two-way task sync with Linear (src/sync): webhook in, push and catchup called by Supabase.
+  // Two-way task sync with each configured provider, Linear, Todoist, Asana and Notion (src/sync): webhooks in, push and catchup called by Supabase.
   registerSyncRoutes(app, sync);
 
   app.notFound(c => c.text("Not found", 404));

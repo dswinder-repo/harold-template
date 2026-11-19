@@ -15,7 +15,9 @@
     "test:e2e:read": "tsx test/e2e/read.e2e.ts",
     "test:e2e:write": "tsx test/e2e/write.e2e.ts",
     "test:e2e:crm": "tsx test/e2e/crm-read.e2e.ts",
-    "sync:import": "tsx scripts/linear-import.ts"
+    "sync:import": "tsx scripts/linear-import.ts",
+    "sync:asana-webhook": "tsx scripts/asana-webhook.ts",
+    "sync:live-test": "LIVE_TEST=1 NODE_USE_ENV_PROXY=1 tsx scripts/live-test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",

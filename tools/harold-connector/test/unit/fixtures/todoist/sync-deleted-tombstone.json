@@ -1,0 +1,38 @@
+{
+  "full_sync": false,
+  "items": [
+    {
+      "added_at": "1970-01-01T00:00:00.000000Z",
+      "added_by_uid": null,
+      "assigned_by_uid": null,
+      "checked": false,
+      "child_order": 0,
+      "completed_at": null,
+      "completed_by_uid": null,
+      "completed_count": 0,
+      "content": "",
+      "day_order": -1,
+      "deadline": null,
+      "description": "",
+      "due": null,
+      "duration": null,
+      "id": "6TdDeleted000001",
+      "is_collapsed": false,
+      "is_deleted": true,
+      "labels": [],
+      "note_count": 0,
+      "order_key": null,
+      "parent_id": null,
+      "postponed_count": 0,
+      "priority": 1,
+      "project_id": "2222222222222222",
+      "responsible_uid": null,
+      "section_id": null,
+      "updated_at": null,
+      "user_id": "00000000"
+    }
+  ],
+  "sync_status": {},
+  "sync_token": "<sync-token>",
+  "temp_id_mapping": {}
+}

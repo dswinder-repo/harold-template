@@ -23,13 +23,17 @@ export interface SyncStore {
   linksForTasks(provider: string, taskIds: string[]): Promise<LinkRow[]>;
   /** Throws DuplicateError when (provider, external_id) or (task_id, provider) already exists. */
   insertLink(link: LinkRow): Promise<void>;
+  /** A patch may change external_id (re-keying a placeholder link); throws DuplicateError when that id is taken. */
   updateLink(provider: string, externalId: string, patch: Partial<LinkRow>): Promise<void>;
+  /** Links of one provider whose create has not been confirmed yet (synced_at is null). */
+  pendingLinks(provider: string): Promise<LinkRow[]>;
   deleteLink(provider: string, externalId: string): Promise<void>;
   log(e: LogEntry): Promise<void>;
   getState(provider: string): Promise<SyncStateRow | null>;
   setState(provider: string, s: SyncStateRow): Promise<void>;
-  /** Tasks whose last change came from Harold itself (changed_by = 'harold'). */
-  haroldChangedTasks(): Promise<TaskRow[]>;
+  /** Tasks whose last change came from Harold itself (changed_by = 'harold'), or, with `exceptOrigin`, from anyone
+   *  but that provider (changed_by <> exceptOrigin): what that provider may not have seen yet. */
+  haroldChangedTasks(exceptOrigin?: string): Promise<TaskRow[]>;
   openTasks(): Promise<TaskRow[]>;
 }
 
@@ -131,7 +135,13 @@ export class SupabaseSyncStore implements SyncStore {
     must(r as Res<unknown>, "insert link");
   }
   async updateLink(provider: string, externalId: string, patch: Partial<LinkRow>) {
-    must(await this.db.from("task_links").update(patch).eq("provider", provider).eq("external_id", externalId) as Res<unknown>, "update link");
+    const r = await this.db.from("task_links").update(patch).eq("provider", provider).eq("external_id", externalId) as Res<unknown>;
+    if (r.error?.code === "23505") throw new DuplicateError(r.error.message);
+    must(r, "update link");
+  }
+  async pendingLinks(provider: string) {
+    const r = await this.db.from("task_links").select(LINK_SELECT).eq("provider", provider).is("synced_at", null).limit(200);
+    return must(r as Res<LinkRow[]>, "read pending links") || [];
   }
   async deleteLink(provider: string, externalId: string) {
     must(await this.db.from("task_links").delete().eq("provider", provider).eq("external_id", externalId) as Res<unknown>, "delete link");
@@ -158,8 +168,9 @@ export class SupabaseSyncStore implements SyncStore {
     }
     return out;
   }
-  haroldChangedTasks() {
-    return this.allPages((a, b) => this.db.from("tasks").select(TASK_SELECT).eq(COLS.changedBy, "harold").order(COLS.updatedAt).range(a, b) as unknown as PromiseLike<Res<Record<string, unknown>[]>>, "read changed tasks");
+  haroldChangedTasks(exceptOrigin?: string) {
+    const q = () => this.db.from("tasks").select(TASK_SELECT);
+    return this.allPages((a, b) => (exceptOrigin ? q().neq(COLS.changedBy, exceptOrigin) : q().eq(COLS.changedBy, "harold")).order(COLS.updatedAt).range(a, b) as unknown as PromiseLike<Res<Record<string, unknown>[]>>, "read changed tasks");
   }
   openTasks() {
     return this.allPages((a, b) => this.db.from("tasks").select(TASK_SELECT).in(COLS.status, ["pending", "in_progress"]).order(COLS.updatedAt).range(a, b) as unknown as PromiseLike<Res<Record<string, unknown>[]>>, "read open tasks");
