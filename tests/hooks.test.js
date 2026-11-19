@@ -246,7 +246,8 @@ test('Close saves the work on a machine with no git identity (neutral identity, 
   const w = workspace();
   spawnSync('git', ['config', '--unset', 'user.email'], { cwd: w.ws });
   spawnSync('git', ['config', '--unset', 'user.name'], { cwd: w.ws });
-  const env = { GIT_CONFIG_NOSYSTEM: '1' };
+  // A machine or CI runner that exports a git identity in the environment would otherwise sign the commit itself.
+  const env = { GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: undefined, GIT_AUTHOR_EMAIL: undefined, GIT_COMMITTER_NAME: undefined, GIT_COMMITTER_EMAIL: undefined };
   assert.strictEqual(run(w, ['boot', '--via=claude'], claude('SessionStart', 'id-1', { source: 'startup' }), env).code, 0);
   dirty(w); daily(w);
   const c = run(w, ['close'], undefined, env);
