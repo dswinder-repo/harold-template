@@ -207,6 +207,47 @@ test('list rewrites harold/tasks-snapshot.md; with no database key it reads the 
   assert.match(none.err, /no task list available/);
 });
 
+test('with no key, a snapshot written by the connector sync (one bullet per task) is read, not shown as empty', () => {
+  const w = workspace();
+  fs.writeFileSync(path.join(w.ws, 'harold/tasks-snapshot.md'), `# Tasks snapshot
+
+*Written 2026-11-18T00:56:15-05:00 by the connector sync.*
+
+Open tasks from Harold's task list, grouped by due date in New York time.
+
+## Overdue (1)
+
+- **H-3** · Chase the signed NDA · Alpha Launch · due 2026-11-10 · high · [PRI-5](https://linear.app/x/issue/PRI-5/chase)
+
+## Due today (1)
+
+- **H-7** · Create the monitoring accounts · Alpha Launch · due 2026-11-18 · medium · [PRI-9](https://linear.app/x/issue/PRI-9/create)
+
+## Due this week (0)
+
+- none
+
+## In progress (1)
+
+- **H-9** · Draft the pitch deck · no project · medium
+
+## Later (1)
+
+- **H-12** · Follow up on the data center status · no project · medium · [PRI-14](https://linear.app/x/issue/PRI-14/follow)
+`);
+  const json = JSON.parse(run(w, null, ['task', 'list', '--json']).out);
+  assert.strictEqual(json.source, 'snapshot');
+  assert.strictEqual(json.total, 4, 'every bullet is a task');
+  assert.deepStrictEqual(json.groups['Overdue'].map(t => [t.ref, t.title, t.project, t.due, t.priority, t.links.join()]), [['H-3', 'Chase the signed NDA', 'Alpha Launch', '2026-11-10', 'high', 'PRI-5']]);
+  assert.deepStrictEqual(json.groups['Due today'].map(t => t.ref), ['H-7']);
+  assert.deepStrictEqual(json.groups['In progress'].map(t => [t.ref, t.project, t.status]), [['H-9', '', 'in_progress']]);
+  assert.deepStrictEqual(json.groups['Later or undated'].map(t => t.ref), ['H-12']);
+  const out = run(w, null, ['task', 'list']).out;
+  assert.match(out, /### Overdue \(1\)/);
+  assert.match(out, /\| H-12 \| Follow up on the data center status \| — \|/);
+  assert.match(run(w, null, ['boot']).out + '', /Tasks[^\n]*\n[\s\S]*H-3/, 'boot lists the overdue task too');
+});
+
 test('with no key, writes queue in harold/crm-queue.jsonl as Q- refs and replay applies them in order, including one that names a queued ref', async () => {
   const m = await mock(), w = workspace();
   run(w, m, ['task', 'create', 'Existing', '--project', 'beta']); // H-1, written live
