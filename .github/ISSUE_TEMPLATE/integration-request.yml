@@ -1,0 +1,40 @@
+name: Integration request
+description: Ask for Harold to work with another task tool or CRM.
+labels: ["integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Harold has its own task list and CRM, and already syncs the task list both ways with Linear, Todoist, Asana and Notion. Use this form to ask for another tool.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of tool
+      options:
+        - Task tool
+        - CRM
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Which tool
+      placeholder: Name and website
+    validations:
+      required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: What you need it to do
+      description: For example, keep tasks in step both ways, or import contacts and log interactions.
+    validations:
+      required: true
+  - type: dropdown
+    id: api
+    attributes:
+      label: Does the tool have an API with webhooks?
+      options:
+        - "Yes"
+        - "API, but no webhooks"
+        - "Not sure"
