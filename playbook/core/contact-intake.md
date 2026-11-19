@@ -28,7 +28,7 @@ Watch every message for names with business significance:
 
 1. **`crm_search_contacts` / `harold_search_contacts`** by name (and organization if known). This is the primary check.
 2. **`bin/harold search "<name>"`** — catches `vault/people/`, `harold/facts.md`, meeting notes, spelling variants. Then `bin/harold related "<name>"` shows their card (if any), their company and every note that links to them.
-3. The task manager (Linear by default) for existing tasks naming this person.
+3. Harold's task list for existing tasks naming this person (`bin/harold task list`, or `task_list` on the connector).
 4. Any tracker you keep for a project (resolve its folder with `bin/harold where <topic>`).
 
 **If the contact EXISTS:** this is an **update**, not an intake. Call `crm_upsert_contact` / `harold_upsert_contact` with the existing contact id for whatever changed (email, title, company, warmth). Update the `vault/people/` profile to match. Do not create a duplicate record, profile, or task. Confirm in one line: "Updated [Name]'s record — [what changed]."
@@ -114,7 +114,7 @@ All of these, together, for every new contact:
    ```
    Body: context (how you know them, intro path), timeline, and `[[wiki-links]]` to their company card, the introducer, and any project card.
 3. **`harold/facts.md`** — add to the contacts section for their type (and Terminology if the name is easy to misspell).
-4. **Follow-up tracking** if there is a next step: a task in the task manager (Linear by default) under the right project, plus `crm_task` / `harold_crm_task` for the contact-specific reminder. Due within 3 business days for high priority, 7 for medium.
+4. **Follow-up tracking** if there is a next step: a task in Harold's task list under the right project (`bin/harold task create`, or `task_create` on the connector), plus `crm_task` / `harold_crm_task` for the contact-specific reminder. Due within 3 business days for high priority, 7 for medium.
 5. **Pipeline entry** only if Step 2 says one exists.
 
 ### Additions by type (adapt to your list)
@@ -200,7 +200,7 @@ Duplicate check finds her → `crm_upsert_contact` / `harold_upsert_contact` (co
 
 ## Completion checklist
 
-- [ ] Duplicate check run (CRM, `bin/harold search`, task manager) before creating anything
+- [ ] Duplicate check run (CRM, `bin/harold search`, task list) before creating anything
 - [ ] Exactly one type from your list; labels separate and not duplicating the type
 - [ ] Warmth set only if assessed (else unset); status and priority by the rules above
 - [ ] `crm: none` respected

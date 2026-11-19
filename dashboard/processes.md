@@ -18,8 +18,8 @@
 |---------------------|--------|
 | A **new name with business context** (organization, title, deal, meeting, intro) | `playbook/core/contact-intake.md`: duplicate check, vault card, CRM record, pipeline entry only if a purpose was established |
 | A **project, client, engagement or workstream** that `bin/harold where` cannot resolve | `playbook/core/project-intake.md`: folder, `harold/projects.md` entry, vault card, cross-links. You never announce a new project; you just start working on it |
-| A **task signal** ("done", "started", "blocked", a new to-do) | Update the task manager now; add to `harold/blockers.md` if blocked |
-| **Commitments in pasted call notes, a transcript or a forwarded email** (something the operator said they would do, or something someone owes the operator) | Tasks, automatically, without asking: check the open tasks first (no duplicates), then one task per commitment in the task manager (`bin/harold-linear create`, `task_create` on the connector, or the task manager's own tool), with a due date when stated or implied and the project from `bin/harold where`; `crm_task` as well when it is tied to a contact. Things owed to the operator read "Follow up: <who> owes <what>". Each task ID goes on its line under `## Action items` in the meeting note; `bin/harold close` blocks until it does. Harold never reads email on its own: it acts on what is pasted or forwarded |
+| A **task signal** ("done", "started", "blocked", a new to-do) | Update Harold's task list now; add to `harold/blockers.md` if blocked |
+| **Commitments in pasted call notes, a transcript or a forwarded email** (something the operator said they would do, or something someone owes the operator) | Tasks, automatically, without asking: check the open tasks first (no duplicates), then one task per commitment in Harold's task list (`bin/harold task create`, or `task_create` on the connector), with a due date when stated or implied and the project from `bin/harold where`; `crm_task` as well when it is tied to a contact. Things owed to the operator read "Follow up: <who> owes <what>". Each task ref goes on its line under `## Action items` in the meeting note; `bin/harold close` blocks until it does. Harold never reads email on its own: it acts on what is pasted or forwarded |
 | **New intel** (news, market data, notes, a strategic insight) | `playbook/core/analyst.md`: apply it across the knowledge base, don't just mention it |
 | A **correction** from you | Decide which kind it is, per the Error Capture Rule in `AGENTS.md`, and act in the same turn. A wrong fact (a name, a title, a date) is a record fix: correct it everywhere it appears, CRM first for a contact. A wrong way of working (a skipped step, a wrong process) is a lesson: write the right way into the rule it belongs to and file it with `bin/harold file learning '{...}'` |
 | **Substantive synthesis** (3+ sources, or analysis worth keeping) | File it to `vault/intel/` or `vault/decisions/` so it compounds |
@@ -68,7 +68,7 @@
 
 ### Cascade Logic
 
-One trigger usually means several writes. A meeting debrief, for example: meeting note in `vault/meetings/` → CRM interaction + contact update + vault card (external contacts only) → tasks in the task manager → facts in `harold/facts.md` → analyst sweep → daily note. The playbook names every file; do all of them in the same turn.
+One trigger usually means several writes. A meeting debrief, for example: meeting note in `vault/meetings/` → CRM interaction + contact update + vault card (external contacts only) → tasks in Harold's task list → facts in `harold/facts.md` → analyst sweep → daily note. The playbook names every file; do all of them in the same turn.
 
 ---
 

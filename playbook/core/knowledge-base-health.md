@@ -20,7 +20,7 @@ bin/harold file trigger weekly-scan skipped "<reason>"
 
 `bin/harold close` checks that due triggers were recorded. A skipped run with a reason is fine; a silent skip is how weeks of drift accumulate.
 
-**Unattended (cloud housekeeping).** With `"cloud": true` in `harold/housekeeping.json`, the weekly scan and the full audit (and the month-end review in `dashboard/processes.md`) run as silent scheduled jobs: `.github/workflows/housekeeping.yml`, or any scheduler running `harold/housekeeping-prompt.md`. Sessions then see them as notes, not due work. The job follows this playbook with the limits in that prompt: anything that needs the operator (a deletion, an escalation, a debrief prompt, a judgment call) becomes one line in `harold/briefs/housekeeping-notes.md` for the next morning brief; the task manager is read-only; the CRM is touched only by Step 9, within its limits, and only when the job has a CRM tool. `bin/harold housekeeping start` is the gate, and `bin/harold housekeeping finish` commits and pushes what the job changed.
+**Unattended (cloud housekeeping).** With `"cloud": true` in `harold/housekeeping.json`, the weekly scan and the full audit (and the month-end review in `dashboard/processes.md`) run as silent scheduled jobs: `.github/workflows/housekeeping.yml`, or any scheduler running `harold/housekeeping-prompt.md`. Sessions then see them as notes, not due work. The job follows this playbook with the limits in that prompt: anything that needs the operator (a deletion, an escalation, a debrief prompt, a judgment call) becomes one line in `harold/briefs/housekeeping-notes.md` for the next morning brief; the task list is read-only; the CRM is touched only by Step 9, within its limits, and only when the job has a CRM tool. `bin/harold housekeeping start` is the gate, and `bin/harold housekeeping finish` commits and pushes what the job changed.
 
 About the vault: `vault/` is plain markdown. Obsidian is an optional viewer, not a requirement. Search it with `bin/harold search "<query>"` (full-text over all markdown in the workspace; run `bin/harold index` first if results look stale).
 
@@ -55,8 +55,8 @@ A lighter pass, done alongside the weekly summary.
 
 7. **Weekly summary**
    - Write the summary to `harold/weekly-summary.md` (overwrite; the previous week lives in git history), or, if you prefer not to keep that file, into today's daily note `vault/daily/YYYY-MM-DD-weekly-scan.md`. Pick one and stay consistent.
-   - Contents: tasks completed this week (Monday to Friday) from the task manager (Linear by default; `bin/harold-linear tasks` if the helper is configured), tasks in progress, open blockers, events in the next two weeks, and next week's priorities.
-   - **If the task manager is unreachable:** write the summary from `vault/daily/` notes and say in the summary that task data is missing.
+   - Contents: tasks completed this week (Monday to Friday) from Harold's task list (`bin/harold task list --all`), tasks in progress, open blockers, events in the next two weeks, and next week's priorities.
+   - **If the task list is unreachable:** write the summary from `vault/daily/` notes and say in the summary that task data is missing.
 
 8. **Working folder cleanup**
    - `ls` the workspace root. It should contain only the expected structure (AGENTS.md, CLAUDE.md, `bin/`, `harold/`, `memory/`, `dashboard/`, `vault/`, `raw/`, `playbook/`, project folders). Loose files are misplaced.
@@ -144,14 +144,14 @@ Check especially the workspace root, any shared project folder, and any `archive
 
 **Action:** fix broken links; create the missing vault note if the link is right and the note should exist.
 
-### Step 6: Task manager sync
+### Step 6: Task list sync
 
-Compare the knowledge base with the task manager (Linear by default):
+Compare the knowledge base with Harold's task list:
 - Are active tasks reflected in the relevant project docs?
 - Are completed tasks marked done in both places?
 - Do task descriptions match the knowledge base context?
 
-**Action:** sync discrepancies. The task manager is the source of truth for task state.
+**Action:** sync discrepancies. The task list is the source of truth for task state.
 **If it is unreachable:** skip this step and say so in the report.
 
 ### Step 7: Time-sensitive external references
@@ -265,7 +265,7 @@ For each file over budget, move the sections that are clearly stale (superseded,
 | Cross-file consistency | OK / Warn / Fail | [n] | [brief] |
 | Orphaned files | OK / Warn / Fail | [n] | [brief] |
 | Link integrity | OK / Warn / Fail | [n] | [brief] |
-| Task manager sync | OK / Warn / Fail / Skipped | [n] | [brief] |
+| Task list sync | OK / Warn / Fail / Skipped | [n] | [brief] |
 | External references | OK / Warn / Fail | [n] | [brief] |
 | Vault hygiene | OK / Warn / Fail | [n] | [brief] |
 | CRM consistency | OK / Warn / Fail / Skipped | [n] | [brief] |
@@ -305,7 +305,7 @@ When a new spelling or consistency error is found:
 - Cross-file facts agree with their source of truth.
 - No orphaned files in active folders.
 - Internal links work.
-- Task manager and knowledge base in sync.
+- Task list and knowledge base in sync.
 
 ---
 

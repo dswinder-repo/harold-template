@@ -37,7 +37,7 @@
 |------|------|---------|-------|
 | [Date] | [Deadline] | [Project] | [Who] |
 
-*Dated events with prep belong in `harold/events.md`; task due dates belong in the task manager. This table is for the few deadlines that shape the month.*
+*Dated events with prep belong in `harold/events.md`; task due dates belong in Harold's task list. This table is for the few deadlines that shape the month.*
 
 ---
 

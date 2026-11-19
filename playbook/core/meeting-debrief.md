@@ -194,5 +194,5 @@ Best,
 - [ ] `vault/meetings/` note created; intel note + analyst run if applicable
 - [ ] Follow-up drafted if needed (not sent)
 - [ ] `dashboard/status.md` Recent Activity updated
-- [ ] Next touch scheduled (events, task manager, or alert)
+- [ ] Next touch scheduled (events, task list, or alert)
 - [ ] Today's `vault/daily/` note updated

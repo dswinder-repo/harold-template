@@ -206,7 +206,7 @@ This creates a snapshot to roll back to if a future deploy breaks things.
 
 ## 7. Log it
 
-Record what shipped in today's daily note: `bin/harold file daily <slug> "Shipped <project>: <commits/PR link>, deploy verified <yes/no>"`. If a task in the task manager (Linear by default) covers this work, update it too (`bin/harold-linear comment` / `done`, or the task manager's own tools).
+Record what shipped in today's daily note: `bin/harold file daily <slug> "Shipped <project>: <commits/PR link>, deploy verified <yes/no>"`. If a task in Harold's task list covers this work, update it too (`bin/harold task done <ref>`, or `task_update` on the connector).
 
 ---
 
