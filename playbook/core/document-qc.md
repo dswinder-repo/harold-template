@@ -243,7 +243,7 @@ This playbook runs **after** content creation and **before** distribution:
 - [ ] Internal consistency checked: metrics against `harold/facts.md`, people against `vault/people/` and the CRM
 - [ ] Key facts verified against external sources, with sources recorded
 - [ ] Unverified items listed in the clearance report (never silently passed)
-- [ ] Discrepancies resolved; KB files, `harold/facts.md`, CRM record and vault profile corrected together (or CRM queued with `bin/harold file crm`)
+- [ ] Discrepancies resolved; KB files, `harold/facts.md`, CRM record and vault profile corrected together (or CRM queued with `bin/harold file crm`, then replayed, or applied through the connector and marked with `bin/harold queue done`)
 - [ ] Lesson written into its rule and filed with `bin/harold file learning` if the error came from a wrong way of working
 - [ ] Fix recorded in today's `vault/daily/` note
 - [ ] Skeptical review passed

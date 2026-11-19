@@ -105,7 +105,7 @@ Harold is platform-, model- and harness-agnostic. A harness is the app or comman
 
 1. **Read an instruction file at the start.** `AGENTS.md` is the shared file name many AI agent tools read on their own ([agents.md](https://agents.md)). For one that doesn't, point it at `AGENTS.md`.
 2. **Run a shell command:** `bin/harold boot` at the start of a session, `bin/harold close` at the end of every turn.
-3. **Ideally, connect to MCP servers** ([an open standard](https://modelcontextprotocol.io/introduction)) for the CRM and knowledge tools. Without MCP the agent still works from the files; CRM changes it cannot make wait in `harold/crm-queue.jsonl`, which boot and close apply once the CRM's credentials are present.
+3. **Ideally, connect to MCP servers** ([an open standard](https://modelcontextprotocol.io/introduction)) for the CRM and knowledge tools. Without MCP the agent still works from the files; CRM and task changes it cannot make wait in `harold/crm-queue.jsonl`, which boot and close apply once the CRM's credentials are present. A waiting write is never silent: `bin/harold queue` lists each one, and close asks for it to be applied or deferred for the day.
 
 Any model the harness offers works; Harold doesn't depend on a particular one, because the checks are a program, not the model. Automatic hooks are a convenience: where a harness supports them, the checks run on their own; where it doesn't, the first instruction in `AGENTS.md` has the agent run them. Switching harness or model doesn't mean rebuilding anything: the knowledge, rules and tools stay the same.
 

@@ -121,7 +121,7 @@ Does that work, or is there a firmer timeline for the original path?
 - Day 7: follow-up message.
 - Day 14: try a different channel (email → phone or another platform).
 - Day 21: find an alternate path or accept the delay.
-- Each touch is an external interaction: file it with the CRM filing protocol (`crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the vault profile). If the CRM is unreachable, queue it: `bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{...}}'`.
+- Each touch is an external interaction: file it with the CRM filing protocol (`crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the vault profile). If the CRM is unreachable, queue it: `bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{...}}'`. A queued write is not in the database until it is replayed where the key is, or applied through the connector and marked with `bin/harold queue done`.
 
 ### Waiting on board, legal or a regulator
 - These legitimately take time.
@@ -140,7 +140,7 @@ Does that work, or is there a firmer timeline for the original path?
 Every escalation updates, in the same session:
 1. `harold/blockers.md`: append the escalation step and date to the **Last Update** column. If resolved, move the row under `## Resolved` with date and resolution.
 2. `vault/daily/YYYY-MM-DD-<slug>.md`: the assessment, what was done, and the outcome (`bin/harold file daily <slug> "<text>"`).
-3. The related task in Harold's task list: add the escalation status to its description (`bin/harold task update <ref> --desc "<text>"`). If there is no task and follow-up is needed, create one (`bin/harold task create`).
+3. The related task in Harold's task list: add the escalation status to its description (`bin/harold task update <ref> --desc "<text>"`). If there is no task and follow-up is needed, create one (`bin/harold task create`). With no database key, use the connector's `task_update` / `task_create` if attached.
 4. `harold/alerts.md`: if the blocker is 8+ days old it should appear there; if resolved, remove it.
 5. The trigger record:
    ```bash

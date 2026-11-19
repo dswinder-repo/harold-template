@@ -138,7 +138,7 @@ Harold's job on event days is to make capture cheap:
 2. **Process contacts.** For each person met:
    - Check the vault and CRM first; don't treat known contacts as new.
    - New people → run `playbook/core/contact-intake.md` (or the intake flow).
-   - File all three together: `crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the `vault/people/` profile (warmth, last_updated). If the CRM is unreachable, queue with `bin/harold file crm '{...}'`.
+   - File all three together: `crm_log_interaction` / `harold_log_interaction` + `crm_upsert_contact` / `harold_upsert_contact` + the `vault/people/` profile (warmth, last_updated). If the CRM is unreachable, queue with `bin/harold file crm '{...}'`; it is not in the database until it is replayed, or applied through the connector and marked with `bin/harold queue done`.
    - Pipeline: only add a pipeline entry if a conversation established a purpose. Never auto-place someone because you met them.
 
 3. **Create follow-up tasks** in Harold's task list: thank-you notes within 48 hours, meeting requests within a week.

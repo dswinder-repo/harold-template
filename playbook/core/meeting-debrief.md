@@ -66,7 +66,7 @@ Target the gaps only. Never re-ask what the notes already answer.
 - body: key takeaways in 2-3 sentences, not the transcript
 - This feeds freshness tracking automatically; no manual cadence update is needed.
 
-**If the CRM is unreachable:** queue it and keep going (boot and close apply the queue once the CRM answers):
+**If the CRM is unreachable:** queue it and keep going. It is not in the database yet: boot and close replay it where the database key is; otherwise apply it through the connector, then `bin/harold queue done <id> "<result>"`:
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"meeting","subject":"...","body":"..."}}'
 ```
@@ -74,11 +74,11 @@ bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":
 ### 4. Create tasks (automatically, never on request)
 Every commitment in the input becomes a task, without asking the operator first: something the operator said they would do, and something someone owes the operator. This applies to pasted call notes, transcripts and forwarded emails alike. (Harold does not read email on its own; it acts on what is pasted or forwarded.)
 1. **Check what is open first** so nothing is created twice: `bin/harold task list` or `task_list` on the connector.
-2. **One task per commitment in Harold's task list:** `bin/harold task create "<title>" --project <name> --due YYYY-MM-DD`, or `task_create` on the connector. Title: the operator's own to-dos as a plain action ("Send the case studies to Jane Doe"); things owed to the operator as "Follow up: <who> owes <what>". Due date when stated or clearly implied ("by Friday", "next week"); project from `bin/harold where <topic>`.
+2. **One task per commitment in Harold's task list:** `bin/harold task create "<title>" --project <name> --due YYYY-MM-DD` where the database key is; with no key, `task_create` on the connector if attached (it returns the H- ref). Title: the operator's own to-dos as a plain action ("Send the case studies to Jane Doe"); things owed to the operator as "Follow up: <who> owes <what>". Due date when stated or clearly implied ("by Friday", "next week"); project from `bin/harold where <topic>`.
 3. **`crm_task` / `harold_crm_task` as well** when the follow-up is tied to a contact ("Schedule follow-up with Sam Lee"). Queue with `bin/harold file crm` (`action: crm_task`) if the CRM is down.
 4. **Write each task ID into the meeting note's `## Action items`** (step 7), one item per commitment: `- [ ] Send the case studies to Jane Doe, due 2026-10-10 (H-12)`. A queued ref (Q-<id>), an outside key such as ABC-123 or a task URL works in place of the ID. An item that should not become a task says why: `(no task: <reason>)`. `bin/harold close` blocks on any item under that heading in a meeting note changed this session that has neither.
 5. **Say what was created**, one line per task: ID, title, due date.
-- *If the task list is unreachable:* the command queues the write and prints a Q-<id> ref, which counts. If even that fails, mark the items `(no task: task list unreachable, see daily note)` and list them in today's daily note under "Tasks to create" so the next session files them.
+- *If the task list is unreachable:* the command queues the write and prints a Q-<id> ref, which counts. The write is not in the database until it is replayed, or applied through the connector and marked with `bin/harold queue done`. If even that fails, mark the items `(no task: task list unreachable, see daily note)` and list them in today's daily note under "Tasks to create" so the next session files them.
 
 ### 5. Update the relationship
 All three together, per the CRM filing protocol:

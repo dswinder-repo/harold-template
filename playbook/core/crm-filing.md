@@ -55,7 +55,15 @@ If no CRM tool works and there is no connector, queue the work instead of droppi
 bin/harold file crm '{"contact":"Jane Doe","action":"log_interaction","payload":{"type":"call","subject":"Intro call"}}'
 ```
 
-The queue is a fallback for outages, not a workflow: `bin/harold boot` and `bin/harold close` apply it automatically the next time they run on a computer that holds the CRM credentials and can reach it (scheduled jobs, which hold no CRM credentials, and the connector never replay it), skipping anything already applied. `bin/harold replay --dry-run` shows what would happen.
+The queue is a fallback, not a workflow. A queued write is NOT in the database: the command says so, and prints its queue id and the connector call that applies it. Where the database key is, `bin/harold boot` and `bin/harold close` replay the queue automatically once the CRM answers, skipping anything already applied (`bin/harold replay --dry-run` shows what would happen). In a session with no key but with the connector, apply each one through the connector, then mark it:
+
+```bash
+bin/harold queue                                           # what is waiting, with the connector call for each
+bin/harold queue done <id> "<what the connector returned>"
+bin/harold queue defer <id> "<reason>"                     # cannot apply it today
+```
+
+Close blocks the turn while a write is waiting with neither. Scheduled jobs never write to the CRM and are never blocked by the queue.
 
 ---
 
@@ -69,5 +77,5 @@ When a contact detail is corrected (warmth, a name, a title, any field), the CRM
 
 - [ ] Vault profile opened before any CRM action; `crm: none` respected
 - [ ] Every other contact: interaction logged, contact record updated, vault people profile updated (`last_updated` today)
-- [ ] Connector write recorded with `bin/harold file crm '{...,"applied":"connector"}'`, or an outage queued with `bin/harold file crm`, and said so
+- [ ] Connector write recorded with `bin/harold file crm '{...,"applied":"connector"}'`; anything queued is replayed, or applied through the connector and marked with `bin/harold queue done`, or deferred with a reason, and said so
 - [ ] Corrections made in the CRM record first

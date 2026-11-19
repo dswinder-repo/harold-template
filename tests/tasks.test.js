@@ -392,7 +392,7 @@ test('boot with no key reads the snapshot and gives its age; with neither it say
   const bare = run(w, null, ['boot', '--full']);
   assert.strictEqual(bare.code, 0, bare.all);
   assert.match(bare.out, /## Tasks \(Harold's own list\) — UNAVAILABLE: no SUPABASE_URL/);
-  assert.match(bare.out, /task create "<title>".* queues the write/);
+  assert.match(bare.out, /task_create on the connector.*task create "<title>".* queues the write/);
 });
 
 test('the project is resolved as `harold where` does; a tie is refused and both are listed', () => {

@@ -72,7 +72,7 @@ test('close blocks on a meeting note changed this session whose action items car
   assert.match(blocked.reason, /action items without a task in vault\/meetings\/[\d-]+-pilot-scoping\.md/);
   assert.match(blocked.reason, /pilot-scoping\.md:11: - \[ \] Send the revised deck to Jane Doe by Friday/);
   assert.match(blocked.reason, /pilot-scoping\.md:14: 1\. Book the venue/);
-  assert.match(blocked.reason, /bin\/harold task create "<title>" --project <name> --due YYYY-MM-DD, or task_create on the connector/);
+  assert.match(blocked.reason, /bin\/harold task create "<title>" --project <name> --due YYYY-MM-DD where the database key is; with no key, task_create on the connector if attached/);
   assert.match(blocked.reason, /\(H-12\)/);
   assert.match(blocked.reason, /\(no task: <reason>\)/);
   assert.doesNotMatch(blocked.reason, /signed NDA/, 'an item with an ID passes');
