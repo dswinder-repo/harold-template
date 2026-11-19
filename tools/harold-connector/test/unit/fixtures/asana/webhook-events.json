@@ -1,0 +1,9 @@
+{
+  "events": [
+    { "user": { "gid": "1111", "resource_type": "user" }, "created_at": "2026-11-18T15:00:01.000Z", "action": "changed", "resource": { "gid": "12345", "resource_type": "task" }, "parent": { "gid": "1331", "resource_type": "project" }, "change": { "field": "completed", "action": "changed" } },
+    { "user": { "gid": "1111", "resource_type": "user" }, "created_at": "2026-11-18T15:00:02.000Z", "action": "changed", "resource": { "gid": "12345", "resource_type": "task" }, "parent": { "gid": "1331", "resource_type": "project" }, "change": { "field": "name", "action": "changed" } },
+    { "user": { "gid": "1111", "resource_type": "user" }, "created_at": "2026-11-18T15:00:03.000Z", "action": "added", "resource": { "gid": "67890", "resource_type": "task" }, "parent": { "gid": "1331", "resource_type": "project" } },
+    { "user": { "gid": "1111", "resource_type": "user" }, "created_at": "2026-11-18T15:00:04.000Z", "action": "deleted", "resource": { "gid": "55555", "resource_type": "task" }, "parent": null },
+    { "user": { "gid": "1111", "resource_type": "user" }, "created_at": "2026-11-18T15:00:05.000Z", "action": "added", "resource": { "gid": "999", "resource_type": "story" }, "parent": { "gid": "12345", "resource_type": "task" } }
+  ]
+}

@@ -121,6 +121,8 @@ async function selectTask(sb: Sb, col: string, val: string): Promise<{ row: Row 
   return { row: ((r.data as Row[]) || [])[0] || null, migrated: r.migrated, error: null };
 }
 
+const OUTSIDE_KEY = /^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]{1,64}$/;
+
 /** By ref (H-12), by outside key (ENG-123, through task_links) or by uuid. */
 async function findTask(sb: Sb, ident: string): Promise<Found> {
   const id = ident.trim();
@@ -142,9 +144,13 @@ async function findTask(sb: Sb, ident: string): Promise<Found> {
     const r = await selectTask(sb, "id", hits[0].id);
     return r.row ? { row: r.row, migrated: r.migrated } : { error: err(`No task with id ${id}.`) };
   }
-  if (/^[A-Za-z][A-Za-z0-9]*-\d{1,9}$/.test(id)) {
-    const key = id.toUpperCase();
-    const { data, error } = await sb.from("task_links").select("task_id, provider, external_key").eq("external_key", key);
+  if (OUTSIDE_KEY.test(id)) {
+    // PREFIX-ID: Linear (ENG-123), Todoist (TD-<id>, case-sensitive), Asana (AS-<gid>), Notion (NO-<8 hex>). The prefix is
+    // upper-cased; the id is tried as typed and upper-cased, so a Todoist id keeps its case and a Linear key may be typed in lower case.
+    const dash = id.indexOf("-");
+    const key = id.slice(0, dash).toUpperCase() + id.slice(dash);
+    const candidates = [...new Set([key, id.toUpperCase()])];
+    const { data, error } = await sb.from("task_links").select("task_id, provider, external_key").in("external_key", candidates);
     if (error) return { error: err(isMissingSchema(error.message) ? `Outside keys (${key}) need the task-list migration, which is not applied yet. Use the task's id instead.` : `Task error: ${error.message}`) };
     const hits = (data || []) as unknown as Link[];
     if (!hits.length) return { error: err(`No task is linked to ${key}. task_list shows the open tasks with their outside keys.`) };

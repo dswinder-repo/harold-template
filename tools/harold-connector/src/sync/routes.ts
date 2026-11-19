@@ -1,26 +1,36 @@
 // The sync's HTTP surface, all POST and all JSON:
-//   POST /webhooks/linear   Linear's webhook (Linear-Signature HMAC + webhookTimestamp within 60 s)
-//   POST /sync/push         {task_id}: one Harold change out to Linear (called by the pg_net trigger)
-//   POST /sync/catchup      {} or {"import": true}: both directions since the cursor (pg_cron, every 10 min)
+//   POST /webhooks/:provider  a provider's webhook (/webhooks/linear, /webhooks/todoist, /webhooks/asana, /webhooks/notion), verified first
+//   POST /sync/push           {task_id}: one Harold change out to every configured provider (called by the pg_net trigger)
+//   POST /sync/catchup        {} or {"import": true}, optionally {"provider": "<name>"}: both directions since each
+//                             provider's cursor (pg_cron, every 10 min)
 // /sync/* need header x-harold-sync-secret equal to SYNC_SECRET (constant-time compare).
 //
-// Fails closed: project mapping need the project map, which these routes read only from the cache that
+// One engine per configured provider (src/sync/registry.ts). One provider failing is logged and never stops the
+// others. With exactly one provider configured, its result is also spread at the top level of the response, so a
+// Linear-only deployment answers exactly as it did before there were several providers.
+//
+// A provider whose configuration lives in the database (Notion, until sync_setup_notion has saved its setup) can be
+// configured but not ready: it is skipped with its reason (outcome 'skipped' in /sync/push, {skipped: reason} in
+// /sync/catchup), and the others run as usual.
+//
+// Fails closed: project mapping needs the project map, which these routes read only from the cache that
 // authenticated MCP requests keep in sync_state (housekeeping.ts). No cache: 503 and nothing syncs.
 
 import type { Context, Hono } from "hono";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { HaroldRepo } from "../github.js";
 import type { FetchLike } from "../identity.js";
-import { SyncEngine } from "./engine.js";
+import { SyncEngine, type Result } from "./engine.js";
 import { PROJECTS_STALE_MS, loadProjectCache, makeHousekeeper } from "./housekeeping.js";
-import { LinearProvider, linearSyncFromEnv, verifyLinearWebhook, type LinearSyncConfig } from "./linear.js";
-import { ProjectMap } from "./projectmap.js";
-import type { SyncProvider } from "./provider.js";
+import type { ProjectMap } from "./projectmap.js";
+import type { ProviderEntry, SyncProvider } from "./provider.js";
+import { KNOWN_PROVIDERS, providersFromEnv } from "./registry.js";
 import { syncStoreFromEnv, type SyncStore } from "./store.js";
 
 export interface SyncDeps {
   store: () => SyncStore | null;
-  linear: () => LinearSyncConfig | null;
+  /** Every configured provider (empty: the sync routes answer 503). */
+  providers: () => ProviderEntry[];
   /** The cached project map (sync_state 'harold-projects'), or null when there is none (then nothing syncs). */
   projects: (store: SyncStore) => Promise<{ map: ProjectMap; readAt: string; stale: boolean } | null>;
   /** Called on authenticated MCP requests with the owner's repository handle: refreshes the project-map
@@ -28,18 +38,16 @@ export interface SyncDeps {
   housekeeping: (repo: HaroldRepo) => Promise<void>;
   syncSecret: () => string;
   now: () => number;
-  provider: (cfg: LinearSyncConfig, map: ProjectMap) => SyncProvider;
 }
 
 export function defaultSyncDeps(fetchImpl: FetchLike): SyncDeps {
   return {
     store: syncStoreFromEnv,
-    linear: linearSyncFromEnv,
+    providers: () => providersFromEnv(fetchImpl),
     projects: store => loadProjectCache(store, Date.now()),
     housekeeping: makeHousekeeper(syncStoreFromEnv),
     syncSecret: () => (process.env.SYNC_SECRET || "").trim(),
     now: Date.now,
-    provider: (cfg, map) => new LinearProvider(cfg, map, fetchImpl),
   };
 }
 
@@ -52,13 +60,18 @@ export function secretEquals(given: string | null | undefined, want: string): bo
 
 const json = (c: Context, body: unknown, status = 200) => c.json(body as object, status as 200);
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const NO_PROVIDER = "no task provider is configured (LINEAR_API_KEY + LINEAR_TEAM_KEY, or TODOIST_API_TOKEN, or ASANA_ACCESS_TOKEN + ASANA_WORKSPACE, or NOTION_TOKEN)";
+
+interface Running { entry: ProviderEntry; provider: SyncProvider; engine: SyncEngine }
+
+/** Outcomes that changed the Harold row, so the other providers may have something new to receive. */
+const CHANGED_HAROLD = new Set(["pulled", "imported", "merged", "conflict"]);
 
 export function registerSyncRoutes(app: Hono, deps: SyncDeps) {
   let staleLoggedAt = 0;
-  /** Everything a sync call needs, or the JSON error to answer with. */
-  const setup = async (c: Context) => {
-    const cfg = deps.linear();
-    if (!cfg) return { error: json(c, { ok: false, error: "Linear is not configured (LINEAR_API_KEY, LINEAR_TEAM_KEY)" }, 503) };
+  /** Everything a sync call needs for the given providers, or the JSON error to answer with. */
+  const setup = async (c: Context, entries: ProviderEntry[]) => {
+    if (!entries.length) return { error: json(c, { ok: false, error: NO_PROVIDER }, 503) };
     const store = deps.store();
     if (!store) return { error: json(c, { ok: false, error: "Supabase is not configured (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)" }, 503) };
     const cached = await deps.projects(store);
@@ -66,28 +79,61 @@ export function registerSyncRoutes(app: Hono, deps: SyncDeps) {
     const map = cached.map;
     if (cached.stale && deps.now() - staleLoggedAt > 3_600_000) {
       staleLoggedAt = deps.now();
-      await store.log({ kind: "skip", provider: "linear", detail: { reason: `project map cache is older than ${PROJECTS_STALE_MS / 86_400_000} days; still used`, read_at: cached.readAt } });
+      await store.log({ kind: "skip", provider: entries[0].name, detail: { reason: `project map cache is older than ${PROJECTS_STALE_MS / 86_400_000} days; still used`, read_at: cached.readAt } });
     }
-    const provider = deps.provider(cfg, map);
-    return { cfg, store, map, provider, engine: new SyncEngine(store, provider, map, { teamKey: cfg.team, now: deps.now }) };
+    const skipped: Record<string, string> = {};
+    const running: Running[] = [];
+    for (const entry of entries) {
+      const why = entry.prepare ? await entry.prepare(store) : null;
+      if (why) { skipped[entry.name] = why; continue; }
+      const provider = entry.build(map);
+      running.push({ entry, provider, engine: new SyncEngine(store, provider, map, { teamKey: entry.scope, now: deps.now }) });
+    }
+    return { store, map, running, skipped };
   };
 
-  app.post("/webhooks/linear", async c => {
+  app.post("/webhooks/:provider", async c => {
+    const name = c.req.param("provider").toLowerCase();
     const raw = await c.req.raw.text();
-    const cfg = deps.linear();
+    const all = deps.providers();
+    const entry = all.find(e => e.name === name);
+    if (!entry) {
+      return (KNOWN_PROVIDERS as readonly string[]).includes(name)
+        ? json(c, { ok: false, error: `${name} is not configured` }, 503)
+        : json(c, { ok: false, error: "unknown provider" }, 404);
+    }
     // Verify before anything else touches the request (no GitHub or database call for a forged one).
-    const v = verifyLinearWebhook(raw, c.req.header("linear-signature") ?? null, cfg?.webhookSecret || "", deps.now());
+    const v = await entry.verifyWebhook(c.req.raw, raw, { store: deps.store });
     if (!v.ok) return json(c, { ok: false, error: v.reason }, v.status);
+    // A handshake the provider answers itself (Asana): send its reply, sync nothing.
+    if (v.reply) return new Response(null, { status: v.reply.status, headers: v.reply.headers });
     if (!v.events.length) return json(c, { ok: true, ignored: true });
-    const s = await setup(c);
+    const s = await setup(c, [entry, ...all.filter(e => e !== entry)]);
     if ("error" in s) return s.error;
+    if (s.skipped[entry.name]) return json(c, { ok: true, ignored: true, reason: s.skipped[entry.name] });
+    const [mine, ...others] = s.running;
+    let results: Result[];
     try {
-      const results = await s.engine.webhook(v.events);
-      return json(c, { ok: true, results });
+      results = await mine.engine.webhook(v.events);
     } catch (e) {
-      await s.store.log({ kind: "error", provider: s.provider.name, external_id: v.events[0]?.externalId, detail: { phase: "webhook", error: msg(e) } });
+      await s.store.log({ kind: "error", provider: mine.provider.name, external_id: v.events[0]?.externalId, detail: { phase: "webhook", error: msg(e) } });
       return json(c, { ok: false, error: msg(e) }, 500);
     }
+    // A change that came in from this provider goes straight on to the others (catchup would carry it within 10 minutes).
+    const fanout: Record<string, Result[]> = {};
+    for (const o of others) {
+      for (const r of results) {
+        if (!r.taskId || !CHANGED_HAROLD.has(r.outcome)) continue;
+        try {
+          const task = await s.store.getTask(r.taskId);
+          if (task) (fanout[o.provider.name] ||= []).push(await o.engine.fromHarold(task));
+        } catch (e) {
+          (fanout[o.provider.name] ||= []).push({ outcome: "error", taskId: r.taskId });
+          await s.store.log({ kind: "error", provider: o.provider.name, task_id: r.taskId, detail: { phase: "fanout", from: mine.provider.name, error: msg(e) } });
+        }
+      }
+    }
+    return json(c, { ok: true, results, ...(Object.keys(fanout).length ? { fanout } : {}) });
   });
 
   const authed = (c: Context) => secretEquals(c.req.header("x-harold-sync-secret"), deps.syncSecret());
@@ -98,32 +144,60 @@ export function registerSyncRoutes(app: Hono, deps: SyncDeps) {
     let body: { task_id?: unknown } = {};
     try { body = await c.req.json(); } catch { /* handled below */ }
     if (typeof body.task_id !== "string" || !body.task_id.trim()) return json(c, { ok: false, error: "body must be {\"task_id\": \"<uuid>\"}" }, 400);
-    const s = await setup(c);
+    const taskId = body.task_id.trim();
+    const s = await setup(c, deps.providers());
     if ("error" in s) return s.error;
-    try {
-      const task = await s.store.getTask(body.task_id.trim());
-      if (!task) return json(c, { ok: false, error: "no such task" }, 404);
-      const r = await s.engine.fromHarold(task);
-      return json(c, { ok: r.outcome !== "error", ...r });
-    } catch (e) {
-      await s.store.log({ kind: "error", provider: s.provider.name, task_id: body.task_id, detail: { phase: "push", error: msg(e) } });
+    let task;
+    try { task = await s.store.getTask(taskId); }
+    catch (e) {
+      await s.store.log({ kind: "error", provider: s.running[0].provider.name, task_id: taskId, detail: { phase: "push", error: msg(e) } });
       return json(c, { ok: false, error: msg(e) }, 500);
     }
+    if (!task) return json(c, { ok: false, error: "no such task" }, 404);
+    const results: Record<string, Result & { error?: string; reason?: string }> = {};
+    for (const [name, reason] of Object.entries(s.skipped)) results[name] = { outcome: "skipped", taskId, reason };
+    let threw = 0;
+    for (const r of s.running) {
+      try { results[r.provider.name] = await r.engine.fromHarold(task); }
+      catch (e) {
+        threw++;
+        results[r.provider.name] = { outcome: "error", taskId, error: msg(e) };
+        await s.store.log({ kind: "error", provider: r.provider.name, task_id: taskId, detail: { phase: "push", error: msg(e) } });
+      }
+    }
+    const list = Object.values(results);
+    if (s.running.length && threw === s.running.length) return json(c, { ok: false, error: list.map(x => x.error).filter(Boolean).join("; "), results }, 500);
+    const single = list.length === 1 ? list[0] : {};
+    return json(c, { ok: list.every(x => x.outcome !== "error"), ...single, results });
   });
 
   app.post("/sync/catchup", async c => {
     if (!deps.syncSecret()) return json(c, { ok: false, error: "SYNC_SECRET is not set" }, 503);
     if (!authed(c)) return json(c, { ok: false, error: "unauthorized" }, 401);
-    let body: { import?: unknown } = {};
+    let body: { import?: unknown; provider?: unknown } = {};
     try { body = await c.req.json(); } catch { /* an empty body is a plain catchup */ }
-    const s = await setup(c);
-    if ("error" in s) return s.error;
-    try {
-      const r = await s.engine.catchup({ import: body.import === true });
-      return json(c, { ok: true, import: body.import === true, ...r });
-    } catch (e) {
-      await s.store.log({ kind: "error", provider: s.provider.name, detail: { phase: "catchup", error: msg(e) } });
-      return json(c, { ok: false, error: msg(e) }, 500);
+    let entries = deps.providers();
+    if (body.provider !== undefined) {
+      const want = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : "";
+      entries = entries.filter(e => e.name === want);
+      if (!entries.length) return json(c, { ok: false, error: `provider ${JSON.stringify(body.provider)} is not configured` }, 400);
     }
+    const s = await setup(c, entries);
+    if ("error" in s) return s.error;
+    const imp = body.import === true;
+    const results: Record<string, Awaited<ReturnType<SyncEngine["catchup"]>> | { error: string } | { skipped: string }> = {};
+    for (const [name, reason] of Object.entries(s.skipped)) results[name] = { skipped: reason };
+    let threw = 0;
+    for (const r of s.running) {
+      try { results[r.provider.name] = await r.engine.catchup({ import: imp }); }
+      catch (e) {
+        threw++;
+        results[r.provider.name] = { error: msg(e) };
+        await s.store.log({ kind: "error", provider: r.provider.name, detail: { phase: "catchup", error: msg(e) } });
+      }
+    }
+    if (s.running.length && threw === s.running.length) return json(c, { ok: false, error: Object.values(results).map(x => (x as { error?: string }).error).filter(Boolean).join("; "), results }, 500);
+    const single = Object.keys(results).length === 1 ? Object.values(results)[0] : {};
+    return json(c, { ok: threw === 0, import: imp, ...single, results });
   });
 }

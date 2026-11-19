@@ -1,0 +1,10 @@
+{
+  "data": [
+    { "gid": "12345", "resource_type": "task", "name": "Bug Task", "resource_subtype": "default_task" }
+  ],
+  "next_page": {
+    "offset": "eyJ0eXAiOJiKV1iQLCJhbGciOiJIUzI1NiJ9",
+    "path": "/tasks?limit=50&offset=eyJ0eXAiOJiKV1iQLCJhbGciOiJIUzI1NiJ9",
+    "uri": "https://app.asana.com/api/1.0/tasks?limit=50&offset=eyJ0eXAiOJiKV1iQLCJhbGciOiJIUzI1NiJ9"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "id": "6XGgmFVcrG5RRjVr", "user_id": "1234567", "project_id": "6AcmePilot00000", "section_id": null, "parent_id": null,
+      "added_by_uid": "1234567", "assigned_by_uid": null, "responsible_uid": null, "labels": [], "deadline": null, "duration": null,
+      "is_collapsed": false, "checked": true, "is_deleted": false, "added_at": "2025-02-01T09:00:00Z", "completed_at": "2025-02-10T10:00:00Z",
+      "completed_by_uid": "1234567", "updated_at": "2025-02-10T10:00:00Z", "due": { "date": "2025-02-10", "timezone": null, "string": "Feb 10", "lang": "en", "is_recurring": false },
+      "priority": 4, "child_order": 1, "order_key": "a0", "content": "Buy milk", "description": "Pick up organic milk", "note_count": 0, "day_order": 1,
+      "completed_count": 1, "postponed_count": 0
+    }
+  ],
+  "next_cursor": "eyJwYWdlIjoyLCJsaW1pdCI6NTB9.aGFzaA"
+}

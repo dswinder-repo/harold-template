@@ -4,7 +4,7 @@ import { setTestEnv } from "./env.js";
 import { Hono } from "hono";
 import { SyncEngine, derivedTaskId } from "../../src/sync/engine.js";
 import {
-  LinearProvider, issueToItem, linearSignatureOk, priorityFromLinear, priorityToLinear, statusFromLinear, stateTypeFor, verifyLinearWebhook,
+  LinearProvider, issueToItem, linearEntry, linearSignatureOk, priorityFromLinear, priorityToLinear, statusFromLinear, stateTypeFor, verifyLinearWebhook,
 } from "../../src/sync/linear.js";
 import { ProjectMap } from "../../src/sync/projectmap.js";
 import { registerSyncRoutes, secretEquals, type SyncDeps } from "../../src/sync/routes.js";
@@ -393,8 +393,9 @@ describe("Supabase writes carry x-harold-origin", () => {
 
 describe("routes", () => {
   const deps = (over: Partial<SyncDeps> = {}): SyncDeps => ({
-    store: () => store, linear: () => ({ key: "k", team: "ENG", webhookSecret: SECRET }), projects: async () => ({ map, readAt: clock.iso(), stale: false }),
-    housekeeping: async () => undefined, syncSecret: () => SYNC_SECRET, now: clock.now, provider: () => provider, ...over,
+    store: () => store, providers: () => [{ ...linearEntry({ key: "k", team: "ENG", webhookSecret: SECRET }, linear.fetch, clock.now), build: () => provider }],
+    projects: async () => ({ map, readAt: clock.iso(), stale: false }),
+    housekeeping: async () => undefined, syncSecret: () => SYNC_SECRET, now: clock.now, ...over,
   });
   const appWith = (d: SyncDeps) => { const a = new Hono(); registerSyncRoutes(a, d); return a; };
 
@@ -475,8 +476,8 @@ describe("project-map cache (filled by authenticated requests)", () => {
     await refreshProjectCache(store, asRepo(new FakeRepo()), clock.t - 8 * 86_400_000);
     const app = new Hono();
     registerSyncRoutes(app, {
-      store: () => store, linear: () => ({ key: "k", team: "ENG", webhookSecret: SECRET }), projects: s => loadProjectCache(s, clock.t),
-      housekeeping: async () => undefined, syncSecret: () => SYNC_SECRET, now: clock.now, provider: () => provider,
+      store: () => store, providers: () => [{ ...linearEntry({ key: "k", team: "ENG", webhookSecret: SECRET }, linear.fetch, clock.now), build: () => provider }],
+      projects: s => loadProjectCache(s, clock.t), housekeeping: async () => undefined, syncSecret: () => SYNC_SECRET, now: clock.now,
     });
     const res = await app.request("/sync/catchup", { method: "POST", headers: { "x-harold-sync-secret": SYNC_SECRET } });
     expect(res.status).toBe(200);

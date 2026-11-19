@@ -1,0 +1,53 @@
+{
+  "object": "data_source",
+  "id": "1a44be12-0953-4631-b498-9e5817518db8",
+  "created_time": "2022-10-24T22:54:00.000Z",
+  "last_edited_time": "2023-03-08T18:25:00.000Z",
+  "title": [{ "type": "text", "text": { "content": "Tasks", "link": null }, "plain_text": "Tasks", "href": null }],
+  "parent": { "type": "database_id", "database_id": "a1d8501e-1ac1-43e9-a6bd-ea9fe6c8822b" },
+  "database_parent": { "type": "workspace", "workspace": true },
+  "in_trash": false,
+  "properties": {
+    "Title": { "id": "title", "name": "Title", "type": "title", "description": null, "title": {} },
+    "Status": {
+      "id": "Z%3ClH", "name": "Status", "type": "status", "description": null,
+      "status": {
+        "default_option": "Not started",
+        "options": [
+          { "id": "86ddb6ec-0627-47f8-800d-b65afd28be13", "name": "Not started", "color": "default", "description": null },
+          { "id": "opt-backlog", "name": "Backlog", "color": "gray", "description": null },
+          { "id": "opt-progress", "name": "In progress", "color": "blue", "description": null },
+          { "id": "opt-review", "name": "In review", "color": "purple", "description": null },
+          { "id": "opt-done", "name": "Done", "color": "green", "description": null },
+          { "id": "opt-cancel", "name": "Cancelled", "color": "red", "description": null }
+        ],
+        "groups": [
+          { "id": "grp-todo", "name": "To-do", "color": "gray", "option_ids": ["86ddb6ec-0627-47f8-800d-b65afd28be13", "opt-backlog"] },
+          { "id": "grp-prog", "name": "In progress", "color": "blue", "option_ids": ["opt-progress", "opt-review"] },
+          { "id": "grp-done", "name": "Complete", "color": "green", "option_ids": ["opt-done", "opt-cancel"] }
+        ]
+      }
+    },
+    "Due date": { "id": "M%3BBw", "name": "Due date", "type": "date", "description": null, "date": {} },
+    "Priority": {
+      "id": "prio", "name": "Priority", "type": "select", "description": null,
+      "select": { "options": [
+        { "id": "p-high", "name": "High", "color": "red", "description": null },
+        { "id": "p-med", "name": "Medium", "color": "yellow", "description": null },
+        { "id": "p-low", "name": "Low", "color": "gray", "description": null },
+        { "id": "p-urgent", "name": "Urgent 🔥", "color": "red", "description": null }
+      ] }
+    },
+    "Notes": { "id": "note", "name": "Notes", "type": "rich_text", "description": null, "rich_text": {} },
+    "Project": {
+      "id": "proj", "name": "Project", "type": "select", "description": null,
+      "select": { "options": [
+        { "id": "pr-eq", "name": "Acme Pilot", "color": "blue", "description": null },
+        { "id": "pr-ak", "name": "Orchard Labs", "color": "green", "description": null }
+      ] }
+    },
+    "Assignee": { "id": "asg", "name": "Assignee", "type": "people", "description": null, "people": {} },
+    "Created": { "id": "crt", "name": "Created", "type": "created_time", "description": null, "created_time": {} }
+  },
+  "url": "https://app.notion.com/p/1a44be1209534631b4989e5817518db8"
+}

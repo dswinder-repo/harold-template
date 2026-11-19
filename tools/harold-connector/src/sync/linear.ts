@@ -7,7 +7,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FetchLike } from "../identity.js";
-import type { SyncProvider } from "./provider.js";
+import type { ProviderEntry, SyncProvider } from "./provider.js";
 import type { ProjectMap } from "./projectmap.js";
 import type { ExternalItem, HaroldFields, Priority, Status, VerifyResult, WebhookAction, WebhookEvent } from "./types.js";
 
@@ -60,7 +60,7 @@ export const ISSUE_FIELDS = "id identifier url title description priority dueDat
 
 export function issueToItem(i: LinearIssue, map: ProjectMap): ExternalItem {
   const providerProject = i.project?.name?.trim() || null;
-  const project = map.fromLinear(providerProject);
+  const project = map.fromProvider("linear", providerProject);
   return {
     externalId: i.id, externalKey: i.identifier, externalUrl: i.url, updatedAt: i.updatedAt,
     fields: {
@@ -102,8 +102,20 @@ export function verifyLinearWebhook(rawBody: string, header: string | null, secr
 
 interface TeamInfo { id: string; states: { id: string; name: string; type: string; position?: number }[]; projects: { id: string; name: string }[] }
 
+/** Linear in the provider registry: verification needs only the webhook secret. */
+export function linearEntry(cfg: LinearSyncConfig, fetchImpl: FetchLike, now: () => number = Date.now): ProviderEntry {
+  return {
+    name: "linear", scope: cfg.team,
+    verifyWebhook: (req, raw) => verifyLinearWebhook(raw, req.headers.get("linear-signature"), cfg.webhookSecret, now()),
+    build: map => new LinearProvider(cfg, map, fetchImpl, now),
+  };
+}
+
 export class LinearProvider implements SyncProvider {
   readonly name = "linear";
+  readonly displayName = "Linear";
+  readonly itemNoun = "issue";
+  readonly callerChosenIds = true;
   private teamInfo?: Promise<TeamInfo>;
   constructor(private cfg: LinearSyncConfig, private map: ProjectMap, private fetchImpl: FetchLike, private now: () => number = Date.now) {}
 
@@ -182,7 +194,7 @@ export class LinearProvider implements SyncProvider {
   }
 
   private projectId(t: TeamInfo, haroldProject: string | null): string | undefined {
-    const want = this.map.toLinear(haroldProject)?.toLowerCase();
+    const want = this.map.toProvider("linear", haroldProject)?.toLowerCase();
     if (!want) return undefined;
     return t.projects.find(p => p.name.toLowerCase() === want)?.id;
   }

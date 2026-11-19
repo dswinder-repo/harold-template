@@ -1,0 +1,19 @@
+{
+  "data": {
+    "gid": "12345",
+    "resource_type": "task",
+    "name": "Buy catnip",
+    "notes": "Mittens really likes the stuff from Humboldt.",
+    "completed": false,
+    "completed_at": null,
+    "due_on": "2026-11-20",
+    "due_at": null,
+    "modified_at": "2026-11-18T14:55:00.000Z",
+    "permalink_url": "https://app.asana.com/0/1331/12345",
+    "parent": null,
+    "memberships": [
+      { "project": { "gid": "1331", "resource_type": "project", "name": "Orchard Labs" }, "section": { "gid": "9", "resource_type": "section", "name": "Untitled section" } }
+    ],
+    "tags": [ { "gid": "77", "resource_type": "tag", "name": "errands" } ]
+  }
+}

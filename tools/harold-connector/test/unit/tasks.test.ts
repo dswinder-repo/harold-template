@@ -158,6 +158,19 @@ describe("task_update", () => {
     expect(byId.text).toMatch(/title "Call the landlord" -> "Call the property manager"/);
     expect((await tasks.updateTask(sb(), load, { task: "ENG-999", state: "done" })).text).toMatch(/No task is linked to ENG-999/);
   });
+  it("by every provider's outside key shape (Todoist, Asana, Notion), and H-n stays Harold's own ref", async () => {
+    const keys = [["todoist", "TD-6Xr4PqW8mNc2", "TD-6Xr4PqW8mNc2"], ["asana", "AS-1201234567890123", "as-1201234567890123"], ["notion", "NO-1a2b3c4d", "no-1a2b3c4d"]];
+    for (const [provider, key, typed] of keys) {
+      const t = addTask({ title: `Task ${provider}`, ref: `H-${provider.length + 50}` }) as Record<string, unknown>;
+      const row = db.tables.tasks[db.tables.tasks.length - 1];
+      db.tables.task_links.push({ task_id: row.id, provider, external_id: `x-${provider}`, external_key: key, external_url: "https://example.com" });
+      const r = await tasks.updateTask(sb(), load, { task: typed, state: "done" });
+      expect(r.isError, `${provider}: ${r.text}`).toBeFalsy();
+      expect(r.text).toMatch(new RegExp(`^Updated ${t.ref} `));
+    }
+    expect((await tasks.updateTask(sb(), load, { task: "TD-nope", state: "done" })).text).toMatch(/No task is linked to TD-nope/);
+    expect((await tasks.updateTask(sb(), load, { task: "H-9999", state: "done" })).text).toMatch(/No task H-9999/);
+  });
 
   it("title, description, priority, due date ('none' clears), project; an unchanged field is not written", async () => {
     const r = await tasks.updateTask(sb(), load, { task: "H-12", description: "Ask about the lease", priority: "low", due_date: "2026-11-02", project: "Fundraise" });

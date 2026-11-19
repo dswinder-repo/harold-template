@@ -121,7 +121,7 @@ The CRM is part of Harold, not an add-on: every person the operator deals with i
 Offer each in turn, with one sentence on what it gives. "Skip for now" is always a good answer; each can be set up at any time by asking for it.
 
 - **The CRM web app** (`tools/harold-crm`): the CRM in a browser, with contacts, a pipeline, tasks and CSV import and export, on the same database. Steps: `tools/harold-crm/README.md`. Skip: the CRM works fully through the AI tool.
-- **Two-way sync with Linear.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. For an operator who also uses Linear, the connector can keep the task list and one Linear team in step, in both directions. Steps: the section "Optional: two-way sync with Linear" below. Skip: tasks stay in Harold's task list only.
+- **Two-way sync with an outside task tool.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. For an operator who also uses Linear, Todoist, Asana or Notion, the connector can keep the task list and that tool in step, in both directions. Any mix of the four works at once. Steps: the sections "Optional: two-way sync with Linear", "... with Todoist", "... with Asana" and "... with Notion" below. Skip: tasks stay in Harold's task list only.
 - **The hosted connector**, if step 8 used harold-mcp: it adds access from chat apps and other computers. Skip: sessions in the workspace folder do everything.
 - **Scheduled jobs**: the morning brief written before the operator sits down, and the weekly, monthly and month-end housekeeping, run on GitHub Actions or any scheduler (README, "Scheduled jobs in the cloud"). Skip: the brief runs live when the operator says good morning, and housekeeping runs in sessions when it is due.
 - **More AI tools.** Harold already works in every harness listed in `AGENTS.md`; some need a one-time step (trusting the hooks, or copying a snippet into the user's own configuration). Ask which tools they use besides this one and do that step for each. Skip: the tool they are using now is enough.
@@ -158,6 +158,113 @@ Do this only if the operator uses Linear and wants the same tasks in both places
     - Run `bin/harold task list`. The Linear tasks appear, each with its Linear key (for example `ENG-12`) beside its `H-` ref.
     - Create a test task: `bin/harold task create "Sync test" --due <tomorrow>`. Within a few seconds it appears in the Linear team. Rename it in Linear and run `bin/harold task list` again: the new title appears. Then run `bin/harold task cancel <ref>` and check it shows as canceled in Linear.
     - If something is missing, run `select * from public.sync_log order by at desc limit 20;` in the SQL editor. Each failed or skipped step is logged there with the reason. `bin/harold task conflicts` lists changes that clashed.
+
+### Optional: two-way sync with Todoist
+
+Do this only if the operator uses Todoist and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Todoist and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+
+**Tell the operator first, in plain words:**
+- Every open Todoist task is copied into Harold's task list, and every Harold task is copied into Todoist. A change in Harold reaches Todoist within seconds. A change in Todoist reaches Harold within seconds if you set up the webhook (step 5), otherwise within 10 minutes.
+- Todoist has no "in progress" or "cancelled" state. Harold marks them with the labels `in-progress` and `cancelled` (a cancelled task is also completed). The operator's other labels are left alone.
+- The sync never deletes anything in Todoist. A task deleted in Todoist cancels the open Harold task.
+- The sync can cover every project, or one project only (step 2).
+
+1. **Get a Todoist API token.** Todoist's developer documentation says the personal API token is in the account's integrations settings (`https://app.todoist.com/app/settings/integrations`). Copy it. It is a secret: it goes only into the places in step 3, never into a file in the repository or the chat. If you set up the webhook in step 5, you will replace it with your Todoist app's token.
+2. **Choose the scope.** By default every project syncs. To keep the sync to one project, note its exact name: it becomes `TODOIST_PROJECT`. New Harold tasks then go into that project, and the sync never moves a task out of it.
+3. **Set the settings on the connector host.** In the connector's project settings (on Vercel: **Settings**, then **Environment Variables**), add `TODOIST_API_TOKEN` and, if you chose one in step 2, `TODOIST_PROJECT`. Also add `SYNC_SECRET` if it is not there yet: run `openssl rand -hex 32` and keep the 64-character result (it is a password only the connector and the database share, and one value serves every sync tool). Nothing goes into the repository. Todoist needs nothing in `~/.harold/env`.
+4. **Redeploy the connector** so it reads the new settings (as in the Linear section, step 5). Then check that the webhook route exists: `curl -s -X POST <connector address>/webhooks/todoist` should answer with a JSON message such as `401` or `503`, not "Not found".
+5. **Set up the webhook (recommended).** Without it the 10-minute catch-up still carries every Todoist change to Harold. With it, changes arrive within seconds. Todoist's webhook documentation says:
+   - Webhooks are configured on an app in Todoist's App Management Console (`https://app.todoist.com/app/settings/integrations/app-management`). Create an app there. It has a client id and a **client secret**.
+   - Set the app's webhook callback URL to `<connector address>/webhooks/todoist`. Todoist accepts only `https` URLs with no port. Subscribe to these events: `item:added`, `item:updated`, `item:completed`, `item:uncompleted` and `item:deleted`.
+   - The connector must use that app's token instead of the personal token from step 1: either the app's test token, shown in the console, or an OAuth token for the app. Replace `TODOIST_API_TOKEN` on the connector host with it. Once that is done, changes made from any Todoist client on the account (the web, the phone, another token) arrive within seconds. This was tested live with the test token; Todoist's documentation describes only the OAuth route.
+   - Add the app's client secret to the connector host as `TODOIST_CLIENT_SECRET`, then redeploy again (step 4). The connector uses it to check the `X-Todoist-Hmac-SHA256` header of every delivery.
+
+   Todoist's documentation does not name the console's screens or fields (where the callback URL and the event list are entered), so go through them with the operator as they appear rather than by name.
+6. **Let the connector read the project list.** Ask the operator's AI tool to call `harold_today` once through the connector. This makes the connector read `harold/projects.md`, which it needs to match Todoist projects to Harold projects. Without it, every sync route answers 503. If a Todoist project name differs from a Harold project name, add `todoist_project: <exact Todoist name>` to that project's entry in `harold/projects.md`. A Harold task whose project Todoist lacks goes to the Inbox.
+7. **Run the Supabase script, once.** If the Linear section's step 8 (or this step for another tool) is already done, skip this. Otherwise do that step now: it stores the connector address and `SYNC_SECRET` in Supabase and installs the trigger and the 10-minute schedule. It is the same for every sync tool.
+8. **Run the first import.** In a new query in the Supabase **SQL Editor**, run:
+   ```sql
+   select public.harold_sync_call('/sync/catchup', '{"import": true, "provider": "todoist"}'::jsonb, 55000);
+   ```
+   It returns a number straight away. The import then runs in the connector: every open Todoist task, plus those finished in the last 30 days, is copied into Harold's task list. Running it twice is safe.
+9. **Check that it works.**
+   - Run `bin/harold task list`. The Todoist tasks appear, each with its Todoist key (`TD-` and an id) beside its `H-` ref.
+   - Create a test task: `bin/harold task create "Sync test" --due <tomorrow>`. Within a few seconds it appears in Todoist. Rename it in Todoist and run `bin/harold task list` again: the new title appears (within seconds with the webhook, within 10 minutes without). Then run `bin/harold task cancel <ref>` and check it is completed in Todoist with the label `cancelled`.
+   - If something is missing, run `select * from public.sync_log order by at desc limit 20;` in the SQL editor. Each failed or skipped step is logged there with the reason. `bin/harold task conflicts` lists changes that clashed.
+
+### Optional: two-way sync with Asana
+
+Do this only if the operator uses Asana and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Asana and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+
+**Tell the operator first, in plain words:**
+- Tasks in the chosen Asana workspace are copied into Harold's task list, and every Harold task is copied into Asana. A change in Harold reaches Asana within seconds. A change in Asana reaches Harold within seconds if you set up the webhooks (step 6), otherwise within 10 minutes.
+- Asana has no priority on a task, so priority is not synced at all. Harold's priority is never sent to Asana and never changed by it.
+- Asana has no "in progress" or "cancelled" state. Harold marks them with the tags `in-progress` and `cancelled` (a cancelled task is also completed). The tags are created in the workspace the first time they are needed. The operator's other tags are left alone.
+- The sync never deletes anything in Asana. A task deleted in Asana is seen only through the webhook, which cancels the open Harold task.
+- Subtasks are not synced.
+
+1. **Create an Asana personal access token.** Asana's developer documentation sends you to the developer console (`https://app.asana.com/0/my-apps`) to create a personal access token, and says each token needs a description. Name it "Harold". Copy the token. It is a secret: it goes only into the places in step 3, never into a file in the repository or the chat.
+2. **Find the workspace and choose the scope.** Note the workspace's name or its gid (Asana's id for it): it becomes `ASANA_WORKSPACE`. By default every project of the workspace syncs, which costs one request per project every 10 minutes. For a large workspace, or to keep the sync to one project, note that project's name or gid: it becomes `ASANA_PROJECT`. New Harold tasks then go into that project, and the sync never moves a task out of it.
+3. **Set the settings on the connector host.** In the connector's project settings (on Vercel: **Settings**, then **Environment Variables**), add `ASANA_ACCESS_TOKEN` and `ASANA_WORKSPACE`, plus `ASANA_PROJECT` if you chose one. Also add `SYNC_SECRET` if it is not there yet: run `openssl rand -hex 32` and keep the 64-character result (one value serves every sync tool). Nothing goes into the repository. Asana needs nothing in `~/.harold/env`.
+4. **Redeploy the connector** so it reads the new settings (as in the Linear section, step 5). Then check that the webhook route exists: `curl -s -X POST <connector address>/webhooks/asana` should answer with a JSON message such as `401` or `503`, not "Not found".
+5. **Let the connector read the project list.** Ask the operator's AI tool to call `harold_today` once through the connector. This makes the connector read `harold/projects.md`, which it needs to match Asana projects to Harold projects. Without it, every sync route answers 503. If an Asana project name differs from a Harold project name, add `asana_project: <exact Asana name>` to that project's entry in `harold/projects.md`.
+6. **Create the webhooks (recommended).** Without them the 10-minute catch-up still carries every Asana change to Harold, except a deletion. Asana sends task events only to a webhook on a project, so there is one webhook per project. The script `scripts/asana-webhook.ts` creates them. The connector must already be deployed with the settings above, because Asana calls it during the request to complete its handshake. In a terminal, in the workspace:
+   ```bash
+   cd tools/harold-connector
+   read -rs ASANA_ACCESS_TOKEN && export ASANA_ACCESS_TOKEN   # paste the token, press Enter
+   read -rs SYNC_SECRET && export SYNC_SECRET                 # the same value as on the connector host
+   export ASANA_WORKSPACE="<the value from the connector host>"
+   npm install            # first time only
+   npm run sync:asana-webhook -- <connector address>
+   ```
+   The values stay in that terminal only. The script prints one line per project: `created`, `exists` or `failed`. The webhook address it registers carries a token derived from `SYNC_SECRET`, and the connector refuses any delivery without it. Each webhook gets its own secret from Asana during the handshake, and the connector stores it. Run the script again after adding projects (it skips a project that already has a webhook), and again if Asana removes a webhook that has not answered for 24 hours.
+7. **Run the Supabase script, once.** If the Linear section's step 8 (or this step for another tool) is already done, skip this. Otherwise do that step now.
+8. **Run the first import.** In a new query in the Supabase **SQL Editor**, run:
+   ```sql
+   select public.harold_sync_call('/sync/catchup', '{"import": true, "provider": "asana"}'::jsonb, 55000);
+   ```
+   It returns a number straight away. The import then runs in the connector: every open task, plus those finished in the last 30 days, is copied into Harold's task list. Running it twice is safe.
+9. **Check that it works.**
+   - Run `bin/harold task list`. The Asana tasks appear, each with its Asana key (`AS-` and an id) beside its `H-` ref.
+   - Create a test task: `bin/harold task create "Sync test" --due <tomorrow>`. Within a few seconds it appears in Asana. Rename it in Asana and run `bin/harold task list` again: the new title appears (within seconds with the webhooks, within 10 minutes without). Then run `bin/harold task cancel <ref>` and check it is completed in Asana with the tag `cancelled`.
+   - If something is missing, run `select * from public.sync_log order by at desc limit 20;` in the SQL editor. Each failed or skipped step is logged there with the reason. `bin/harold task conflicts` lists changes that clashed.
+
+### Optional: two-way sync with Notion
+
+Do this only if the operator uses Notion and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Notion and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+
+**Tell the operator first, in plain words:**
+- The tasks live in one Notion database, which the operator chooses. Its pages are copied into Harold's task list, and every Harold task becomes a page in that database. A change in Harold reaches Notion within seconds. A change in Notion reaches Harold within seconds if you set up the webhook (step 7), otherwise within 10 minutes.
+- Notion databases are free-form, so Harold asks which property holds each field (title, status, due date, priority, notes, project) and which option means to do, in progress, done and cancelled. You propose a mapping in plain words, and nothing is saved until the operator says yes.
+- Without the webhook, a page moved to Notion's trash is not noticed by the catch-up. Only the webhook cancels the Harold task.
+- The sync never deletes a page.
+
+1. **Create an internal integration.** Notion's documentation says to open the developer portal (`https://app.notion.com/developers/connections`; you must be a workspace owner), click **New integration**, choose the workspace, and adjust the settings under the **Configuration** tab. Notion's developer portal calls this a connection. The secret (the API token) is on the **Configuration** tab, masked until you click **Show**. Copy it. It is a secret: it goes only into the place in step 3, never into a file in the repository or the chat. The integration needs to read, update and insert content. Notion's documentation does not say where those capabilities are set, so check them with the operator on the integration's settings screen.
+2. **Share the task database with the integration.** Notion's documentation describes this for a page: open it, click the **•••** menu at the top right, scroll to **Add connections**, search for the integration and select it. Do the same for the task database, and confirm with the operator that the database now lists the integration (the documentation does not describe the database case separately).
+3. **Set the settings on the connector host.** In the connector's project settings (on Vercel: **Settings**, then **Environment Variables**), add `NOTION_TOKEN` (the secret from step 1). Also add `SYNC_SECRET` if it is not there yet: run `openssl rand -hex 32` and keep the 64-character result (one value serves every sync tool). Nothing goes into the repository. Notion needs nothing in `~/.harold/env`. The choice of database and the field mapping are saved by a tool in step 5, not by a setting.
+4. **Redeploy the connector** so it reads the new settings (as in the Linear section, step 5). Then check that the webhook route exists: `curl -s -X POST <connector address>/webhooks/notion` should answer with a JSON message, not "Not found".
+5. **Set up the field mapping.** Ask the operator's AI tool to call the connector's `sync_setup_notion` tool. Only the owner runs it. Until it has saved a setup, the connector skips Notion and the other tools run as usual.
+   1. With no arguments it lists the databases shared with the integration. Name the task database (by name, id or URL).
+   2. It proposes, in plain words, which property holds each field and which option means each status and priority, and it checks every choice against the database's real properties. Read the proposal to the operator.
+   3. If the operator wants a different choice, call it again with the change (`fields`, `status_map` or `priority_map`). When the operator says yes, call it again with `confirm: true` and the same choices. That saves the setup.
+   Nothing is written to Notion by this tool. Running it again later changes the mapping without a redeploy. Run it again after adding options to a status or select property.
+6. **Let the connector read the project list.** Ask the operator's AI tool to call `harold_today` once through the connector. This makes the connector read `harold/projects.md`, which it needs to match Notion project values to Harold projects. Without it, every sync route answers 503. If a Notion value differs from a Harold project name, add `notion_project: <exact Notion value>` to that project's entry in `harold/projects.md`.
+7. **Set up the webhook (recommended).** Notion's first request carries the token that signs every later event, so the connector cannot check it yet. It therefore accepts that request only during a 30-minute window that the owner opens. In order:
+   1. Ask the operator's AI tool to call `sync_setup_notion` with `webhook: "expect"`. The 30 minutes start now.
+   2. In Notion's developer portal, open the integration, go to its **Webhooks** tab and click **+ Create a subscription**. Enter the webhook URL `<connector address>/webhooks/notion`, choose the page events, and click **Create subscription**. Notion's documentation lists the events by group; the connector acts on `page.created`, `page.properties_updated`, `page.content_updated`, `page.undeleted`, `page.moved` and `page.deleted`.
+   3. Notion then sends the connector a one-time verification token. Ask the operator's AI tool to call `sync_setup_notion` with `webhook: "reveal_token"`. It shows the token. Show it to the operator only, and never write it into a file in the repository.
+   4. In Notion, on the **Webhooks** tab, click **Verify**, paste the token, and click **Verify subscription**. If no token arrived, Notion's verification form has a **Resend token** button.
+   The token signs every later event. The connector keeps it in its database. Setting `NOTION_WEBHOOK_SECRET` on the connector host to the same value is optional.
+8. **Run the Supabase script, once.** If the Linear section's step 8 (or this step for another tool) is already done, skip this. Otherwise do that step now.
+9. **Run the first import.** In a new query in the Supabase **SQL Editor**, run:
+   ```sql
+   select public.harold_sync_call('/sync/catchup', '{"import": true, "provider": "notion"}'::jsonb, 55000);
+   ```
+   It returns a number straight away. The import then runs in the connector: every open page, plus finished pages edited in the last 30 days, is copied into Harold's task list. Running it twice is safe.
+10. **Check that it works.**
+    - Run `bin/harold task list`. The Notion pages appear, each with its Notion key (`NO-` and eight characters) beside its `H-` ref.
+    - Create a test task: `bin/harold task create "Sync test" --due <tomorrow>`. Within a few seconds it appears in the Notion database. Rename it in Notion and run `bin/harold task list` again: the new title appears (within seconds with the webhook, within 10 minutes without). Then run `bin/harold task cancel <ref>` and check the page's status in Notion.
+    - If something is missing, run `select * from public.sync_log order by at desc limit 20;` in the SQL editor. `bin/harold task conflicts` lists changes that clashed.
 
 ## Step 10: Check, boot and close
 

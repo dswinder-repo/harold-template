@@ -90,7 +90,7 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 
 ## Task Management
 
-- Harold's task list owns tasks and due dates. `bin/harold task list` shows them, and boot prints the ones due soon. With no database key, the list is read from `harold/tasks-snapshot.md`. Linear is optional: the connector can keep the task list and a Linear team in two-way sync (`playbook/core/setup.md`, step 9).
+- Harold's task list owns tasks and due dates. `bin/harold task list` shows them, and boot prints the ones due soon. With no database key, the list is read from `harold/tasks-snapshot.md`. Outside task tools are optional: the connector can keep the task list in two-way sync with Linear, Todoist, Asana or Notion (`playbook/core/setup.md`, step 9).
 - Every task has a due date and a project.
 - CRM tasks (`crm_task` / `harold_crm_task`) are only for follow-ups tied to one contact.
 

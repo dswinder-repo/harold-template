@@ -31,7 +31,8 @@ const PRI_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 export function renderSnapshot(tasks: TaskRow[], links: LinkRow[], nowMs: number): string {
   const today = localDate(nowMs);
   const weekEnd = addDays(today, 7);
-  const byTask = new Map(links.map(l => [l.task_id, l]));
+  const byTask = new Map<string, LinkRow[]>();
+  for (const l of links) byTask.set(l.task_id, [...(byTask.get(l.task_id) || []), l]);
   const groups: Record<string, TaskRow[]> = { "Overdue": [], "Due today": [], "Due this week": [], "In progress": [], "Later": [] };
   for (const t of tasks) {
     if (t.status !== "pending" && t.status !== "in_progress") continue;
@@ -43,13 +44,13 @@ export function renderSnapshot(tasks: TaskRow[], links: LinkRow[], nowMs: number
   }
   const sort = (a: TaskRow, b: TaskRow) => (a.due || "9999").localeCompare(b.due || "9999") || (PRI_ORDER[a.priority || "low"] - PRI_ORDER[b.priority || "low"]) || a.title.localeCompare(b.title);
   const line = (t: TaskRow) => {
-    const l = byTask.get(t.id);
+    const keys = (byTask.get(t.id) || []).filter(l => l.external_key).map(l => (l.external_url ? `[${l.external_key}](${l.external_url})` : l.external_key));
     const bits = [t.ref ? `**${t.ref}**` : null, t.title, t.project || "no project", t.due ? `due ${t.due}` : null, t.priority, t.status === "in_progress" ? "in progress" : null,
-      l?.external_key ? (l.external_url ? `[${l.external_key}](${l.external_url})` : l.external_key) : null].filter(Boolean);
+      ...keys].filter(Boolean);
     return `- ${bits.join(" · ")}`;
   };
   const out = ["# Tasks snapshot", "", `*Written ${localIso(nowMs)} by the connector sync.*`, "",
-    "Open tasks from Harold's task list (Supabase), grouped by due date in the owner's time zone. Generated: edit tasks with the task tools or in Linear, not here.", ""];
+    "Open tasks from Harold's task list (Supabase), grouped by due date in the owner's time zone. Generated: edit tasks with the task tools or in a linked tool (Linear, Todoist, Asana, Notion), not here.", ""];
   for (const [name, list] of Object.entries(groups)) {
     out.push(`## ${name} (${list.length})`, "");
     out.push(...(list.length ? list.sort(sort).map(line) : ["- none"]), "");

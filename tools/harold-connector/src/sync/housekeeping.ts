@@ -3,7 +3,7 @@
 // passing, rate-limited:
 //
 //   - the project-map cache: harold/projects.md, parsed, in sync_state 'harold-projects'
-//     ({projects: [{name, aliases, folder, linear_project}], read_at}), refreshed at most every 10 minutes.
+//     ({projects: [{name, aliases, folder, linear_project, provider_projects?}], read_at}), refreshed at most every 10 minutes.
 //     The sync routes read only this cache; without it they fail closed (project mapping need it).
 //   - harold/tasks-snapshot.md: rewritten only when the open-task list changed since the last write (hash in
 //     sync_state 'harold-snapshot'), at most every 30 minutes. The daily morning-brief job is an authenticated
@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import type { HaroldRepo } from "../github.js";
 import { ProjectMap, type CachedProject } from "./projectmap.js";
+import { KNOWN_PROVIDERS } from "./registry.js";
 import { SNAPSHOT_MIN_INTERVAL_MS, SNAPSHOT_PATH, renderSnapshot } from "./snapshot.js";
 import type { SyncStore } from "./store.js";
 
@@ -51,7 +52,8 @@ export async function maybeWriteSnapshot(store: SyncStore, repo: HaroldRepo, now
   const last = Date.parse(String(st.detail.written_at || "")) || 0;
   if (now - last < SNAPSHOT_MIN_INTERVAL_MS) return { written: false, reason: "written less than 30 minutes ago" };
   const tasks = await store.openTasks();
-  const links = await store.linksForTasks("linear", tasks.map(t => t.id));
+  const links = [];
+  for (const p of KNOWN_PROVIDERS) links.push(...(await store.linksForTasks(p, tasks.map(t => t.id))));
   const text = renderSnapshot(tasks, links, now);
   const hash = contentHash(text);
   if (hash === st.detail.hash) return { written: false, reason: "open tasks unchanged" };
