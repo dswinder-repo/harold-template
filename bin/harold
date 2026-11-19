@@ -1920,6 +1920,62 @@ function changedSince(root, sinceMs, dirs) {
   return out.map(p => path.relative(root, p));
 }
 
+// Heartbeat rollover. Status is the latest heartbeat, so the live file needs only recent entries: a file that grows
+// forever is cut from the start by readers with a size limit (a connector's file read, for one, stops at a fixed size) and
+// loses its newest lines. The live `<folder>/heartbeats.jsonl` keeps the last HB_DAYS days and never fewer than
+// HB_MIN entries; past HB_MAX_BYTES the oldest go too (still never below HB_MIN). Older entries move, unchanged and
+// in order, to `<folder>/heartbeats/YYYY-MM.jsonl` by the month of their date. Nothing is deleted; a line that is not
+// a dated heartbeat stays in the live file. The archive is written first and skips lines it already holds, so an
+// interrupted roll repeats safely. The live file keeps its newest lines at the end, so a heartbeat appended
+// elsewhere at the same time (the connector commits to the repo) merges cleanly on the next pull.
+const HB_DAYS = 14, HB_MIN = 10, HB_MAX_BYTES = 40000;
+const isHeartbeatPath = f => /(^|\/)heartbeats\.jsonl$/.test(f) || /(^|\/)heartbeats\/[^/]+(\/\d{4}-\d{2})?\.jsonl$/.test(f);
+function rollHeartbeatFile(root, rel, todayIso, opts = {}) {
+  const live = path.join(root, rel);
+  if (!fs.existsSync(live)) return null;
+  const text = readFull(live);
+  const lines = text.split('\n').filter(l => l.trim());
+  const dateOf = l => { try { const o = JSON.parse(l); return o && typeof o === 'object' && /^\d{4}-\d{2}-\d{2}$/.test(String(o.date || '')) ? o.date : null; } catch (_) { return null; } };
+  const dated = lines.map((l, i) => ({ l, i, d: dateOf(l) })).filter(x => x.d);
+  if (dated.length <= HB_MIN) return null;
+  const c = new Date(`${todayIso}T00:00:00Z`); c.setUTCDate(c.getUTCDate() - HB_DAYS);
+  const cutoff = c.toISOString().slice(0, 10);
+  const protectedIdx = new Set(dated.slice(-HB_MIN).map(x => x.i));
+  const move = new Set(dated.filter(x => x.d < cutoff && !protectedIdx.has(x.i)).map(x => x.i));
+  let size = lines.filter((_, i) => !move.has(i)).reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
+  for (const x of dated) { if (size <= HB_MAX_BYTES) break; if (protectedIdx.has(x.i) || move.has(x.i)) continue; move.add(x.i); size -= Buffer.byteLength(x.l) + 1; }
+  if (!move.size) return null;
+  const dir = live.replace(/\.jsonl$/, ''), byMonth = new Map();
+  for (const x of dated) if (move.has(x.i)) { const m = x.d.slice(0, 7); if (!byMonth.has(m)) byMonth.set(m, []); byMonth.get(m).push(x.l); }
+  if (!opts.dryRun) {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [m, ls] of byMonth) {
+      const af = path.join(dir, `${m}.jsonl`);
+      const have = new Set(fs.existsSync(af) ? readFull(af).split('\n') : []);
+      const add = ls.filter(l => !have.has(l));
+      if (add.length) { const prev = fs.existsSync(af) ? readFull(af) : ''; fs.writeFileSync(af, prev + (prev && !prev.endsWith('\n') ? '\n' : '') + add.join('\n') + '\n'); }
+    }
+    const keep = lines.filter((_, i) => !move.has(i));
+    const tmp = live + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, keep.join('\n') + '\n'); fs.renameSync(tmp, live);
+  }
+  return { rel, moved: move.size, kept: lines.length - move.size, months: [...byMonth.keys()].sort() };
+}
+function rollHeartbeats(root, todayIso, opts = {}) {
+  const rels = [...new Set((loadProjects(root).projects || []).map(heartbeatRel))];
+  const out = [];
+  for (const rel of rels) { try { const r = rollHeartbeatFile(root, rel, todayIso, opts); if (r) out.push(r); } catch (e) { out.push({ rel, error: e.message }); } }
+  return out;
+}
+function cmdHeartbeats(root, today, args) {
+  const sub = args[0] || 'roll', dryRun = args.includes('--dry-run');
+  if (sub !== 'roll') { console.error('usage: harold heartbeats roll [--dry-run]'); return 2; }
+  const res = rollHeartbeats(root, today.iso, { dryRun });
+  if (!res.length) { console.log(`heartbeats: nothing to roll (live files keep ${HB_DAYS} days, at least ${HB_MIN} entries, at most ${HB_MAX_BYTES} bytes)`); return 0; }
+  for (const r of res) console.log(r.error ? `${r.rel}: not rolled (${r.error})` : `${r.rel}: ${dryRun ? 'would move' : 'moved'} ${r.moved} to ${r.rel.replace(/\.jsonl$/, '')}/{${r.months.join(',')}}.jsonl, ${r.kept} kept`);
+  return res.some(r => r.error) ? 1 : 0;
+}
+
 // One close per session at a time. Two wirings of the same Stop event (project hooks plus a plugin, or a
 // harness that loads another tool's hook file) can start close twice at once, and two closes racing
 // through git add/commit/push corrupt each other. The second one steps aside; the first does the work.
@@ -1987,7 +2043,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
   const sinceBase = gitChangedSet(root, baseCommit);
-  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/tasks-snapshot.md' && f !== 'harold/graph.json' && !f.endsWith('search.db') && (!sinceBase || sinceBase.has(f)));
+  const changed = changedSince(root, sinceMs, kbDirs).filter(f => !f.startsWith('vault/daily/') && !f.startsWith(SESSIONS_DIR) && f !== 'harold/trigger-log.jsonl' && f !== 'harold/crm-queue.jsonl' && f !== 'harold/tasks-snapshot.md' && f !== 'harold/graph.json' && !f.endsWith('search.db') && !isHeartbeatPath(f) && (!sinceBase || sinceBase.has(f)));
   // 2a. new work must belong to a project. A synthesis note or decision filed this session names its project in
   // frontmatter (`project: <name, alias or folder from harold/projects.md>`, or `project: global`), and a new
   // top-level folder must be a project's folder. Without this a venture lived for days as a person card plus a loose
@@ -2074,6 +2130,9 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     if (!readFull(note).includes(`**Maintenance (${today.iso}):**`)) fs.appendFileSync(note, line);
     notes.push(`maintenance line appended to ${path.relative(root, note)}`);
   }
+
+  // 5a. heartbeat rollover: live heartbeat files keep recent entries, older ones move to monthly files. Never a block.
+  for (const r of rollHeartbeats(root, today.iso)) notes.push(r.error ? `heartbeats not rolled: ${r.rel} (${r.error})` : `heartbeats rolled: ${r.rel}, ${r.moved} moved to ${r.months.join(', ')}, ${r.kept} kept`);
 
   // 5b. link graph: refresh the index, then harold/graph.json (the compact graph, no note text, that a chat
   //     surface without the workspace can read from the repo; rewritten only when it changed, so it rides along
@@ -3057,13 +3116,14 @@ function main() {
     case 'housekeeping': code = cmdHousekeeping(root, today, argv.slice(1), now); break;
     case 'search': case 'related': case 'backlinks': code = cmdIndexQuery(root, cmd, argv.slice(1)); break;
     case 'pulse': code = cmdPulse(root, argv.slice(1)); break;
+    case 'heartbeats': code = cmdHeartbeats(root, today, argv.slice(1)); break;
     case 'index': console.log(rebuildIndex(root, opts.full)); break;
     case 'update': code = cmdUpdate(root, today, argv.slice(1)); break;
     case 'root': console.log(root); break;
     default:
       console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  learnings [--project <slug>] [--severity <s>] [--all]   print learnings in full (default: the critical ones; with
                      --project, that project's critical and warning entries plus global ones)
-  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database; queues offline)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database; queues offline)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  heartbeats roll [--dry-run]   move old heartbeats out of each live heartbeats.jsonl into monthly files (close does this)\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);
