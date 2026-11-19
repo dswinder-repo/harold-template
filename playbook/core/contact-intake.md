@@ -131,7 +131,7 @@ All of these, together, for every new contact:
 
 ## Step 5 — If the CRM is unreachable
 
-Queue each CRM action (the payload uses `crm_upsert_contact` / `harold_upsert_contact`'s field names: `org`, `category` for the type, `categories` for labels). `bin/harold boot` and `bin/harold close` apply the queue automatically the next time they run with the CRM reachable, skipping anything already applied; `bin/harold replay` does it on demand (`--dry-run` to preview):
+Queue each CRM action (the payload uses `crm_upsert_contact` / `harold_upsert_contact`'s field names: `org`, `category` for the type, `categories` for labels). A queued action is not in the database yet. Where the database key is, `bin/harold boot` and `bin/harold close` replay the queue once the CRM answers, skipping anything already applied; `bin/harold replay` does it on demand (`--dry-run` to preview). Elsewhere, the command prints the connector call that applies it: if the connector is attached, make that call, then run `bin/harold queue done <id> "<result>"`. Close blocks the turn while anything waits with neither done nor `bin/harold queue defer`:
 ```bash
 bin/harold file crm '{"contact":"Jane Doe","action":"upsert_contact","payload":{"org":"Acme Corp","category":"partner","categories":["advisor"],"status":"pending"}}'
 bin/harold file crm '{"contact":"Jane Doe","action":"crm_task","payload":{"title":"Initial outreach: Jane Doe (Acme Corp)","due_date":"YYYY-MM-DD"}}'

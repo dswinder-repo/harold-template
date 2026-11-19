@@ -933,6 +933,13 @@ function cmdBoot(root, today, opts, hook) {
   L.push('');
   L.push(...taskBootLines(root, today));
   L.push('');
+  const waiting = crmQueue.stuck ? pendingWrites(root, today) : [];
+  if (waiting.length) {
+    L.push(`## Waiting writes — DUE: ${waiting.length} queued write${waiting.length === 1 ? '' : 's'} NOT in the database (${P(CRM_QUEUE)}); they cannot be replayed here (${crmQueue.why}). If this session has the connector, apply each through it now:`);
+    L.push(...pendingWriteLines(root, waiting));
+    L.push(`   After each: ${CLI(root)} queue done <id> "<what the connector returned>". No connector here: ${CLI(root)} queue defer <id>|all "<reason>" (replay applies them where the database key is). harold close blocks the turn until each is done or deferred.`);
+    L.push('');
+  }
   L.push('## Scheduled work (AGENTS.md → Scheduled Triggers). Due items run THIS session, then are recorded with:');
   L.push(`   ${CLI(root)} file trigger <id> ran|skipped|deferred "<reason>"   — harold close blocks the turn until every due item is recorded.`);
   if (!c.triggers.due.length && !c.triggers.overdue.length) L.push('- nothing due, nothing overdue');
@@ -941,7 +948,7 @@ function cmdBoot(root, today, opts, hook) {
   c.triggers.info.forEach(i => L.push(`- NOTE     ${i}`));
   if (c.warnings.length) { L.push(''); L.push('## Warnings'); c.warnings.forEach(w => L.push(`- ${w}`)); }
   L.push('');
-  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every contact touched must be filed (CRM unreachable → ${CLI(root)} file crm '<json>' appends to harold/crm-queue.jsonl, which boot and close apply automatically once the CRM answers). harold close verifies these and commits + pushes the repo.`);
+  L.push(`## Exit condition: filing. Before this session ends, a vault/daily note for ${today.iso} (vault/daily/${today.iso}-<slug>.md) must exist describing what changed; every contact touched must be filed (with the database key, directly; without it, through the connector's CRM tools if attached; with neither, ${CLI(root)} file crm '<json>' queues it in harold/crm-queue.jsonl); every queued write must be in the database (replayed where the key is, or applied through the connector and marked with ${CLI(root)} queue done) or deferred with ${CLI(root)} queue defer. harold close verifies these and commits + pushes the repo.`);
   if (opts.full) {
     L.push('\n\n# FULL CONTEXT DUMP (--full)\n');
     ['AGENTS.md', memoryFile(root), 'dashboard/index.md', 'dashboard/status.md', 'dashboard/processes.md', 'harold/projects.md', 'harold/blockers.md', 'harold/alerts.md', 'harold/events.md'].forEach(rel => { L.push(`\n\n===== ${rel} =====\n`); L.push(readFull(P(rel))); });
@@ -1015,7 +1022,7 @@ const MONITORS = [
   'ALWAYS-ON MONITORS (dashboard/processes.md). Run EVERY operator message through these, in the same turn, before the deliverable:',
   '  • New venture / project / client / workstream that `harold where` cannot resolve → playbook/core/project-intake.md (folder, map entry, card, Linear project). Exploratory or not yet agreed is never a reason to skip.',
   '  • New name with business context → playbook/core/contact-intake.md (CRM + vault card; a thin entry with TODOs beats none).',
-  '  • Task signal or commitment ("I want to talk to him this week") → a task in Harold\'s list (bin/harold task create, or task_create on the connector) with a due date and a project.',
+  '  • Task signal or commitment ("I want to talk to him this week") → a task in Harold\'s list with a due date and a project: bin/harold task create where the database key is; with no key, task_create on the connector if attached (with neither, the command queues it).',
   '  • New intel → playbook/core/analyst.md. Research synthesis from 3+ sources → filed under its project.',
   '  • Before ANY output → playbook/core/pre-flight-verification.md (names, dates, never invent a name).',
   '  • Deliverables go TO the operator: inline, an artifact, or a sent file. Never a repo path.',
@@ -1034,6 +1041,8 @@ function contextDigest(root, today, L, c, n, bytes) {
   D.push(...MONITORS);
   D.push('');
   const due = [...c.triggers.due.map(d => `DUE ${d.id}`), ...c.triggers.overdue.map(d => `OVERDUE ${d.id} (say it out loud)`)];
+  const waitingLine = L.find(l => l.startsWith('## Waiting writes'));
+  if (waitingLine) D.push(`${waitingLine.replace(/^## /, '')} List them with: ${CLI(root)} queue`);
   D.push(`Scheduled work: ${due.length ? due.join(', ') : 'nothing due'}. Critical learnings: ${c.learnings.critical.length}. Active projects: ${c.projects.projects.filter(p => p.status === 'active').length}. Blockers: ${c.ctx.blockers.rows.length}.`);
   D.push(L[L.length - 1]);
   return D.join('\n');
@@ -1339,9 +1348,9 @@ function replayCrmQueue(root, opts = {}) {
   const n = `${pending.length} queued CRM write${pending.length === 1 ? '' : 's'}`;
   if (!opts.manual && inScheduledJob(root)) { res.line = `CRM queue: ${n} waiting; scheduled jobs never apply it (the next session does)`; return res; }
   const cfg = crmConfig();
-  if (!cfg) { res.line = `CRM queue: ${n} waiting; no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in the environment or ${envFilePath()}, so nothing was replayed here. They go in from the next boot or close that has the CRM credentials`; return res; }
+  if (!cfg) { res.line = `CRM queue: ${n} waiting; no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in the environment or ${envFilePath()}, so nothing was replayed here. With the connector attached, apply each through it, then mark it: ${CLI(root)} queue done <id> "<result>" (list: ${CLI(root)} queue). Otherwise they go in from the next boot or close that has the key`; res.stuck = true; res.why = 'no database key here'; return res; }
   const probe = crmRequest(cfg, 'GET', 'contacts?select=id&limit=1', undefined, { timeout: 6 });
-  if (!probe.ok) { res.line = `CRM queue: ${n} waiting; the CRM is not answering (${probe.err}), kept queued for the next boot or close`; return res; }
+  if (!probe.ok) { res.line = `CRM queue: ${n} waiting; the CRM is not answering (${probe.err}), kept queued for the next boot or close. With the connector attached, apply each through it, then mark it: ${CLI(root)} queue done <id> "<result>" (list: ${CLI(root)} queue)`; res.stuck = true; res.why = `the database is not answering: ${probe.err}`; return res; }
   // One replayer at a time: two harnesses can boot the same workspace within a second of each other.
   const claim = `${qp}.replaying`;
   if (!dry) {
@@ -1386,6 +1395,113 @@ function cmdReplay(root, opts) {
   if (r.details.length) console.log(r.details.join('\n'));
   console.log(r.line);
   return r.failed.length ? 1 : 0;
+}
+
+// ───────────────────────── waiting writes: `harold queue` ─────────────────────────
+// A queued row is a write that is NOT in the database yet. Where this program has the database key, boot, close and
+// `harold replay` apply the queue themselves. Where it has no key (or the database is not answering), a queued write
+// must never wait in silence: a session with the connector attached applies it through the connector's tool
+// (task_create, task_update, crm_upsert_contact, crm_log_interaction, crm_task) and marks it with `queue done`; a
+// session with neither records why it cannot today with `queue defer`. Close blocks the turn until one of the two.
+//   queue [list] [--json]            every pending row: id, age, what it is, the connector call that applies it
+//   queue done <id> "<result>"       the write was applied through the connector (put the H- ref in the result)
+//   queue defer <id>|all "<reason>"  cannot apply it today (for example: no connector and no key in this session)
+// Ids: a task row keeps its Q-<id>; a CRM row gets C-<6 hex>, derived from its timestamp, contact and action.
+const UPSERT_ARGS = ['name', 'org', 'category', 'categories', 'warmth', 'status', 'priority', 'email', 'phone', 'location', 'website', 'notes', 'region', 'investor_type', 'contact_id'];
+const INTERACTION_ARGS = ['type', 'subject', 'body', 'occurred_at', 'contact_name', 'contact_id', 'org'];
+const CRM_TASK_ARGS = ['action', 'task_id', 'title', 'description', 'priority', 'status', 'due_date', 'contact_name', 'contact_id', 'org'];
+const TASK_STATE = { start: 'start', done: 'done', cancel: 'cancel', reopen: 'todo' };
+function queueRowId(row) {
+  if (row.action === 'task' && row.payload && row.payload.qid) return `Q-${row.payload.qid}`;
+  return `C-${crypto.createHash('sha1').update(`${row.ts}|${row.contact}|${row.action}`).digest('hex').slice(0, 6)}`;
+}
+const pick = (o, keys) => { const r = {}; keys.forEach(k => { if (o[k] !== undefined && o[k] !== null && o[k] !== '') r[k] = o[k]; }); return r; };
+// The connector call that applies one queued row: { tool, args, note }.
+function connectorCall(root, row) {
+  const p = row.payload || {};
+  if (row.action === 'task') {
+    let ref = p.ref, note = '';
+    if (ref && /^Q-/i.test(ref)) { const q = queuedTaskRef(root, ref.slice(2)); if (q.ref) ref = q.ref; else note = `use the H- ref that applying ${ref} gives you`; }
+    if (p.op === 'create') return { tool: 'task_create', args: pick(p, ['title', 'description', 'priority', 'due_date', 'project', 'contact_name']) };
+    if (p.op === 'update') {
+      const f = { ...(p.fields || {}) };
+      if (f.due_date === null) f.due_date = 'none';
+      if (f.project === null) f.project = 'none';
+      return { tool: 'task_update', args: { task: ref, ...pick(f, ['title', 'description', 'priority', 'due_date', 'project']), ...(f.description === '' ? { description: '' } : {}) }, note };
+    }
+    return { tool: 'task_update', args: { task: ref, state: TASK_STATE[p.op] || p.op }, note };
+  }
+  const q = { ...p };
+  for (const [from, to] of Object.entries(CONTACT_ALIASES)) if (q[from] !== undefined && q[to] === undefined) q[to] = q[from];
+  if (row.action === 'upsert_contact') return { tool: 'crm_upsert_contact', args: pick({ ...q, name: q.name || row.contact }, UPSERT_ARGS) };
+  if (row.action === 'log_interaction') return { tool: 'crm_log_interaction', args: pick({ ...q, contact_name: q.contact_id ? q.contact_name : (q.contact_name || row.contact) }, INTERACTION_ARGS) };
+  if (row.action === 'crm_task') return { tool: 'crm_task', args: pick({ ...q, action: q.action || 'create', contact_name: q.contact_name || row.contact }, CRM_TASK_ARGS) };
+  return { tool: null, args: {}, note: `unknown action "${row.action}": nothing to apply` };
+}
+function queueWhat(row) {
+  const p = row.payload || {};
+  if (row.action === 'task') return p.op === 'create' ? `task create "${p.title}"` : `task ${p.op} ${p.ref}`;
+  return `${row.action}${row.action === 'crm_task' ? ':' + (p.action || 'create') : ''} for ${row.contact}`;
+}
+function shortAge(ts) {
+  const ms = Date.now() - Date.parse(ts || ''); if (isNaN(ms)) return '?';
+  const m = Math.max(0, Math.round(ms / 60000));
+  return m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+}
+// Every pending (unapplied) queue row, with what it takes to apply it.
+function pendingWrites(root, today) {
+  return readQueue(path.join(root, CRM_QUEUE)).map((it, idx) => ({ ...it, idx })).filter(it => queuePending(it.row)).map(it => {
+    const c = connectorCall(root, it.row);
+    const deferredToday = !!(today && it.row.deferred_on === today.iso);
+    return { idx: it.idx, row: it.row, id: queueRowId(it.row), age: shortAge(it.row.ts), ts: it.row.ts, what: queueWhat(it.row), tool: c.tool, args: c.args, note: c.note || '',
+      deferredToday, deferReason: deferredToday ? it.row.deferred_reason : undefined, lastError: it.row.last_error };
+  });
+}
+const callText = w => w.tool ? `${w.tool} ${JSON.stringify(w.args)}${w.note ? `  (${w.note})` : ''}` : w.note;
+// What a session sees the moment a write is queued instead of written.
+function notInDatabaseLines(root, row, why) {
+  const w = { row, id: queueRowId(row), ...connectorCall(root, row) };
+  return [
+    `NOT IN THE DATABASE YET (${why}). Queue id ${w.id}, kept in ${CRM_QUEUE} so nothing is lost.`,
+    `If this session has the connector, apply it now: ${callText(w)}`,
+    `Then mark it applied: ${CLI(root)} queue done ${w.id} "<what the connector returned${row.action === 'task' && (row.payload || {}).op === 'create' ? ', with the H- ref' : ''}>"   (no connector here: ${CLI(root)} queue defer ${w.id} "<reason>"; ${CLI(root)} replay applies it where the database key is)`,
+  ].join('\n');
+}
+// Boot's and close's list of waiting writes.
+function pendingWriteLines(root, list) {
+  return list.map(w => `- ${w.id}  ${w.age} old  ${w.what}${w.deferredToday ? `  [deferred today: ${w.deferReason}]` : ''}${w.lastError ? `  [last replay error: ${String(w.lastError).slice(0, 120)}]` : ''}\n    apply: ${callText(w)}`);
+}
+function cmdQueue(root, today, argv) {
+  const sub = argv[0] && !argv[0].startsWith('--') ? argv[0] : 'list';
+  const usage = `usage: ${CLI(root)} queue [list] [--json]\n       ${CLI(root)} queue done <id> "<result>"\n       ${CLI(root)} queue defer <id>|all "<reason>"`;
+  const qp = path.join(root, CRM_QUEUE);
+  const list = pendingWrites(root, today);
+  if (sub === 'list') {
+    if (argv.includes('--json')) { console.log(JSON.stringify(list.map(({ idx, row, ...w }) => w), null, 2)); return 0; }
+    if (!list.length) { console.log(`Nothing waiting in ${CRM_QUEUE}: every queued write is in the database.`); return 0; }
+    console.log([`${list.length} write${list.length === 1 ? '' : 's'} waiting in ${CRM_QUEUE}, NOT in the database:`, ...pendingWriteLines(root, list),
+      `Where the database key is: ${CLI(root)} replay. Otherwise apply each through the connector, then: ${CLI(root)} queue done <id> "<result>". Cannot apply one today: ${CLI(root)} queue defer <id> "<reason>".`].join('\n'));
+    return 0;
+  }
+  if (sub === 'done' || sub === 'defer') {
+    const id = argv[1], text = argv.slice(2).join(' ').trim();
+    if (!id || !text) { console.error(`${sub === 'done' ? 'a result is required: what the connector returned (with the H- ref for a new task)' : 'a reason is required'}\n${usage}`); return 2; }
+    const all = sub === 'defer' && id.toLowerCase() === 'all';
+    const targets = all ? list : list.filter(w => w.id.toLowerCase() === id.toLowerCase());
+    if (!targets.length) {
+      const any = readQueue(qp).find(it => it.row && queueRowId(it.row).toLowerCase() === id.toLowerCase());
+      console.error(any ? `${id} is not waiting: it was already ${any.row.refused ? 'refused' : 'applied'}${any.row.result ? ` (${any.row.result})` : ''}` : all ? 'nothing waiting to defer' : `no queued write ${id} (see ${CLI(root)} queue)`);
+      return any || all ? 0 : 2;
+    }
+    const at = new Date().toISOString();
+    for (const w of targets) {
+      const patch = sub === 'done' ? { replayed: true, replayed_at: at, replayed_to: 'connector', result: text, last_error: undefined } : { deferred_on: today.iso, deferred_reason: text };
+      if (!patchQueueRow(qp, w.idx, w.row, patch)) { console.error(`${w.id}: the queue changed under this command; run it again`); return 1; }
+      console.log(sub === 'done' ? `marked ${w.id} applied through the connector: ${text}` : `deferred ${w.id} for today: ${text}`);
+    }
+    return 0;
+  }
+  console.error(`unknown queue command "${sub}"\n${usage}`); return 2;
 }
 
 // ───────────────────────── Harold's own task list ─────────────────────────
@@ -1584,7 +1700,7 @@ function queuedTaskRef(root, qid) {
     if (!r || r.action !== 'task' || !r.payload || String(r.payload.qid).toLowerCase() !== String(qid).toLowerCase()) continue;
     if (r.refused) return { error: `Q-${qid} was refused when the queue was applied (${r.result || 'no reason recorded'}), so there is no task to change` };
     if (r.replayed === true) { const m = String(r.result || '').match(/\b(H-\d+|T-[0-9a-f]{8})\b/); return m ? { ref: m[1] } : { error: `Q-${qid} was applied but its ref was not recorded; look the task up with ${CLI(root)} task list` }; }
-    return { error: `Q-${qid} is still in the offline queue (not in the database yet). Apply it with ${CLI(root)} replay once the database answers, then use its H- ref`, retry: true };
+    return { error: `Q-${qid} is still in the offline queue (not in the database yet). Apply it with ${CLI(root)} replay where the database key is, or through the connector and mark it with ${CLI(root)} queue done Q-${qid} "<result with the H- ref>", then use its H- ref`, retry: true };
   }
   return { error: `no queued task Q-${qid}` };
 }
@@ -1657,8 +1773,9 @@ function taskPatchOnline(cfg, sc, root, ref, patch, dry) {
 function queueTask(root, today, payload) {
   const qid = crypto.randomBytes(3).toString('hex');
   const qp = path.join(root, CRM_QUEUE);
-  withLock(qp, () => appendLine(qp, { contact: '(task)', action: 'task', payload: { ...payload, qid }, date: today.iso, ts: new Date().toISOString(), replayed: false }));
-  return `Q-${qid}`;
+  const row = { contact: '(task)', action: 'task', payload: { ...payload, qid }, date: today.iso, ts: new Date().toISOString(), replayed: false };
+  withLock(qp, () => appendLine(qp, row));
+  return row;
 }
 function replayTask(cfg, root, row, dry) {
   const p = row.payload || {};
@@ -1739,7 +1856,7 @@ function taskListCmd(root, today, f) {
     } else why = `the database is not answering (${sc.err})`;
   } else why = 'no database key here (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)';
   if (!tasks) { snap = readTaskSnapshot(root); if (snap) tasks = snap.tasks; }
-  if (!tasks) { console.error(`no task list available: ${why}, and no ${TASK_SNAPSHOT}. Writes still work: they queue in ${CRM_QUEUE} and are applied once the database answers.`); return 1; }
+  if (!tasks) { console.error(`no task list available: ${why}, and no ${TASK_SNAPSHOT}. Write through the connector (task_create, task_update) if this session has it; with neither, writes queue in ${CRM_QUEUE} (${CLI(root)} queue).`); return 1; }
   if (f.project) { const want = projectFilter(root, f.project); tasks = tasks.filter(t => (t.project || '').toLowerCase() === want); if (closed) closed = closed.filter(t => (t.project || '').toLowerCase() === want); }
   const groups = groupTasks(tasks, today.iso);
   const queued = readQueue(path.join(root, CRM_QUEUE)).filter(it => it.row && it.row.action === 'task' && queuePending(it.row)).length;
@@ -1752,7 +1869,7 @@ function taskListCmd(root, today, f) {
   if (snap && f.all) L.push('(--all needs the live database: the snapshot holds open tasks only)', '');
   let out = L.join('\n') + taskTables(groups);
   if (closed) out += `### Closed, most recent ${closed.length}\n${closed.length ? `${TASK_HEAD}\n${closed.map(taskRow).join('\n')}\n` : ''}`;
-  if (queued) out += `\n${queued} queued task write${queued === 1 ? '' : 's'} not yet in the database (${CLI(root)} replay applies them).\n`;
+  if (queued) out += `\n${queued} queued task write${queued === 1 ? '' : 's'} not yet in the database (${CLI(root)} queue lists them with the connector call that applies each; ${CLI(root)} replay applies them where the key is).\n`;
   console.log(out.trimEnd());
   return 0;
 }
@@ -1779,8 +1896,8 @@ function taskCreateCmd(root, today, pos, f) {
       return 0;
     } catch (e) { if (!e.down) throw e; sc = { reachable: false, err: e.message }; }
   }
-  const q = queueTask(root, today, { op: 'create', title, description: rec.description, priority: rec.priority, due_date: rec.due_date, project: rec.project, contact_name: rec.contact_name });
-  console.log(`queued ${q} "${title}" (${offlineNote(cfg, sc)}). It is written when the database answers (${CLI(root)} replay, or the next boot or close with the key).`);
+  const qr = queueTask(root, today, { op: 'create', title, description: rec.description, priority: rec.priority, due_date: rec.due_date, project: rec.project, contact_name: rec.contact_name });
+  console.log(`queued ${queueRowId(qr)} "${title}" (${offlineNote(cfg, sc)}).\n${notInDatabaseLines(root, qr, offlineNote(cfg, sc))}`);
   return 0;
 }
 
@@ -1808,8 +1925,8 @@ function taskChangeCmd(root, today, sub, pos, f) {
       return 0;
     } catch (e) { if (!e.down) throw e; sc = { reachable: false, err: e.message }; }
   }
-  const q = queueTask(root, today, sub === 'update' ? { op: 'update', ref, fields } : { op: sub, ref });
-  console.log(`queued ${q}: ${sub} ${ref} (${offlineNote(cfg, sc)}). It is applied when the database answers (${CLI(root)} replay, or the next boot or close with the key).`);
+  const qr = queueTask(root, today, sub === 'update' ? { op: 'update', ref, fields } : { op: sub, ref });
+  console.log(`queued ${queueRowId(qr)}: ${sub} ${ref} (${offlineNote(cfg, sc)}).\n${notInDatabaseLines(root, qr, offlineNote(cfg, sc))}`);
   return 0;
 }
 
@@ -1860,12 +1977,12 @@ function taskBootLines(root, today) {
   const L = [];
   if (!list) {
     L.push(`## Tasks (Harold's own list) — UNAVAILABLE: ${cfg ? `the database is not answering (${note})` : 'no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY here'}, and no ${TASK_SNAPSHOT}`);
-    L.push(`Action items and commitments still become tasks: ${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD queues the write in ${CRM_QUEUE} (ref Q-<id>) and applies it once the database answers. Or the connector's task_create.`);
+    L.push(`Action items and commitments still become tasks: task_create on the connector, if this session has it (it returns the H- ref). With neither key nor connector, ${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD queues the write in ${CRM_QUEUE} (ref Q-<id>); it is not in the database until it is replayed where the key is, or applied through the connector and marked with ${CLI(root)} queue done.`);
     return L;
   }
   const g = groupTasks(list, today.iso);
   L.push(`## Tasks (Harold's own list) — ${tasks ? `live, ${list.length} open` : `no database key here; snapshot ${ageWords(snap.ageH)} old (${path.join(root, TASK_SNAPSHOT)}, written by ${snap.writer})`}`);
-  L.push(`Overdue ${g['Overdue'].length} · due today ${g['Due today'].length} · due this week ${g['Due this week'].length} · in progress ${g['In progress'].length} · later or undated ${g['Later or undated'].length}. Full list: ${CLI(root)} task list. Update: ${CLI(root)} task start|done <ref>; new: ${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD`);
+  L.push(`Overdue ${g['Overdue'].length} · due today ${g['Due today'].length} · due this week ${g['Due this week'].length} · in progress ${g['In progress'].length} · later or undated ${g['Later or undated'].length}. Full list: ${CLI(root)} task list. ${tasks ? `Update: ${CLI(root)} task start|done <ref>; new: ${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD` : `${cfg ? 'The database is not answering' : 'No database key here'}, so writes go through the connector if attached: task_create, task_update (with neither, ${CLI(root)} task create|start|done queues them).`}`);
   if (!migrated) L.push(`The database has not been migrated to the new task list yet (tools/harold-mcp/migrations/2026-11-18-task-list.sql): refs are T-<8 characters>, projects and outside links are not stored.`);
   const row = t => `- ${t.ref} [${t.status}${t.due ? `, due ${t.due}` : ''}, ${t.priority}] ${t.title}${t.project ? ` (${t.project})` : ''}${t.contact ? ` — ${t.contact}` : ''}${t.links && t.links.length ? ` [${t.links.join(', ')}]` : ''}`;
   g['Overdue'].slice(0, 8).forEach(t => L.push(row(t)));
@@ -2039,6 +2156,13 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
 
   // 1b. queued CRM writes go in as soon as the CRM answers. Never a block: an outage is not a filing failure.
   if (readQueue(path.join(root, CRM_QUEUE)).some(it => queuePending(it.row))) notes.push(replayCrmQueue(root).line);
+  // 1c. a write still in the queue is not in the database. Outside scheduled jobs (which never write to the CRM), it
+  //     blocks the turn until it is applied (replayed here, or through the connector and marked `queue done`) or
+  //     deferred for today with a reason.
+  if (!inScheduledJob(root)) {
+    const waiting = pendingWrites(root, today).filter(w => !w.deferredToday);
+    if (waiting.length) problems.push(`${waiting.length} queued write${waiting.length === 1 ? '' : 's'} NOT in the database (${CRM_QUEUE}). For each one, either apply it through the connector and then run ${CLI(root)} queue done <id> "<what the connector returned>", or, if it cannot be applied today (no connector, and no database key for ${CLI(root)} replay), run ${CLI(root)} queue defer <id>|all "<reason>":\n${pendingWriteLines(root, waiting).join('\n')}`);
+  }
 
   // 2. knowledge changed this session → today's daily note must exist and be fresh
   const kbDirs = knowledgeDirs(root);
@@ -2114,7 +2238,7 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     let text; try { text = readFull(path.join(root, f)); } catch (_) { continue; }
     for (const it of actionItemsWithoutTask(text)) { untaskedNotes.add(f); untasked.push(`${f}:${it.line}: ${it.text.length > 120 ? it.text.slice(0, 117) + '...' : it.text}`); }
   }
-  if (untasked.length) problems.push(`action items without a task in ${[...untaskedNotes].join(', ')}: every commitment in a meeting note becomes a task automatically. Create each one in Harold's task list (${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD, or task_create on the connector) and write its ref on the item, e.g. "- Send the revised deck (H-12)". With no database key the command queues the write and prints a Q-<id> ref, which counts too, and so does any outside key such as ABC-123. An item that should not become a task says why: "(no task: <reason>)". Items:\n  ${untasked.slice(0, 12).join('\n  ')}${untasked.length > 12 ? `\n  (+${untasked.length - 12} more)` : ''}`);
+  if (untasked.length) problems.push(`action items without a task in ${[...untaskedNotes].join(', ')}: every commitment in a meeting note becomes a task automatically. Create each one in Harold's task list (${CLI(root)} task create "<title>" --project <name> --due YYYY-MM-DD where the database key is; with no key, task_create on the connector if attached) and write its ref on the item, e.g. "- Send the revised deck (H-12)". A queued Q-<id> ref (the command with neither key nor connector) counts too until it is applied, and so does any outside key such as ABC-123. An item that should not become a task says why: "(no task: <reason>)". Items:\n  ${untasked.slice(0, 12).join('\n  ')}${untasked.length > 12 ? `\n  (+${untasked.length - 12} more)` : ''}`);
 
   // 4. scheduled work recorded
   const c = runCheck(root, today);
@@ -2341,8 +2465,10 @@ function cmdFile(root, today, args, opts = {}) {
       withLock(qp, () => appendLine(qp, { ...obj, date: today.iso, ts: now, replayed: true }));
       console.log(`recorded ${obj.action} for ${obj.contact} (already written through a connector; not replayed)`); return 0;
     }
-    withLock(qp, () => appendLine(qp, { ...obj, date: today.iso, ts: now, replayed: false }));
-    console.log(`queued ${obj.action} for ${obj.contact}. harold boot and harold close apply it once the CRM answers; to try now: ${CLI(root)} replay`); return 0;
+    const row = { ...obj, date: today.iso, ts: now, replayed: false };
+    withLock(qp, () => appendLine(qp, row));
+    const cfg = crmConfig();
+    console.log(`queued ${obj.action} for ${obj.contact}.\n${notInDatabaseLines(root, row, cfg ? `the database key is here: ${CLI(root)} replay applies it now if the CRM answers` : 'no database key here')}`); return 0;
   }
   if (kind === 'learning') {
     if (opts.repair) {
@@ -3112,6 +3238,7 @@ function main() {
     case 'where': code = cmdWhere(root, args); break;
     case 'task': code = cmdTask(root, today, argv.slice(1)); break;
     case 'replay': code = cmdReplay(root, opts); break;
+    case 'queue': code = cmdQueue(root, today, argv.slice(1)); break;
     case 'brief': code = cmdBrief(root, today, argv.slice(1), now); break;
     case 'housekeeping': code = cmdHousekeeping(root, today, argv.slice(1), now); break;
     case 'search': case 'related': case 'backlinks': code = cmdIndexQuery(root, cmd, argv.slice(1)); break;
@@ -3123,7 +3250,7 @@ function main() {
     default:
       console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  learnings [--project <slug>] [--severity <s>] [--all]   print learnings in full (default: the critical ones; with
                      --project, that project's critical and warning entries plus global ones)
-  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database; queues offline)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  heartbeats roll [--dry-run]   move old heartbeats out of each live heartbeats.jsonl into monthly files (close does this)\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this where the key is\n  queue [list] [--json] | done <id> "<result>" | defer <id>|all "<reason>"   writes waiting in harold/crm-queue.jsonl (not in\n                     the database): the connector call that applies each, then mark it done; close blocks until each is done or deferred\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database). With no key, write through\n                     the connector's task_create / task_update if attached; with neither, writes here queue (see queue)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  heartbeats roll [--dry-run]   move old heartbeats out of each live heartbeats.jsonl into monthly files (close does this)\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);
