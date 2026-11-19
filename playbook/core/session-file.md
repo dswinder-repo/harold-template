@@ -60,7 +60,7 @@ The visualizer polls every few seconds but only shows what's in the file.
 
 **Cleanup:** `bin/harold boot` and `close` move session files older than 48 hours to `harold/active-sessions/archive/`, so a stuck `"session": true` never shows as live forever. Ended sessions older than 2 hours are hidden by the visualizer.
 
-**If data is missing:** a session file that cannot be found or parsed is recreated from the schema above; never block the user's work on it. Keep updates lightweight.
+**If data is missing:** a session file that cannot be found or parsed is recreated from the schema above; never block the operator's work on it. Keep updates lightweight.
 
 ---
 

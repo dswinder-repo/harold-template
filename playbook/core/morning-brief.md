@@ -38,7 +38,7 @@ Priority-setting is guided, not open-ended. Harold proposes; you confirm, correc
 
 ## STEP 0: Is today's draft already written? (check FIRST, every time)
 
-If you turned on the scheduled morning brief (`.github/workflows/morning-brief.yml`, or any hosted scheduled agent, such as a Claude Code routine, running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
+If you turned on the scheduled morning brief (`.github/workflows/morning-brief.yml`, or any hosted scheduled agent (a Claude Code routine or another tool's equivalent) running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
 
 1. **Find it.** `bin/harold boot` prints a section **"Today's morning brief draft"**; `bin/harold brief status` prints the same thing on demand. It says one of:
    - **READY** (in this checkout) → read that file.
@@ -58,7 +58,7 @@ Everything below is the live procedure, used when there is no draft and as the s
 
 ## STEP 1: Good Morning (non-task items only)
 
-**Do NOT present tasks, task-manager issues, or priorities in Step 1.** Step 1 is orientation. Tasks come after you've added what happened overnight.
+**Do NOT present tasks or priorities in Step 1.** Step 1 is orientation. Tasks come after you've added what happened overnight.
 
 1. **Memory consolidation.** Read yesterday's note(s) in `vault/daily/` (`bin/harold search` or list the folder by date). Scan `harold/facts.md` for items referenced 3+ times this week; if one is clearly load-bearing, promote it to `dashboard/status.md` so it stays visible.
    - *If no daily note exists for the last 3+ days:* say so, and plan to write one at session close.
@@ -127,7 +127,7 @@ Everything below is the live procedure, used when there is no draft and as the s
 This is why alerts never go stale. `harold/alerts.md` is a **derived view**: rebuild it from source, never patch it by memory.
 
 1. **Harold's task list:** overdue tasks, tasks due today, tasks due this week and not started, high-priority tasks. Read it with the connector's `task_list`, or `bin/harold task list`. With no database key, the command reads `harold/tasks-snapshot.md` and says how old it is: state that age. Linear is not read directly: it reaches the list through the optional sync.
-2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 3-7 days = 🟠. A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
+2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 4-7 days = 🟠 (the bands in `playbook/core/blocker-escalation.md`). A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
 3. **`harold/events.md`:** days until each event. An event fewer than 10 days out with prep not complete fires `event-prep:<event>`.
 4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job includes them only when its session has a CRM tool. With no CRM tool here, say so in one line.
 5. **Quiet projects:** `bin/harold pulse` (boot already printed them; `harold_pulse` on the connector, and `harold_today` lists them). List each quiet project under 🟡 WATCH next to the stale relationships: name, days quiet, what the last activity was, and its next step. "No next step recorded" goes in as written: it is the gap to close. The scheduled draft job runs `bin/harold`, so its alerts include them.

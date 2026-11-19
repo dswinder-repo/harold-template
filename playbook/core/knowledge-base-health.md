@@ -228,7 +228,7 @@ For each file over budget, move the sections that are clearly stale (superseded,
 
 **Heartbeats.** `bin/harold close` rolls each project's live `heartbeats.jsonl` (last 14 days, never fewer than 10 entries, at most 40,000 bytes; older entries go to `heartbeats/YYYY-MM.jsonl` beside it). Check that it is working: no live file over 40,000 bytes, and no single heartbeat over about 600 characters of `done`, `running` and `waiting` together. A long heartbeat means detail is going into the status line: name the project in the report, so the detail moves to the file the heartbeat links.
 
-### Step 12: Learnings ledger review
+### Step 12: Lessons review
 
 **Purpose:** keep `harold/learnings.jsonl` from growing into context without bound. Boot lists every `critical` entry (one line each, within a fixed budget; `bin/harold check` warns past 15), and `boot --full` (the scheduled jobs) prints the whole ledger. A fact correction (a name, a title, a project detail) is fixed in place, never kept as a learning.
 
@@ -270,7 +270,7 @@ For each file over budget, move the sections that are clearly stale (superseded,
 | Vault hygiene | OK / Warn / Fail | [n] | [brief] |
 | CRM consistency | OK / Warn / Fail / Skipped | [n] | [brief] |
 | Raw inbox | [n] uncompiled | | |
-| Learnings ledger | OK / Warn / Fail | [n] | [brief] |
+| Lessons review | OK / Warn / Fail | [n] | [brief] |
 
 ### Issues found
 
@@ -319,10 +319,10 @@ When a new spelling or consistency error is found:
 - [ ] 3 facts in `harold/facts.md` verified
 - [ ] Weekly summary written (`harold/weekly-summary.md` or the daily note)
 - [ ] Workspace root cleaned or flagged
-- [ ] `bin/harold file trigger weekly-scan ran|skipped "<reason>"` recorded
+- [ ] `bin/harold file trigger weekly-scan ran|skipped|deferred "<reason>"` recorded
 
 **Monthly Full Audit**
 - [ ] Steps 1-12 run (or each skipped step noted with a reason)
 - [ ] Report written to `vault/daily/YYYY-MM-DD-kb-health.md`
 - [ ] New error patterns added to Part 2, Step 2
-- [ ] `bin/harold file trigger full-audit ran|skipped "<reason>"` recorded
+- [ ] `bin/harold file trigger full-audit ran|skipped|deferred "<reason>"` recorded

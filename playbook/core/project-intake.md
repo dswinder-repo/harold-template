@@ -107,7 +107,7 @@ Watch every message for a body of work that will produce files and needs a home:
 
 4. **Cross-link.** For each linked person or company card, add `[[<project-slug>]]` to its `## Related` section. If a decision note in `vault/decisions/` created the project, link both ways.
 
-5. **Scope lessons.** If the operator's words include a correction or constraint specific to this project, record it now so future sessions inherit it:
+5. **Scope lessons.** Facts and constraints about the project go in its project-map entry and README. Only a corrected way of working on this project is filed as a lesson, so future sessions inherit it:
    ```bash
    bin/harold file learning '{"severity":"warning","project":"<slug>","category":"scope","lesson":"..."}'
    ```
