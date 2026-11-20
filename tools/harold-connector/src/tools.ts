@@ -8,6 +8,7 @@ import * as crm from "./crm.js";
 import { HaroldRepo } from "./github.js";
 import * as graph from "./graph.js";
 import * as kb from "./kb.js";
+import { latestHeartbeats } from "./heartbeat.js";
 import { CATEGORIES, SEVERITIES } from "./learnings.js";
 import * as pulse from "./pulse.js";
 import * as stale from "./stale.js";
@@ -53,10 +54,15 @@ const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: fal
 const OPEN_READ = { ...READ, openWorldHint: true } as const;
 const OPEN_WRITE = { ...WRITE, openWorldHint: true } as const;
 
-const out = (text: string, isError = false): CallToolResult => ({ content: [{ type: "text", text: truncate(text, MAX_RESULT_CHARS - 500, "result truncated") }], ...(isError ? { isError: true } : {}) });
+/** A tool result: text for every client, plus optional MCP structuredContent for clients that read data (never set on errors). */
+const out = (text: string, isError = false, structured?: Record<string, unknown>): CallToolResult => ({
+  content: [{ type: "text", text: truncate(text, MAX_RESULT_CHARS - 500, "result truncated") }],
+  ...(structured ? { structuredContent: structured } : {}),
+  ...(isError ? { isError: true } : {}),
+});
 
-async function guard(fn: () => Promise<{ text: string; isError?: boolean }>): Promise<CallToolResult> {
-  try { const r = await fn(); return out(r.text, !!r.isError); }
+async function guard(fn: () => Promise<{ text: string; isError?: boolean; structured?: Record<string, unknown> }>): Promise<CallToolResult> {
+  try { const r = await fn(); return out(r.text, !!r.isError, r.isError ? undefined : r.structured); }
   catch (e) { return out(`Error: ${e instanceof Error ? e.message : String(e)}`, true); }
 }
 
@@ -234,6 +240,32 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
     }),
     annotations: WRITE,
   }, async ({ text, topic }, ctx) => guard(() => kb.capture(deps.repoFor(ctx), text, topic, now())));
+
+  server.registerTool("harold_heartbeat", {
+    title: "Harold: heartbeat",
+    description: "Post a short heartbeat for one project at each finished piece of work, and at least once a day while active. It is appended to heartbeats.jsonl in the project's own folder (from harold/projects.md) and is what harold_pulse reads first to decide whether a project is active. Say what finished (done), what is running now, what waits on the owner with due dates, and the repo file that holds the detail. Keep it to about 600 characters across done, running and waiting; the detail goes in `file`. The project must be in harold/projects.md (harold_where finds the name).",
+    inputSchema: z.object({
+      project: z.string().min(1).max(120).describe("Project name or alias, as in harold/projects.md"),
+      done: z.string().min(1).max(500).describe("What just finished, in one or two sentences"),
+      running: z.string().max(500).optional().describe("What is running now (other sessions, background work)"),
+      waiting: z.array(z.object({
+        what: z.string().min(1).max(300).describe("What waits on the owner"),
+        due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Due date, YYYY-MM-DD"),
+      })).max(10).optional().describe("What waits on the owner, with due dates"),
+      file: z.string().max(300).optional().describe("Repo file holding the detail, e.g. a handoff or a daily note"),
+    }),
+    annotations: WRITE,
+  }, async (args, ctx) => guard(() => kb.heartbeat(deps.repoFor(ctx), args, now())));
+
+  server.registerTool("harold_heartbeat_latest", {
+    title: "Harold: latest heartbeats",
+    description: "Read the newest heartbeat(s) a project's sessions filed with harold_heartbeat: what finished, what is running, what waits on the owner, and the file holding the detail. Reads the project's live heartbeat file in full (not a truncated note read), newest first by date and time. Returns text and structured data. The project is a name or alias from harold/projects.md.",
+    inputSchema: z.object({
+      project: z.string().min(1).max(120).describe("Project name or alias, as in harold/projects.md"),
+      n: z.number().int().min(1).max(10).optional().describe("How many of the newest heartbeats (default 1)"),
+    }),
+    annotations: READ,
+  }, async (args, ctx) => guard(() => latestHeartbeats(deps.repoFor(ctx), args)));
 
   server.registerTool("harold_note", {
     title: "Harold: new note",
@@ -510,8 +542,8 @@ export function registerTools(server: McpServer, deps: ToolDeps = defaultDeps) {
 }
 
 export const TOOL_NAMES = [
-  "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
-  "harold_capture", "harold_note", "harold_update", "harold_learning", "harold_person_create", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
+  "harold_today", "harold_search", "harold_read", "harold_list", "harold_where", "harold_related", "harold_pulse", "harold_heartbeat_latest", "harold_person", "crm_search_contacts", "crm_get_contact", "crm_stale",
+  "harold_capture", "harold_heartbeat", "harold_note", "harold_update", "harold_learning", "harold_person_create", "crm_log_interaction", "crm_upsert_contact", "crm_pipeline", "crm_task",
   "task_list", "task_create", "task_update",
   "calendar_list", "calendar_events", "calendar_event_create", "calendar_event_update", "calendar_event_cancel",
   "sync_setup_notion",

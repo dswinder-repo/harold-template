@@ -5,7 +5,8 @@ import { tzInfo } from "./config.js";
 import { HaroldRepo, GithubError, cleanPath } from "./github.js";
 import { appendLearning, CATEGORIES, SEVERITIES } from "./learnings.js";
 import { criticalLessons, housekeepingNew, morningStep0 } from "./morning.js";
-import { formatWhere, parseProjects } from "./projects.js";
+import { appendHeartbeatText, heartbeatPath, type Waiting } from "./heartbeat.js";
+import { formatWhere, parseProjects, rankProjects } from "./projects.js";
 import { pulseData, pulseTodaySection } from "./pulse.js";
 import { appendUnderHeading, frontmatter, localParts, slugify, truncate, updateFrontmatter } from "./text.js";
 
@@ -272,6 +273,24 @@ export async function capture(repo: HaroldRepo, text: string, topic?: string, no
   }, msg(`capture to ${t.iso} chat log`));
   if (!r.ok) return fail(r.reason);
   return { text: `Captured in ${path} (commit ${r.commit.slice(0, 7)} on ${repo.branch}):\n${bullet}` };
+}
+
+export interface HeartbeatArgs { project: string; done: string; running?: string; waiting?: Waiting[]; file?: string }
+
+/** Append one heartbeat line to the project's own folder (<folder>/heartbeats.jsonl). The project must resolve through harold/projects.md. */
+export async function heartbeat(repo: HaroldRepo, a: HeartbeatArgs, now = new Date()): Promise<ToolText> {
+  if (!a.done.trim()) return fail("A heartbeat needs what finished (done).");
+  const pf = await repo.getText("harold/projects.md");
+  const ranked = pf ? rankProjects(parseProjects(pf.text), a.project) : [];
+  if (!ranked.length) return fail(`No project matches "${a.project}" in harold/projects.md. Use harold_where to find the right name; a new project needs its map entry first.`);
+  const proj = ranked[0].p;
+  const t = localParts(now);
+  const path = heartbeatPath(proj);
+  const hb = { date: t.iso, time: t.hm, project: proj.name, done: a.done, running: a.running, waiting: a.waiting, file: a.file, source: "connector" };
+  const r = await repo.commit(path, cur => ({ text: appendHeartbeatText(cur?.text || "", hb) }), msg(`heartbeat: ${proj.name}`));
+  if (!r.ok) return fail(r.reason);
+  const wait = a.waiting?.length ? `; waiting on the owner: ${a.waiting.map(w => w.what + (w.due ? ` (due ${w.due})` : "")).join("; ")}` : "";
+  return { text: `Heartbeat filed for ${proj.name} in ${path} (commit ${r.commit.slice(0, 7)} on ${repo.branch}), ${t.iso} ${t.hm}: done: ${a.done.trim()}${wait}.` };
 }
 
 export const NOTE_KINDS = ["intel", "decision", "meeting", "company", "project"] as const;
