@@ -169,3 +169,54 @@ test('cloud runner on the default branch still pushes to it', () => {
   assert.match(r.out, /pushed \d+ commit\(s\) to main/);
   assert.strictEqual(onOrigin(w, 'refs/heads/main'), head(w));
 });
+
+// A merge stopped on a conflict, or a file still holding conflict markers, must never be saved: close used to
+// commit and push the <<<<<<< lines as content.
+function conflicted(w) {
+  const f = path.join(w.ws, 'conflict.md');
+  fs.writeFileSync(f, 'line one\n'); w.g('add', 'conflict.md'); w.g('commit', '-qm', 'base');
+  w.g('checkout', '-q', '-b', 'other'); fs.writeFileSync(f, 'their line\n'); w.g('commit', '-qam', 'theirs');
+  w.g('checkout', '-q', 'main'); fs.writeFileSync(f, 'our line\n'); w.g('commit', '-qam', 'ours');
+  const m = w.g('merge', 'other');
+  assert.notStrictEqual(m.status, 0, 'the merge should stop on a conflict');
+  assert.match(fs.readFileSync(f, 'utf8'), /^<{7}/m);
+}
+
+test('a merge stopped on a conflict is never committed or pushed', () => {
+  const w = workspace();
+  work(w);
+  conflicted(w);
+  const before = head(w), originBefore = onOrigin(w, 'refs/heads/main');
+  const r = run(w, ['close']);
+  assert.strictEqual(r.code, 2, r.out + r.err);
+  assert.match(r.out + r.err, /refusing to save: a merge is stopped part-way/);
+  assert.match(r.out + r.err, /unresolved conflicts in conflict\.md/);
+  assert.strictEqual(head(w), before, 'no commit may be made');
+  assert.strictEqual(onOrigin(w, 'refs/heads/main'), originBefore, 'nothing may be pushed');
+  const fin = run(w, ['close', '--final']);
+  assert.notStrictEqual(fin.code, 0, fin.out + fin.err);
+  assert.strictEqual(head(w), before, 'not even the final close may commit it');
+});
+
+test('conflict markers left in a file after the merge state is gone are refused', () => {
+  const w = workspace();
+  work(w);
+  conflicted(w);
+  w.g('merge', '--abort');
+  fs.writeFileSync(path.join(w.ws, 'vault/daily', `${w.today}-push-test.md`), `# ${w.today}\n\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n`);
+  const before = head(w);
+  const r = run(w, ['close']);
+  assert.strictEqual(r.code, 2, r.out + r.err);
+  assert.match(r.out + r.err, /conflict markers \(<<<<<<< \.\.\. >>>>>>>\) still in vault\/daily\//);
+  assert.strictEqual(head(w), before);
+  assert.strictEqual(w.g('diff', '--cached', '--name-only').stdout.trim(), '', 'nothing may be left staged');
+});
+
+test('a note that only mentions a marker line is saved normally', () => {
+  const w = workspace();
+  work(w);
+  fs.appendFileSync(path.join(w.ws, 'vault/daily', `${w.today}-push-test.md`), '\nA conflict starts with a line of seven < signs, like <<<<<<< HEAD.\n');
+  const r = run(w, ['close']);
+  assert.strictEqual(r.code, 0, r.out + r.err);
+  assert.match(r.out, /pushed \d+ commit\(s\)/);
+});

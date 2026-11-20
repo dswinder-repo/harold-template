@@ -1112,6 +1112,30 @@ function secretScan(root, files) {
   }
   return hits;
 }
+// A merge, rebase or cherry-pick stopped on a conflict, or a file still holding conflict markers, must never be
+// committed: close would save and push the <<<<<<< lines as if they were content. Returns one line per reason,
+// empty when it is safe to commit. `files` (optional) are the paths about to be committed; they are scanned for a
+// full marker block (<<<<<<<, =======, >>>>>>> each at the start of a line, in that order).
+const CONFLICT_RE = /^<{7}(?: .*)?\r?\n[\s\S]*?^={7}\r?\n[\s\S]*?^>{7}(?: .*)?$/m;
+function conflictScan(root, files = []) {
+  const why = [];
+  const ops = { MERGE_HEAD: 'a merge', CHERRY_PICK_HEAD: 'a cherry-pick', REVERT_HEAD: 'a revert', 'rebase-merge': 'a rebase', 'rebase-apply': 'a rebase or git am' };
+  for (const [f, what] of Object.entries(ops)) {
+    const gp = git(root, ['rev-parse', '--git-path', f]);
+    if (gp.code === 0 && gp.out && fs.existsSync(path.resolve(root, gp.out))) { why.push(`${what} is stopped part-way (finish it or abort it first: git -C "${root}" ${what === 'a merge' ? 'merge --continue | merge --abort' : what === 'a cherry-pick' ? 'cherry-pick --continue | cherry-pick --abort' : what === 'a revert' ? 'revert --continue | revert --abort' : 'rebase --continue | rebase --abort'})`); break; }
+  }
+  const um = git(root, ['diff', '--name-only', '--diff-filter=U']).out.split('\n').filter(Boolean);
+  if (um.length) why.push(`unresolved conflicts in ${um.slice(0, 8).join(', ')}${um.length > 8 ? ` (+${um.length - 8} more)` : ''}`);
+  const marked = [];
+  for (const f of files) {
+    if (um.includes(f)) continue;
+    const p = path.join(root, f); let t; try { if (!fs.existsSync(p) || fs.statSync(p).size > 5e6) continue; t = readFull(p); } catch (_) { continue; }
+    if (/\0/.test(t.slice(0, 4000))) continue;
+    if (CONFLICT_RE.test(t)) marked.push(f);
+  }
+  if (marked.length) why.push(`conflict markers (<<<<<<< ... >>>>>>>) still in ${marked.slice(0, 8).join(', ')}${marked.length > 8 ? ` (+${marked.length - 8} more)` : ''}`);
+  return why;
+}
 function git(root, args, opts = {}) { const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: opts.timeout || 120000 }); return { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() }; }
 // Which contacts the CRM itself recorded a write for today. Returns a Set of lowercased names.
 // Empty set when the CRM is unreachable or unconfigured, which falls the check back to the queue.
@@ -2278,7 +2302,11 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
     addHousekeepingNote(root, `${today.iso} cloud job saved with unresolved close problems: ${problems.map(p => p.split(' — ')[0]).join('; ').slice(0, 400)}`);
     notes.push('cloud run: close could not be satisfied; saving the work anyway (problems noted in harold/briefs/housekeeping-notes.md)');
   }
-  if (!problems.length || final || cloudGiveUp) {
+  // Never save a half-finished merge: it would commit and push the conflict markers. This blocks even at the
+  // final close and in a cloud give-up, because what it would save is broken.
+  const conflicts = conflictScan(root);
+  if (conflicts.length) problems.push(`refusing to save: ${conflicts.join('; ')}. Resolve the conflict, then close again`);
+  if (!conflicts.length && (!problems.length || final || cloudGiveUp)) {
     const add = git(root, ['add', '-A']);
     if (add.code !== 0) gitNote = `SAVE FAILED: git add failed: ${add.err.trim().split('\n')[0].slice(0, 200)}`;
     else {
@@ -2286,7 +2314,9 @@ function closeOnce(root, today, opts, hook, sess = closeSession(root, hook)) {
       let refused = false;
       if (staged.length) {
         const hits = secretScan(root, staged);
+        const marks = conflictScan(root, staged);
         if (hits.length) { git(root, ['reset', '-q']); refused = true; problems.push(`refusing to commit: possible secrets in ${hits.join('; ')} — move credentials out of the repo (~/.harold/env) or add the file to .gitignore`); }
+        else if (marks.length) { git(root, ['reset', '-q']); refused = true; problems.push(`refusing to save: ${marks.join('; ')}. Resolve the conflict, then close again`); }
         else {
           const label = sf ? path.basename(sf, '.json') : id;
           // No git identity on this machine: commit anyway under a neutral one (as the scheduled jobs do) rather than lose the work.
@@ -2670,6 +2700,7 @@ function cmdBrief(root, today, argv, now) {
     git(root, ['add', '--', ...add]);
     const staged = git(root, ['diff', '--cached', '--name-only']).out.split('\n').filter(Boolean);
     const hits = secretScan(root, staged); if (hits.length) { git(root, ['reset', '-q']); console.log(`FAIL: refusing to commit, possible secrets in ${hits.join('; ')}`); return 2; }
+    const marks = conflictScan(root, staged); if (marks.length) { git(root, ['reset', '-q']); console.log(`FAIL: refusing to commit: ${marks.join('; ')}`); return 2; }
     // A cloud runner usually has no git identity; use a neutral one rather than fail.
     const ident = ['-c', 'core.hooksPath=/dev/null'];
     if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (scheduled brief)', '-c', 'user.email=harold-brief@users.noreply.github.com');
@@ -2882,6 +2913,8 @@ function finishHousekeepingJob(root, job, { anyway = false } = {}) {
   const staged = git(root, ['diff', '--cached', '--name-only']).out.split('\n').filter(Boolean);
   const hits = secretScan(root, staged);
   if (hits.length) { git(root, ['reset', '-q']); return { code: 2, text: `FAIL: refusing to commit, possible secrets in ${hits.join('; ')}` }; }
+  const marks = conflictScan(root, staged);
+  if (marks.length) { git(root, ['reset', '-q']); return { code: 2, text: `FAIL: refusing to commit: ${marks.join('; ')}` }; }
   // A cloud runner usually has no git identity; use a neutral one rather than fail.
   const ident = ['-c', 'core.hooksPath=/dev/null'];
   if (!git(root, ['config', 'user.email']).out) ident.push('-c', 'user.name=Harold (housekeeping)', '-c', 'user.email=harold-housekeeping@users.noreply.github.com');
