@@ -19,6 +19,7 @@
 import type { HaroldRepo } from "./github.js";
 import { GRAPH_PATH, parseGraph, type Graph } from "./graph.js";
 import { parseProjects, type Project } from "./projects.js";
+import { heartbeatPath, latestHeartbeat, type Heartbeat } from "./heartbeat.js";
 
 export const PROJECTS_PATH = "harold/projects.md";
 const LABEL: Record<string, string> = {
@@ -32,7 +33,7 @@ const NEXT_LINE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?next[ _-]?steps?(?:\*\*|__)?\s*:
 const NEXT_HEAD = /^#{1,6}\s+next[ _-]?steps?\s*:?\s*$/i;
 const FM_BLOCK = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
 
-export interface PulseLast { kind: "note" | "commit"; date: string; path: string; title: string; via: string; label: string }
+export interface PulseLast { kind: "note" | "commit" | "heartbeat"; date: string; path: string; title: string; via: string; label: string }
 export interface PulseProject {
   name: string; status: string; folder: string; card: string;
   quiet: boolean | null; days: number | null; last: PulseLast | null;
@@ -120,7 +121,12 @@ export function dateIn(instant: string, tz: string): string {
 const sorted = <T>(it: Iterable<T>) => [...it].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
 /** The newest dated activity of one project: a note (dates written in the note) or a commit. null when nothing. */
-export function activity(p: Project, g: Graph, card: string, folder: string, today: string, commit: { date: string; subject: string } | null): PulseLast | null {
+export function activity(p: Project, g: Graph, card: string, folder: string, today: string, commit: { date: string; subject: string } | null, hb: Heartbeat | null = null): PulseLast | null {
+  // A project that posts heartbeats is judged by them alone: its own sessions say what finished. Notes that merely
+  // mention the project (a roll-up, another project's note) no longer make it look active.
+  if (hb && ISO.test(hb.date) && hb.date <= today) {
+    return { kind: "heartbeat", date: hb.date, path: heartbeatPath(p), title: cut(hb.done.trim().split("\n")[0], 72), via: "heartbeat", label: "heartbeat" };
+  }
   const cands: PulseLast[] = [];
   const seen = new Set<string>();
   const add = (path: string, via: string) => {
@@ -179,13 +185,16 @@ export async function pulseData(repo: HaroldRepo, today: string, tz: string, opt
     const item: PulseProject = { name: p.name, status, folder, card, quiet: null, days: null, last: null, next_step: "", next_step_source: "" };
     if (status === "active") {
       let commit: { date: string; subject: string } | null = null;
-      if (folder) {
+      let hb: Heartbeat | null = null;
+      const hbPath = heartbeatPath(p);
+      { try { const f = await repo.getText(hbPath); if (f) hb = latestHeartbeat(f.text, today); } catch { /* fall back to notes */ } }
+      if (folder && !hb) {
         try {
           const c = await repo.lastCommit(folder);
           if (c) commit = { date: dateIn(c.date, tz), subject: cut((c.message.trim().split("\n")[0] || "").trim(), 72) };
         } catch (e) { gitErr = gitErr || `GitHub commits API: ${e instanceof Error ? e.message : String(e)}`; }
       }
-      const last = activity(p, g, card, folder, today, commit);
+      const last = activity(p, g, card, folder, today, commit, hb);
       const days = last ? g.ageDays(last.date) : null;
       Object.assign(item, { quiet: last === null || (days ?? 0) > limit, days, last });
     }

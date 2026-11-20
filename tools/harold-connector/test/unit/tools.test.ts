@@ -57,7 +57,7 @@ describe("tool surface (SDK v2 client)", () => {
     const { tools } = await client.listTools();
     expect(tools.map(t => t.name).sort()).toEqual([...TOOL_NAMES].sort());
     for (const t of tools) {
-      const write = /capture|note|update|learning|person_create|log_interaction|upsert|pipeline|crm_task|task_create|event_create|event_cancel|sync_setup/.test(t.name);
+      const write = /capture|heartbeat(?!_latest)|note|update|learning|person_create|log_interaction|upsert|pipeline|crm_task|task_create|event_create|event_cancel|sync_setup/.test(t.name);
       expect(t.annotations?.readOnlyHint, t.name).toBe(!write);
       expect(t.annotations?.destructiveHint, t.name).toBe(false);
       expect(t.name).not.toMatch(/delete|remove/);
@@ -68,6 +68,7 @@ describe("tool surface (SDK v2 client)", () => {
     const ins = client.getInstructions() || "";
     expect(ins).toMatch(/call harold_today first/);
     expect(ins).toMatch(/the owner's Harold/);
+    expect(ins).toMatch(/harold_heartbeat at each finished piece of work/);
     expect(client.getServerVersion()?.name).toBe("harold");
   });
 
@@ -78,6 +79,86 @@ describe("tool surface (SDK v2 client)", () => {
     expect(i).toMatch(/Always state staleness and gaps/);
     expect(i).toMatch(/crm_stale/);
   });
+
+  it("harold_heartbeat appends one line to the project's heartbeat file and refuses an unknown project", async () => {
+    gh.files.set("harold/projects.md", "## Pilot Program\n- status: active\n- folder: projects/pilot\n- aliases: the pilot\n");
+    const r = await client.callTool({ name: "harold_heartbeat", arguments: { project: "the pilot", done: "Shipped the intake form", running: "QA session", waiting: [{ what: "Pick a launch date", due: "2026-11-10" }], file: "vault/daily/x.md" } });
+    expect(r.isError, text(r)).toBeFalsy();
+    const f = gh.files.get("projects/pilot/heartbeats.jsonl") || "";
+    const row = JSON.parse(f.trim());
+    expect(row).toMatchObject({ project: "Pilot Program", done: "Shipped the intake form", running: "QA session", file: "vault/daily/x.md", source: "connector", waiting: [{ what: "Pick a launch date", due: "2026-11-10" }] });
+    await client.callTool({ name: "harold_heartbeat", arguments: { project: "Pilot Program", done: "Second" } });
+    expect((gh.files.get("projects/pilot/heartbeats.jsonl") || "").trim().split("\n")).toHaveLength(2);
+    const bad = await client.callTool({ name: "harold_heartbeat", arguments: { project: "zzz nothing", done: "x" } });
+    expect(bad.isError).toBe(true);
+    expect(text(bad)).toMatch(/No project matches/);
+    const secret = await client.callTool({ name: "harold_heartbeat", arguments: { project: "Pilot Program", done: "key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789" } });
+    expect(gh.files.get("projects/pilot/heartbeats.jsonl")).not.toMatch(/sk-ant/);
+    void secret;
+  });
+
+  describe("harold_heartbeat_latest", () => {
+    const PROJ = "## Pilot Program\n- status: active\n- folder: projects/pilot\n- aliases: the pilot\n";
+    const FILE = "projects/pilot/heartbeats.jsonl";
+    const row = (date: string, time: string, done: string, extra: object = {}) => JSON.stringify({ date, time, project: "Pilot Program", done, source: "connector", ...extra });
+    const call = (args: Record<string, unknown>) => client.callTool({ name: "harold_heartbeat_latest", arguments: { project: "the pilot", ...args } });
+    type Sc = { project: string; path: string; heartbeats: { date: string; time: string; done: string; running: string; waiting: { what: string; due?: string }[]; file: string }[] };
+
+    it("returns the newest by date, then time, then position, newest first, with structured data", async () => {
+      gh.files.set("harold/projects.md", PROJ);
+      gh.files.set(FILE, [
+        row("2026-11-18", "09:00", "older day"),
+        row("2026-11-19", "15:30", "afternoon", { running: "QA", waiting: [{ what: "Pick a date", due: "2026-11-25" }], file: "vault/daily/x.md" }),
+        row("2026-11-19", "08:00", "morning, later in file"),
+        row("2026-11-19", "15:30", "tie, later line wins"),
+      ].join("\n") + "\n");
+      const one = await call({});
+      expect(one.isError, text(one)).toBeFalsy();
+      expect((one.structuredContent as Sc).heartbeats.map(h => h.done)).toEqual(["tie, later line wins"]);
+      expect((one.structuredContent as Sc)).toMatchObject({ project: "Pilot Program", path: FILE });
+      const three = await call({ n: 3 });
+      const sc = three.structuredContent as Sc;
+      expect(sc.heartbeats.map(h => h.done)).toEqual(["tie, later line wins", "afternoon", "morning, later in file"]);
+      expect(sc.heartbeats[1]).toEqual({ date: "2026-11-19", time: "15:30", done: "afternoon", running: "QA", waiting: [{ what: "Pick a date", due: "2026-11-25" }], file: "vault/daily/x.md" });
+      expect(text(three)).toMatch(/^Latest 3 heartbeats for Pilot Program \(projects\/pilot\/heartbeats.jsonl\), newest first:\n- 2026-11-19 15:30 · done: tie, later line wins/);
+      expect(text(three)).toMatch(/running: QA\n {2}waiting: Pick a date \(due 2026-11-25\)\n {2}file: vault\/daily\/x.md/);
+      expect(((await call({ n: 10 })).structuredContent as Sc).heartbeats).toHaveLength(4);
+    });
+
+    it("says so plainly (not an error) when the file is missing or has no entries", async () => {
+      gh.files.set("harold/projects.md", PROJ);
+      const none = await call({});
+      expect(none.isError).toBeFalsy();
+      expect(text(none)).toMatch(/No heartbeats filed for Pilot Program/);
+      expect(none.structuredContent).toEqual({ project: "Pilot Program", path: FILE, heartbeats: [] });
+      gh.files.set(FILE, "not json\n\n");
+      expect(((await call({})).structuredContent as Sc).heartbeats).toEqual([]);
+    });
+
+    it("refuses an unknown project with an error", async () => {
+      gh.files.set("harold/projects.md", PROJ);
+      const bad = await call({ project: "zzz nothing" });
+      expect(bad.isError).toBe(true);
+      expect(text(bad)).toMatch(/No project matches/);
+    });
+
+    it("ignores the archive files under heartbeats/", async () => {
+      gh.files.set("harold/projects.md", PROJ);
+      gh.files.set(FILE, row("2026-11-01", "10:00", "live") + "\n");
+      gh.files.set("projects/pilot/heartbeats/2026-10.jsonl", row("2026-11-30", "23:00", "archived, newer date") + "\n");
+      expect(((await call({ n: 5 })).structuredContent as Sc).heartbeats.map(h => h.done)).toEqual(["live"]);
+    });
+
+    it("finds the newest line at the end of a live file over 100,000 characters", async () => {
+      gh.files.set("harold/projects.md", PROJ);
+      const filler = Array.from({ length: 400 }, (_, i) => row("2026-10-01", "10:00", `old ${i} ` + "x".repeat(300))).join("\n");
+      const file = filler + "\n" + row("2026-11-19", "20:00", "the newest, at the end") + "\n";
+      expect(file.length).toBeGreaterThan(100_000);
+      gh.files.set(FILE, file);
+      expect(((await call({})).structuredContent as Sc).heartbeats[0]).toMatchObject({ done: "the newest, at the end", time: "20:00" });
+    });
+  });
+
 
   it("harold_related follows the links from graph.json and ends with the gaps line", async () => {
     gh.files.set("harold/graph.json", graphJson());

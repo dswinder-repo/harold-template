@@ -103,6 +103,34 @@ describe("next step", () => {
   });
 });
 
+describe("heartbeats", () => {
+  const hb = (date: string, done = "Finished the thing") => JSON.stringify({ date, time: "10:00", project: "Pilot Program", done, source: "connector" }) + "\n";
+  it("a project with a heartbeat is judged by it alone: a recent unrelated note does not make it active", async () => {
+    const base = fixtureRepo();
+    const before = await pulseData(base.repo, FX.today, FX.tz);
+    const pilot = before.projects.find(p => p.name === "Pilot Program")!;
+    expect(pilot.quiet).toBe(true);
+    const old = fixtureRepo({ files: { "projects/pilot/heartbeats.jsonl": hb("2026-07-01") } });
+    const d = await pulseData(old.repo, FX.today, FX.tz);
+    const p = d.projects.find(x => x.name === "Pilot Program")!;
+    expect(p.last).toMatchObject({ kind: "heartbeat", date: "2026-07-01", label: "heartbeat" });
+    expect(p.quiet).toBe(true);
+    expect(pulseText(d)).toContain('(last: heartbeat 2026-07-01, "Finished the thing")');
+  });
+  it("a fresh heartbeat makes a quiet project active; the newest line wins; future dates are ignored", async () => {
+    const { repo } = fixtureRepo({ files: { "projects/pilot/heartbeats.jsonl": hb("2026-09-01") + hb(FX.today, "Latest") + hb("2999-01-01", "Future") + "not json\n" } });
+    const d = await pulseData(repo, FX.today, FX.tz);
+    const p = d.projects.find(x => x.name === "Pilot Program")!;
+    expect(p).toMatchObject({ quiet: false, days: 0 });
+    expect(p.last?.title).toBe("Latest");
+  });
+  it("without heartbeats nothing changes", async () => {
+    const { repo } = fixtureRepo();
+    expect(pulseText(await pulseData(repo, FX.today, FX.tz))).toBe(FX.expected.text);
+  });
+});
+
+
 describe("settings and failures", () => {
   it("HAROLD_PULSE_DAYS on the connector, else graph.json's pulse_days, else 14", async () => {
     expect(pulseDays(parseGraph(FX.graph_json, FX.today))).toBe(14);
