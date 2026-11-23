@@ -3,7 +3,7 @@
 import { Hono } from "hono";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import type { AuthInfo } from "@modelcontextprotocol/server";
-import { config, repoConfig, tokenKey } from "./config.js";
+import { config, ownerRule, publicBaseUrl, repoConfig, tokenKey } from "./config.js";
 import { open } from "./crypto.js";
 import { checkTokenIdentityOnce, type FetchLike } from "./identity.js";
 import { PAT_PREFIX, verifyPat } from "./pat.js";
@@ -20,20 +20,65 @@ export function verifyAccessToken(fetchImpl: FetchLike) {
   return async (_req: Request, bearer?: string): Promise<AuthInfo | undefined> => {
     if (!bearer) return undefined;
     // A personal access token (src/pat.ts): sealed under its own purpose, minted only by the TOKEN_KEY
-    // holder for the owner after a GitHub check, so no GitHub round trip here. Revocable by id.
+    // holder for the owner after a GitHub check, so no GitHub round trip here when the owner is named.
+    // When the owner is the repository's owner, only GitHub can say who that is: check once per token.
+    // Revocable by id.
     if (bearer.startsWith(PAT_PREFIX)) {
       const c = config();
-      const pat = verifyPat(c.tokenKey, bearer, { login: c.allowedGithubLogin, id: c.allowedGithubId });
+      const pat = verifyPat(c.tokenKey, bearer, c.owner.kind === "account" ? { login: c.owner.login, id: c.owner.id } : null);
       if (!pat) return undefined;
+      // Re-checked at least daily (a PAT can live a year), like an OAuth access token.
+      const recheck = Math.min(pat.exp, Math.floor(Date.now() / 1000) + oauth.ACCESS_TTL);
+      if (c.owner.kind === "repo-owner" && await checkTokenIdentityOnce(bearer, pat.gh, c.owner, recheck, fetchImpl) !== pat.uid) return undefined;
       return { token: bearer, clientId: `pat:${pat.id}`, scopes: [oauth.SCOPE], expiresAt: pat.exp, resource: new URL(oauth.resourceUrl(c)), extra: { gh: pat.gh, login: pat.login, pat: pat.id } };
     }
     const p = open<oauth.AccessPayload & Record<string, unknown>>(tokenKey(), "access", bearer);
     if (!p || typeof p.gh !== "string" || typeof p.exp !== "number") return undefined;
     const c = config();
-    const ok = await checkTokenIdentityOnce(bearer, p.gh, c.allowedGithubLogin, c.allowedGithubId, p.exp, fetchImpl);
-    if (!ok) return undefined;
+    const uid = await checkTokenIdentityOnce(bearer, p.gh, c.owner, p.exp, fetchImpl);
+    if (uid === null) return undefined;
     return { token: bearer, clientId: p.client_id, scopes: [oauth.SCOPE], expiresAt: p.exp, resource: new URL(oauth.resourceUrl(c)), extra: { gh: p.gh, login: p.login } };
   };
+}
+
+/**
+ * The connector's home page: the /mcp address once it is ready, and until then exactly what is missing. Right after
+ * a first deploy, GitHub sign-in is not set up yet, so it spells out what to paste into GitHub's "New OAuth App"
+ * form. It shows nothing secret, and the address it names is this deployment's configured address, never one taken
+ * from the request.
+ */
+export function homePage(): string {
+  let base = "";
+  const missing: string[] = [];
+  try { base = publicBaseUrl(); } catch (e) { missing.push(e instanceof Error ? e.message : String(e)); }
+  const lines = ["Harold connector.", "", "This is a private MCP server for one person."];
+  const hasGithub = !!(process.env.GITHUB_CLIENT_ID || "").trim() && !!(process.env.GITHUB_CLIENT_SECRET || "").trim();
+  if (base && !hasGithub) {
+    lines.push("", "Not ready: GitHub sign-in is not set up yet. To finish:", "",
+      "1. Open https://github.com/settings/applications/new (GitHub: Settings, Developer settings, OAuth Apps, New OAuth App) and fill in:",
+      "     Application name:            Harold connector (any name)",
+      `     Homepage URL:                ${base}`,
+      `     Authorization callback URL:  ${base}/github/callback`,
+      "   Leave Enable Device Flow off. Register the application, then press Generate a new client secret.",
+      "2. Add two environment variables to this deployment (on Vercel: the project's Settings, Environment Variables):",
+      "     GITHUB_CLIENT_ID      the application's Client ID",
+      "     GITHUB_CLIENT_SECRET  the client secret you just generated",
+      "3. Redeploy (on Vercel: Deployments, the latest one, Redeploy), then open this page again.");
+  }
+  else if (base) {
+    lines.push(`Add it in any MCP client as a remote (Streamable HTTP) server with the URL ${base}/mcp`,
+      "Sign-in is OAuth with GitHub; tools without OAuth can use a personal access token (npm run token).", "",
+      `The GitHub OAuth App's Authorization callback URL must be ${base}/github/callback (after adding a domain, update it there).`);
+  }
+  if (!hasGithub && !base) missing.push("Missing environment variables GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET (from a GitHub OAuth App)");
+  // Without the client secret the key cannot be derived yet; that is already covered by the steps above.
+  const checks: (() => unknown)[] = [() => ownerRule(), () => repoConfig()];
+  if (hasGithub || (process.env.TOKEN_KEY || "").trim()) checks.unshift(() => tokenKey());
+  for (const check of checks) {
+    try { check(); } catch (e) { missing.push(e instanceof Error ? e.message : String(e)); }
+  }
+  for (const m of [...new Set(missing)]) lines.push("", `Not ready: ${m}`);
+  return lines.join("\n") + "\n";
 }
 
 export function createApp(opts: AppOptions = {}) {
@@ -74,12 +119,7 @@ export function createApp(opts: AppOptions = {}) {
 
   const app = new Hono();
 
-  app.get("/", c => {
-    let notReady = "";
-    try { repoConfig(); } catch (e) { notReady = `\nNot ready: ${e instanceof Error ? e.message : String(e)}\n`; }
-    return c.text("Harold connector.\n\nThis is a private MCP server for one person. Add it in any MCP client as a remote (Streamable HTTP) server with the URL "
-      + `${config().publicBaseUrl}/mcp\nSign-in is OAuth with GitHub; tools without OAuth can use a personal access token (npm run token).\n${notReady}`);
-  });
+  app.get("/", c => c.text(homePage()));
 
   // Browser-based MCP clients call these straight from a web page: answer the preflight (before the token
   // check, which would refuse it) and mark every response, errors included, as readable cross-origin.

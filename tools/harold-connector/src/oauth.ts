@@ -3,7 +3,8 @@
 //   client ──/register──▶ client_id = sealed(redirect_uris)                (RFC 7591, no database)
 //   client ──/authorize─▶ (PKCE S256 required) consent page ──POST /authorize/approve──▶ GitHub login,
 //          state = sealed(the client's params, 10 min), nonce cookie ties the button press to this browser
-//   GitHub ──/github/callback──▶ code exchange, GET /user, must be ALLOWED_GITHUB_LOGIN + ALLOWED_GITHUB_ID
+//   GitHub ──/github/callback──▶ code exchange, GET /user, must be the owner (ALLOWED_GITHUB_LOGIN + ALLOWED_GITHUB_ID,
+//          or the owner of the repository the connector is deployed from: identity.ts)
 //          ──302──▶ client redirect_uri?code=sealed(GitHub token, PKCE challenge, client, 5 min)&state=...
 //   client ──/token──▶ access_token = sealed(GitHub token, 24 h), refresh_token = sealed(GitHub token, 90 d)
 //
@@ -17,7 +18,7 @@
 
 import { config, type Config } from "./config.js";
 import { open, randomId, seal, sha256, verifyPkce } from "./crypto.js";
-import { fetchGithubUser, isAllowedUser, UA, type FetchLike } from "./identity.js";
+import { checkOwner, describeOwner, UA, type FetchLike } from "./identity.js";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { cimdUrlAllowed, describeRedirect, hostOf, isPublicIp, redirectAllowed, redirectMatches, type RedirectHosts } from "./redirects.js";
 
@@ -256,7 +257,7 @@ function consentPage(c: Config, client: ClientInfo, redirectUri: string, sealedS
 <dt>Exact redirect address</dt><dd><code>${esc(redirectUri)}</code></dd>
 </dl>
 ${kindNote}
-<p>Continue only if you just started connecting this tool yourself and the destination above is the tool you are using. Whoever receives the sign-in can read and write Harold. You will sign in with GitHub next; only the account <strong>${esc(c.allowedGithubLogin)}</strong> is accepted.</p>
+<p>Continue only if you just started connecting this tool yourself and the destination above is the tool you are using. Whoever receives the sign-in can read and write Harold. You will sign in with GitHub next; only the account <strong>${esc(describeOwner(c.owner))}</strong> is accepted.</p>
 <form method="post" action="${esc(c.publicBaseUrl)}/authorize/approve"><input type="hidden" name="request" value="${esc(sealedState)}"><button type="submit">Continue to GitHub</button></form>
 <p class="muted">If you did not expect this, or you do not recognise the destination, close this window. Nothing has been shared.</p>
 </body></html>`;
@@ -330,18 +331,22 @@ export async function githubCallback(req: Request, deps: Deps): Promise<Response
   } catch (e) { ghToken = ""; console.error(`harold-connector: GitHub code exchange failed: ${(e as Error).message}`); }
   if (!ghToken) return back({ error: "server_error", error_description: "Could not exchange the GitHub code" });
 
-  const user = await fetchGithubUser(ghToken, deps.fetch).catch(() => null);
-  if (!isAllowedUser(user, c.allowedGithubLogin, c.allowedGithubId)) {
-    console.error(`harold-connector: refused GitHub account ${user ? `${user.login} (${user.id})` : "(lookup failed)"}`);
+  const check = await checkOwner(ghToken, c.owner, deps.fetch);
+  if (!check.ok) {
+    const u = check.user;
+    console.error(`harold-connector: refused GitHub account ${u ? `${u.login} (${u.id})` : "(lookup failed)"}: ${check.reason}`);
     await revokeGithubToken(ghToken, c, deps).catch(() => undefined); // do not keep a stranger's token alive
-    return back({ error: "access_denied", error_description: "This Harold connector only accepts its owner's GitHub account" });
+    return back({ error: "access_denied", error_description: check.reason === "organization"
+      ? "This connector's repository belongs to an organization, so its owner cannot be found automatically: set ALLOWED_GITHUB_LOGIN and ALLOWED_GITHUB_ID on the connector"
+      : "This Harold connector only accepts its owner's GitHub account" });
   }
+  const user = check.user;
 
   const authCode = seal(c.tokenKey, "code", {
-    gh: ghToken, login: user!.login, uid: user!.id, cc: st.code_challenge, client_id: st.client_id, redirect_uri: st.redirect_uri,
+    gh: ghToken, login: user.login, uid: user.id, cc: st.code_challenge, client_id: st.client_id, redirect_uri: st.redirect_uri,
     resource: st.resource, exp: nowSec(deps) + CODE_TTL, jti: randomId(),
   });
-  console.log(`harold-connector: GitHub sign-in ok for ${user!.login}; returning code to ${new URL(st.redirect_uri).host}`);
+  console.log(`harold-connector: GitHub sign-in ok for ${user.login}; returning code to ${new URL(st.redirect_uri).host}`);
   return back({ code: authCode });
 }
 
@@ -409,8 +414,8 @@ export async function token(req: Request, deps: Deps): Promise<Response> {
     if (!p) return oauthError("invalid_grant", "Refresh token is invalid or expired");
     if (clientId && clientId !== p.client_id) return oauthError("invalid_grant", "client_id does not match the refresh token");
     // The GitHub token inside must still work and still be the owner's.
-    const user = await fetchGithubUser(p.gh, deps.fetch).catch(() => null);
-    if (!isAllowedUser(user, c.allowedGithubLogin, c.allowedGithubId)) return oauthError("invalid_grant", "The GitHub authorization behind this token is no longer valid");
+    const check = await checkOwner(p.gh, c.owner, deps.fetch);
+    if (!check.ok || check.user.id !== p.uid) return oauthError("invalid_grant", "The GitHub authorization behind this token is no longer valid");
     return json(issueTokens(c, p, now));
   }
 

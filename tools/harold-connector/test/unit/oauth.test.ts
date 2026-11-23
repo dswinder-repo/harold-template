@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { isAllowedUser, checkTokenIdentityOnce, _resetIdentityCache } from "../../src/identity.js";
+import { isAllowedUser, checkTokenIdentityOnce, _resetIdentityCache, type OwnerRule } from "../../src/identity.js";
 import { redirectAllowed, register, _resetOauthCaches } from "../../src/oauth.js";
 import { config, repoConfig } from "../../src/config.js";
 import { FakeGithub } from "./fakes.js";
@@ -8,6 +8,7 @@ import { OWNER, STRANGER, setTestEnv } from "./env.js";
 beforeEach(() => { setTestEnv(); _resetOauthCaches(); _resetIdentityCache(); });
 
 const hosts = ["claude.ai", "claude.com"];
+const ACCOUNT: OwnerRule = { kind: "account", login: OWNER.login, id: OWNER.id };
 
 describe("DCR redirect-host narrowing (ALLOWED_REDIRECT_HOSTS set)", () => {
   it("accepts https redirect URIs on claude.ai and claude.com only", () => {
@@ -63,16 +64,16 @@ describe("identity check", () => {
     gh.users.set("tok-owner", OWNER);
     gh.users.set("tok-stranger", STRANGER);
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    expect(await checkTokenIdentityOnce("access-A", "tok-owner", OWNER.login, OWNER.id, exp, gh.fetch)).toBe(true);
-    expect(await checkTokenIdentityOnce("access-A", "tok-owner", OWNER.login, OWNER.id, exp, gh.fetch)).toBe(true);
+    expect(await checkTokenIdentityOnce("access-A", "tok-owner", ACCOUNT, exp, gh.fetch)).toBe(OWNER.id);
+    expect(await checkTokenIdentityOnce("access-A", "tok-owner", ACCOUNT, exp, gh.fetch)).toBe(OWNER.id);
     expect(gh.calls.filter(c => c === "GET /user").length).toBe(1);
-    expect(await checkTokenIdentityOnce("access-B", "tok-stranger", OWNER.login, OWNER.id, exp, gh.fetch)).toBe(false);
-    expect(await checkTokenIdentityOnce("access-C", "tok-revoked", OWNER.login, OWNER.id, exp, gh.fetch)).toBe(false);
+    expect(await checkTokenIdentityOnce("access-B", "tok-stranger", ACCOUNT, exp, gh.fetch)).toBeNull();
+    expect(await checkTokenIdentityOnce("access-C", "tok-revoked", ACCOUNT, exp, gh.fetch)).toBeNull();
   });
 });
 
 describe("configuration", () => {
-  it("HAROLD_REPO is required (no default repository) and must be owner/name", () => {
+  it("HAROLD_REPO is required off Vercel (no default repository) and must be owner/name", () => {
     setTestEnv({ HAROLD_REPO: "" });
     expect(() => repoConfig()).toThrow(/Missing environment variable HAROLD_REPO/);
     setTestEnv({ HAROLD_REPO: "not-a-repo" });
@@ -82,7 +83,7 @@ describe("configuration", () => {
   });
   it("sign-in does not depend on HAROLD_REPO; the owner's login and numeric id are both required", () => {
     setTestEnv({ HAROLD_REPO: "" });
-    expect(config().allowedGithubLogin).toBe(OWNER.login);
+    expect(config().owner).toEqual({ kind: "account", login: OWNER.login, id: OWNER.id });
     setTestEnv({ ALLOWED_GITHUB_ID: "" });
     expect(() => config()).toThrow(/ALLOWED_GITHUB_ID/);
     setTestEnv({ ALLOWED_GITHUB_LOGIN: "" });

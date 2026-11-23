@@ -4,7 +4,7 @@
 // filed the same way, whatever its type.
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { tz } from "./config.js";
+import { supabaseKeyFromEnv, tz } from "./config.js";
 
 export type Sb = SupabaseClient;
 export interface CrmResult { text: string; isError?: boolean; person?: { name: string } }
@@ -12,7 +12,7 @@ export interface CrmResult { text: string; isError?: boolean; person?: { name: s
 let _sb: Sb | null = null;
 export function supabaseFromEnv(): Sb | null {
   const url = (process.env.SUPABASE_URL || "").trim();
-  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const key = supabaseKeyFromEnv();
   if (!url || !key) return null;
   if (!_sb) _sb = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   return _sb;

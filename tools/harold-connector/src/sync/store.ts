@@ -5,6 +5,7 @@
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { COLS, dueFromDb, dueToDb, type HaroldFields, type LinkRow, type LogKind, type TaskRow } from "./types.js";
+import { supabaseKeyFromEnv } from "../config.js";
 
 export interface LogEntry { kind: LogKind; provider: string; task_id?: string | null; external_id?: string | null; detail: Record<string, unknown> }
 export interface SyncStateRow { cursor: string | null; detail: Record<string, unknown> }
@@ -83,7 +84,7 @@ export function supabaseClientFactory(url: string, key: string, fetchImpl?: type
 
 export function syncStoreFromEnv(): SyncStore | null {
   const url = (process.env.SUPABASE_URL || "").trim();
-  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  const key = supabaseKeyFromEnv();
   if (!url || !key) return null;
   return new SupabaseSyncStore(supabaseClientFactory(url, key));
 }

@@ -15,6 +15,8 @@ export class FakeGithub {
   calls: string[] = [];
   searchHits: string[] = [];                  // paths /search/code answers with (GitHub code search)
   commitLog: { date: string; message: string; paths: string[] }[] = [];  // what /repos/:o/:r/commits?path= answers from
+  /** GET /repositories/:id; `visibleTo` lists the tokens that can see it (a private repository is 404 to anyone else). */
+  repos = new Map<number, { owner: { login: string; id: number; type: "User" | "Organization" }; visibleTo: string[] }>();
 
   sha(s: string) { return createHash("sha1").update(s).digest("hex"); }
 
@@ -34,6 +36,11 @@ export class FakeGithub {
     if (url.pathname.match(/^\/applications\/[^/]+\/grant$/) && method === "DELETE") { this.revoked.push(JSON.parse(String(init?.body)).access_token); return res(204); }
     if (!this.users.has(tok)) return res(401, { message: "Bad credentials" });
 
+    const rm = url.pathname.match(/^\/repositories\/(\d+)$/);
+    if (rm && method === "GET") {
+      const r = this.repos.get(Number(rm[1]));
+      return r && r.visibleTo.includes(tok) ? res(200, { id: Number(rm[1]), owner: r.owner, private: true }) : res(404, { message: "Not Found" });
+    }
     const m = url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/contents\/?(.*)$/);
     if (m) {
       const path = decodeURIComponent(m[1]);
