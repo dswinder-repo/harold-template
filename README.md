@@ -2,7 +2,7 @@
 
 Harold is an AI chief of staff that works with any AI tool and any model: it is platform-, model- and harness-agnostic, and runs in any harness that can read `AGENTS.md` and run a shell command, from any computer or from the cloud. Every harness with lifecycle hooks is wired: boot and close run on their own in Claude Code, the Claude desktop app, Codex, Cursor, Gemini CLI, Qwen Code, Copilot CLI, Grok Build, Kimi Code, goose, Hermes Agent, Cline, opencode, Amp and OpenClaw. Nothing in it depends on one particular machine being on. This repository is the empty skeleton: the folder structure, the rules, the procedures and the small programs that make them stick. You fill in your own work, people and projects.
 
-**Full documentation: [harold.works/docs](https://harold.works/docs).** If you are an AI agent setting this up for someone, read the next section first, then follow `playbook/core/setup.md`, the setup playbook, which walks the operator through everything in order. The docs cover the same ground at more length.
+**Full documentation: [harold.works/docs](https://harold.works/docs).** To set Harold up, paste the one line in the [Quick start](#quick-start) into your AI tool. If you are an AI agent setting this up for someone, read the next section first, then follow `playbook/core/setup.md`, the setup playbook, which walks the operator through everything in order. The docs cover the same ground at more length.
 
 ## For AI tools setting this up
 
@@ -19,14 +19,15 @@ If someone has pointed you at this repository or at harold.works and asked you t
 
 `bin/harold check` only reads; it is the safe first command to run.
 
-**The order of first steps.** `playbook/core/setup.md` is the full procedure; in short:
+**The order of first steps.** `playbook/core/setup.md` is the full procedure, and its step numbers are the same as in the Quick start below and in the docs. In short:
 
-1. **Point `origin` at the operator's own private repository, and give git a name and email** (Quick start, step 1). Do this before anything runs `bin/harold close`, because close commits and pushes on every turn. A clone of the public starter still has the starter as `origin`, and Harold refuses to push there.
-2. **Run `bin/harold check`** (Quick start, step 2). It should print `RESULT: PASS`.
-3. **Ask the operator for their details and fill in the placeholders yourself** (Quick start, step 3): name, role, time zone, git identity, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
-4. **Set up the CRM** (Quick start, step 4; `playbook/core/setup.md`, step 8): the Supabase database, reached through the hosted connector or the local `harold-mcp`. It is part of Harold, not an add-on: close checks that every contact touched was filed in it.
-5. **Offer the optional parts one at a time** (Quick start, steps 4c, 5 and 6): the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
-6. **Run `bin/harold check`, then a first boot and close**, and follow `AGENTS.md` from there. Until setup is complete, boot opens with a short "not set up yet" notice that names what is left.
+1. **Point `origin` at the operator's own private repository, and give git a name and email** (steps 1 and 2). Do this before anything runs `bin/harold close`, because close commits and pushes on every turn. A clone of the public starter still has the starter as `origin`, and Harold refuses to push there.
+2. **Run `bin/harold check`** (step 3). It should print `RESULT: PASS`.
+3. **Ask the operator for their details and fill in the placeholders yourself** (steps 4 to 7): time zone, name, role, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
+4. **Deploy the connector and create the CRM database** (step 8). The connector is a required part of Harold: it is how every AI tool, the operator's phone included, reaches the knowledge base, the CRM and the task list. Do everything you can yourself (the Vercel CLI once the operator has signed in, the database tables, the settings, the `curl` checks), and tell the operator exactly what to click for the parts only a person can do: creating free Vercel and Supabase accounts and filling in GitHub's OAuth app form.
+5. **Check the CRM and the task list, and offer to import contacts** (step 9). The CRM is part of Harold, not an add-on: close checks that every contact touched was filed in it.
+6. **Offer the optional parts one at a time** (step 10): the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Each can be skipped and added at any time.
+7. **Run `bin/harold check`, then a first boot and close** (step 11), and follow `AGENTS.md` from there. Until setup is complete, boot opens with a short "not set up yet" notice that names what is left.
 
 ## What makes 2.0 different
 
@@ -38,66 +39,66 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 ## Quick start
 
-**Required:** your own private repository, your details, and the CRM (a Supabase database reached through the hosted connector or the local `harold-mcp`). **Optional:** the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Harold has its own task list, so none of those tools is needed. The setup playbook, `playbook/core/setup.md`, walks through all of it in conversation: ask your AI tool to "set up Harold".
+**The easy way: let your AI tool set it up.** Paste this line into any AI tool that can work in a folder on your computer and run commands:
 
-These steps are a condensed version of [Initial Setup](https://harold.works/docs/#getting-started/initial-setup) in the docs, which splits them into more, smaller steps; each step below names the docs steps it covers.
+```text
+Set up Harold for me: follow the setup playbook at https://github.com/dswinder-repo/harold-template/blob/main/playbook/core/setup.md, and read https://harold.works/llms-full.txt for anything it doesn't cover.
+```
 
-1. **Make it your own private repository** (docs, Step 1). Every close commits your work and pushes it to `origin`, so `origin` must be a **private** repository of your own: it will hold your working life. On this repository's GitHub page choose **Use this template → Create a new repository**, set it to **Private**, and clone your copy:
-   ```bash
-   git clone https://github.com/<you>/<your-repo>.git my-harold
-   cd my-harold
-   git config user.name "<your name>" && git config user.email "<your email>"
-   ```
-   The last line tells git who is saving your work; skip it if this computer already has a git identity. Or by hand: create an empty **private** repository on GitHub (no README, no license), clone the starter, point `origin` at your repository and push:
+It makes your private copy of this starter and walks you through the whole setup in conversation, doing the work itself. You answer its questions, create a few free accounts (GitHub, Vercel, Supabase), sign in when it opens a browser, and fill in one form on GitHub.
+
+**Required:** your own private repository, your details, the connector and the CRM (a Supabase database the connector reaches). **Optional:** the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Harold has its own task list, so none of those tools is needed.
+
+The steps below are the same steps, with the same numbers, as the setup playbook (`playbook/core/setup.md`) and [Initial Setup](https://harold.works/docs/#getting-started/initial-setup) in the docs, condensed for doing it by hand.
+
+1. **Make it your own private repository.** Every close commits your work and pushes it to `origin`, so `origin` must be a **private** repository of your own: it will hold your working life. On this repository's GitHub page choose **Use this template → Create a new repository**, set it to **Private**, and clone your copy (`git clone https://github.com/<you>/<your-repo>.git my-harold`). Or by hand: create an empty **private** repository on GitHub (no README, no license), clone the starter, point `origin` at your repository and push:
    ```bash
    git clone https://github.com/dswinder-repo/harold-template.git my-harold
    cd my-harold
    git remote set-url origin https://github.com/<you>/<your-repo>.git
-   git config user.name "<your name>" && git config user.email "<your email>"
    git push -u origin main
    ```
    Do this before your first session. Until `origin` points at your own repository, boot says the workspace is not set up yet, and close commits locally but refuses to push.
    Requirements: git, curl, Node 22+ and Python 3.8+ (standard library only, for search and the link graph). Nothing in this repository needs a newer Python; the Model Council add-on the docs describe lives in its own repository and needs Python 3.10+. The CRM web app also needs pnpm, only where you build it. Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
 
-2. **Check it works as-is** (docs, Step 2).
+2. **Tell git who you are**, unless this computer already has a git identity: `git config user.name "<your name>" && git config user.email "<your email>"`. Put the same name, email and GitHub account in the **Git & GitHub Workflow** section of `AGENTS.md`.
+
+3. **Check it works as-is.**
    ```bash
    bin/harold check     # → RESULT: PASS, with warnings that HAROLD_TZ is not set and origin is still the starter (both clear during setup)
    ```
 
-3. **Fill in the placeholders and set your time zone** (docs, Steps 3 to 5). The easiest way is to ask your AI tool to "set up Harold": it follows `playbook/core/setup.md`, asks for your details and fills everything in. By hand, search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/working-memory.md`, the `dashboard/` modules, `dashboard/people.md` (your contact types), and the config table at the top of `playbook/core/morning-brief.md`. Set your time zone in `harold/settings.env` (uncomment the line and put your zone):
+4. **Set your time zone** in `harold/settings.env` (uncomment the line and put your zone):
    ```bash
    HAROLD_TZ="America/Chicago"
    ```
    That file is committed and holds only non-secret `HAROLD_*` settings (`HAROLD_TZ`, `HAROLD_BRIEF_TIME`, `HAROLD_STALE_DAYS`, `HAROLD_PULSE_DAYS`, and `HAROLD_CHECKS`, your own check scripts that `bin/harold check` and boot run), so every computer, cloud session and scheduled job gets them with nothing to set up. A value in the environment or in `~/.harold/env` (the per-machine file where credentials live) overrides it. Without a zone, Harold uses the time zone of whatever machine it runs on (which, in the cloud, is usually UTC).
-   Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it. Until you do, it is inert: the example blocker and event carry no dates, so they never fall due, and your first boot starts the clock for scheduled work (it writes a `harold-start` line into the empty `harold/trigger-log.jsonl`, so the weekly scan, full audit and month-end review count from the next day, and nothing the starter's own dates imply is ever "overdue"). Your first session closes cleanly with the examples still in place.
 
-4. **Set up the CRM (Supabase)** (docs, Step 7). The CRM is part of Harold: every contact you touch is filed there as well as in the vault, and close checks it. Only the CRM web app (4c) is optional.
+5. **Fill in your details.** Search for `[YOUR` and replace: `AGENTS.md` (name, role, time zone, git identity), `memory/working-memory.md`, the `dashboard/` modules, and the config table at the top of `playbook/core/morning-brief.md`. Then replace the example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) with your own, or delete it. Until you do, it is inert: the example blocker and event carry no dates, so they never fall due, and your first boot starts the clock for scheduled work (it writes a `harold-start` line into the empty `harold/trigger-log.jsonl`, so the weekly scan, full audit and month-end review count from the next day, and nothing the starter's own dates imply is ever "overdue"). Your first session closes cleanly with the examples still in place.
 
-   **a. The database, whichever tools reach it.** Create a free Supabase project in *your own* account. In its SQL editor, run `tools/harold-mcp/schema.sql`. Two sets of tools reach the same database:
-   - **The hosted connector — the standard way.** One deployment of `tools/harold-connector` (step 6) gives every tool that supports remote MCP servers — chat apps, coding agents, and scheduled jobs that attach it — the CRM tools, with the credentials held on its host. If you will deploy it, skip 4b.
-   - **harold-mcp — the local alternative.** A tool server that runs on the same computer as a workspace session, with the credentials in `~/.harold/env` on that computer. Nothing to deploy; it works on that computer only.
+6. **Choose your contact types** in `dashboard/people.md`: a short list (for example investor, partner, founder, team, other), one per contact. Labels cover everything else.
 
-   **b. The local alternative: harold-mcp.** Skip this if the connector covers your tools:
-   ```bash
-   bin/harold-setup-crm                       # stores SUPABASE_URL + service_role key in ~/.harold/env, tests the connection
-   (cd tools/harold-mcp && npm install)
-   cp .mcp.example.json .mcp.json             # Claude Code: then put the absolute path to bin/harold-mcp in it
-   ```
-   Codex and Cursor have their own examples, and any other harness adds `bin/harold-mcp` the same way (see [Any AI tool, any model](#any-ai-tool-any-model)). Keys never go in the repo: they stay in `~/.harold/env`, and `.mcp.json`, `.cursor/mcp.json` and `.codex/config.toml` are gitignored. These credentials also let boot and close apply the offline CRM queue (`harold/crm-queue.jsonl`).
+7. **Add your first projects**: one to three, each with a folder, an entry in `harold/projects.md` with its next step, and a card in `vault/projects/` (`playbook/core/project-intake.md`).
 
-   **c. Optional: the CRM web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short:
-   - In the SQL editor, run `tools/harold-crm/supabase/migrations/002` to `007` in order (`001` is the schema you already ran).
-   - Deploy it on Vercel or any Next.js host: import this repository with **Root Directory** `tools/harold-crm`, and set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the publishable key, never the service role key).
-   - In Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups.
-   - Optional AI (contact research, enrichment, meeting prep) runs on Google Gemini, whose free tier covers it: get a free API key at [Google AI Studio](https://aistudio.google.com/apikey) and set it as `GEMINI_API_KEY` in the host's environment variables (and in `tools/harold-crm/.env.local` for local development). Without it, the AI buttons say AI is off.
+8. **Deploy the connector (required).** The connector (`tools/harold-connector`) is how Harold is reached from your phone, the Claude website and any AI tool on any device, and it carries the CRM and the task list. It runs in your own free Vercel account; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has a **Deploy with Vercel** button and every detail. In order:
+   - **Deploy it.** In Vercel, import your private repository with **Root Directory** `tools/harold-connector` (or use the button). On Vercel the connector works out its repository, the one GitHub account allowed in (yours), its encryption key and its public address by itself. Set the project's Ignored Build Step to `git diff HEAD^ HEAD --quiet -- .`, so the push at the end of every turn redeploys it only when the connector itself changed.
+   - **The CRM database.** If Vercel offers its Supabase integration for the project, use it: it creates the Supabase project and fills in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for you. Otherwise create a free project at supabase.com and keep its address and service role key. Either way, run `tools/harold-mcp/schema.sql` in its SQL editor.
+   - **The GitHub OAuth app.** Open the connector's address (`https://<project>.vercel.app`): its home page shows the homepage and callback addresses to use. Create the app at github.com → Settings → Developer settings → OAuth Apps → New OAuth App with those two addresses, then generate a client secret.
+   - **Settings and redeploy.** In Vercel's Environment Variables, set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, plus `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` unless the integration filled them in (and `HAROLD_TZ` for your dates). Redeploy, and check it with the `curl` commands in the connector README.
+   - **Add it to your tools.** Add `<address>/mcp` as a remote MCP server (a "custom connector" in chat apps) in every AI tool you use; the connector README lists each tool's way. Signing in goes through your GitHub account, and only yours is accepted.
+   - **If a check gets a Vercel login page** instead of the connector, Vercel's deployment protection is blocking it: use the production address, and if needed turn off Vercel Authentication for production (Settings → Deployment Protection).
 
-5. **Harold's task list, and the task tool you already use** (docs, Step 8). Harold has its own task list, kept in your CRM database, so it needs no outside tool. Boot lists the tasks that are due, and `bin/harold task list|create|start|done|cancel|reopen|update` manages them; from a chat app, the connector's `task_list`, `task_create` and `task_update` do the same. Without the database key, writes are queued and the list is read from `harold/tasks-snapshot.md`. Action items become tasks automatically: paste call notes or a transcript, or forward an email, and every commitment in it (yours, or something someone owes you) becomes a task without you asking, with its ref (for example `H-12`) written into the meeting note's `## Action items`.
+   **Fallback for a tool that cannot connect to a remote MCP server:** harold-mcp, a local tool server that reaches the same database from one computer. `bin/harold-setup-crm` stores the Supabase address and service role key in `~/.harold/env` and tests them; then `(cd tools/harold-mcp && npm install)` and add `bin/harold-mcp` to that tool as a local MCP server by its absolute path (`.mcp.example.json`, `.cursor/mcp.example.json` and `.codex/config.example.toml` show the shape; the copies are gitignored). Those two values in `~/.harold/env` are worth having on the computer where you work even with the connector: `bin/harold` then writes tasks and CRM records directly, and boot and close apply the offline CRM queue (`harold/crm-queue.jsonl`).
 
-   **If you already use Linear, Todoist, Asana or Notion, keep using it.** The hosted connector syncs Harold's task list with it in both directions, and any mix of the four works at once. Changes to different fields on the two sides are both kept; when the same field changed on both sides, the later change wins and the conflict is logged (`bin/harold task conflicts`). Each sync is optional and needs the connector; the steps are in `playbook/core/setup.md` (the sections "Optional: two-way sync with ...") and `tools/harold-connector/README.md`.
+9. **The CRM and Harold's task list.** The CRM is part of Harold: every contact you touch is filed there as well as in the vault, and close checks it. Your AI tool can import your existing contacts from a CSV export. Harold's task list lives in the same database, so it needs no outside tool. Boot lists the tasks that are due; the connector's `task_list`, `task_create` and `task_update` manage them from any tool, and `bin/harold task list|create|start|done|cancel|reopen|update` does the same in a workspace session (without the database key, its writes are queued and the list is read from `harold/tasks-snapshot.md`). Action items become tasks automatically: paste call notes or a transcript, or forward an email, and every commitment in it (yours, or something someone owes you) becomes a task without you asking, with its ref (for example `H-12`) written into the meeting note's `## Action items`.
 
-6. **Optional: the connector and the scheduled jobs.** The hosted connector is the standard way to reach Harold from any tool that supports remote MCP servers (a chat app on your phone or in a browser, a coding agent, a scheduled job with a token): it reads and writes the knowledge base and the CRM, with or without the workspace folder ([below](#from-any-chat-app-the-hosted-connector)). You deploy it once. The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
+10. **The optional parts.** Each can be skipped and added at any time.
+    - **The CRM web app.** `tools/harold-crm` is a CRM you open in a browser (contacts, pipeline, tasks, notifications, audit trail), on the same database. [`tools/harold-crm/README.md`](tools/harold-crm/README.md) has the steps; in short: run `tools/harold-crm/supabase/migrations/002` to `007` in the SQL editor in order (`001` is the schema you already ran); deploy it on Vercel or any Next.js host with **Root Directory** `tools/harold-crm` and `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (the publishable key, never the service role key); in Supabase, create your user, add yourself as a member (`crm_members`), and turn off sign-ups. Optional AI (contact research, enrichment, meeting prep) runs on Google Gemini, whose free tier covers it: get a free API key at [Google AI Studio](https://aistudio.google.com/apikey) and set it as `GEMINI_API_KEY` in the host's environment variables (and in `tools/harold-crm/.env.local` for local development). Without it, the AI buttons say AI is off.
+    - **The task tool you already use.** If you use Linear, Todoist, Asana or Notion, keep using it: the connector syncs Harold's task list with it in both directions, and any mix of the four works at once. Changes to different fields on the two sides are both kept; when the same field changed on both sides, the later change wins and the conflict is logged (`bin/harold task conflicts`). The steps are in `playbook/core/setup.md` (the sections "Optional: two-way sync with ...") and `tools/harold-connector/README.md`.
+    - **Scheduled jobs.** The morning brief and the weekly, monthly and month-end housekeeping can run on GitHub's machines ([below](#scheduled-jobs-in-the-cloud)). Each is off until you set it up.
+    - **More harnesses.** Some need a one-time step (trusting the hooks, or a snippet in your user config); see [Any AI tool, any model](#any-ai-tool-any-model).
 
-7. **Start a session and say good morning** (docs, Steps 6 and 11), in whichever harness you use. Most harnesses run boot and close from the hook files and plugins already in this repository (some ask you to trust them once); Kimi Code and Hermes Agent need a snippet copied into your user config, and OpenClaw a plugin install. Where a harness has no hooks, the first instruction in `AGENTS.md` has the agent run them. Details below.
+11. **Check, start a session and say good morning**, in whichever harness you use. Run `bin/harold check` (it should pass with no warnings about the time zone or `origin`). Most harnesses run boot and close from the hook files and plugins already in this repository (some ask you to trust them once); Kimi Code and Hermes Agent need a snippet copied into your user config, and OpenClaw a plugin install. Where a harness has no hooks, the first instruction in `AGENTS.md` has the agent run them. Details below.
 
 ## Any AI tool, any model
 
@@ -114,7 +115,7 @@ Any model the harness offers works; Harold doesn't depend on a particular one, b
 1. **Instructions.** If it reads `AGENTS.md`, nothing to do. Otherwise add one line to its own rules file: read and follow `AGENTS.md` at the start of every session.
 2. **With hooks.** From the workspace root, run `bin/harold boot` at session start, `bin/harold close` at the end of every turn and `bin/harold close --final` at session end, with no `--via` flag (that flag is only for the harnesses below). If the hook passes input on stdin, add `< /dev/null` so Harold answers in plain text. Boot prints the context to hand the agent and exits 0, or prints `⛔ HAROLD BOOT REFUSED` and exits 2. Close exits 0 when everything is filed and pushed, 2 with the list of what is missing on stderr (send it back to the agent, which fixes it and closes again), or 1 when only the push failed.
 3. **Without hooks.** Nothing to wire: `AGENTS.md` tells the agent to run boot first and close at the end of every turn. Every command also works by hand in a terminal.
-4. **MCP.** If the harness supports remote MCP servers, add the hosted connector (the standard way: one deployment serves every such tool). Otherwise, or for a computer that holds the CRM's credentials, add `bin/harold-mcp` as a local (command) MCP server, with its absolute path (the local alternative). The local server reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
+4. **MCP.** Add the connector, `<your connector address>/mcp`, as a remote MCP server: one deployment serves every tool. Only if the harness cannot connect to a remote MCP server, add the fallback, `bin/harold-mcp`, as a local (command) MCP server with its absolute path. It reads the CRM's address and key from `~/.harold/env`, so nothing secret goes in the harness's settings.
 5. **Scheduled jobs.** Any harness with a headless mode can run them: on a schedule, with `harold/brief-prompt.md` (the morning brief) or `harold/housekeeping-prompt.md` (weekly scan, full audit, month-end review) as the prompt. Each prompt runs its own `start` gate and `finish` step. In the starter's workflows, set `HAROLD_AGENT` to one of the presets, or to `custom` with your CLI's command ([Scheduled jobs in the cloud](#scheduled-jobs-in-the-cloud)); the gate before it and the finish step after it stay the same.
 
 ### Every harness with lifecycle hooks is wired
@@ -167,9 +168,9 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 
 ### MCP tools and scheduled jobs
 
-Every harness below that supports remote MCP servers can use the hosted connector instead: add `<your deployment>/mcp` once and the same CRM tools are available there, with no per-computer setup. The middle column configures the local alternative, harold-mcp.
+Every harness below that supports remote MCP servers uses the connector: add `<your connector address>/mcp` once and the knowledge-base, CRM and task tools are there, with no per-computer setup ([`tools/harold-connector/README.md`](tools/harold-connector/README.md), "Connect your tool", has each one's command or menu). The middle column is only the fallback, harold-mcp, for a harness or computer that cannot reach a remote MCP server.
 
-| Harness | Harold's MCP tools (CRM) | Scheduled jobs (`HAROLD_AGENT`) |
+| Harness | Fallback: harold-mcp (local CRM tools) | Scheduled jobs (`HAROLD_AGENT`) |
 |---|---|---|
 | Claude Code | `.mcp.json` from `.mcp.example.json` | `claude` (default) |
 | Claude desktop app (Cowork) | add `bin/harold-mcp` as a local MCP server | n/a |
@@ -231,7 +232,7 @@ playbook/
   core/                    21 portable playbooks (setup, morning brief, debrief, intake, analyst, QC, ...)
   engagements/example/     how to add employer- or client-specific playbooks
 tools/
-  harold-mcp/              MCP server (13 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
+  harold-mcp/              local fallback MCP server for tools without remote MCP (13 tools: CRM, pipeline, alerts engine, markdown writers) + schema.sql
   harold-crm/              optional CRM web app (Next.js + Supabase) on the same database; deploy with root directory
                            tools/harold-crm. Its migration 001 is a copy of schema.sql; 002-007 add the app's tables
   harold-connector/        hosted MCP server (Vercel or any Node host): reach the knowledge base and the CRM
@@ -411,9 +412,11 @@ The job ends with `bin/harold housekeeping finish`, which checks that the job wa
 
 **Prefer a Claude Code routine (or another scheduler)?** Delete the workflow and schedule a daily run whose prompt is `harold/housekeeping-prompt.md`, with `HAROLD_TZ` in its environment. The same gate picks the job, if any; `bin/harold close` inside the routine saves the work.
 
-## From any chat app: the hosted connector
+## The connector: Harold from any tool and any device
 
-Sessions in a workspace harness are where Harold does its full work. The connector in `tools/harold-connector` is the standard way to reach the knowledge base and the CRM from any tool that supports remote MCP servers, and the way from somewhere without the workspace folder, such as a chat app on your phone or in a browser: a small remote MCP server you host yourself (Vercel, or any Node 22+ host), which reads and writes the knowledge base in your private GitHub repository through the GitHub API and, if you give it the Supabase credentials, the CRM. It accepts exactly one GitHub account (yours), keeps no database (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Add `<your deployment>/mcp` as a remote MCP server in any tool that supports them (Claude, Claude Code, Codex, Cursor, VS Code, ChatGPT and others), or give a scheduled job a personal access token; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the deploy steps (GitHub OAuth app, environment variables) and how to connect each tool. One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed (`playbook/core/crm-filing.md`).
+The connector in `tools/harold-connector` is a required part of Harold. It is how every AI tool reaches the knowledge base, the CRM and the task list, including tools without the workspace folder, such as a chat app on your phone or the Claude website: a small remote MCP server you host yourself, in your own free Vercel account (or on any Node 22+ host). It reads and writes the knowledge base in your private GitHub repository through the GitHub API, and the CRM and the task list in your Supabase database. It accepts exactly one GitHub account (yours), keeps no database of its own (its tokens are encrypted with your own key), has no delete tools, and refuses to write anything that looks like a secret. Setting it up is step 8 of the [Quick start](#quick-start) and of the setup playbook; [`tools/harold-connector/README.md`](tools/harold-connector/README.md) has the **Deploy with Vercel** button, every setting and how to connect each tool. Add `<your connector address>/mcp` as a remote MCP server in every tool that supports them, or give a scheduled job a personal access token. harold-mcp remains only as a local fallback for a tool that cannot connect to a remote MCP server.
+
+One difference to know: boot and close do not run in a connector chat, so filing is not enforced there. The tools file directly, and the next workspace session's boot and close see what landed. A workspace session that writes the CRM through the connector, on a computer without the CRM credentials, records each write with `bin/harold file crm '{"contact":"…","action":"upsert_contact","applied":"connector"}'` so close counts the contact as filed (`playbook/core/crm-filing.md`).
 
 ## Keeping Harold up to date
 

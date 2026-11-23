@@ -1,6 +1,6 @@
 # Playbook: CRM Filing
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database.
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use the connector's; harold-mcp's is the fallback for a tool that cannot connect to a remote MCP server. Both write the same database.
 
 **Purpose:** File every contact interaction into the CRM and the vault, all three places together.
 **Trigger:** Any interaction with a contact: a meeting, call, email or message; any correction to a contact's details; the CRM sweep at session close.

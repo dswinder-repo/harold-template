@@ -9,9 +9,11 @@
 ## How to run this playbook
 
 - **You do the work; the operator answers questions.** Ask for each detail in conversation, then write it into the files yourself. Never ask the operator to open or edit a file, and never guess a detail they have not given you. If an answer is unclear, ask again.
-- **One step at a time, in order.** Say what the step is for in one sentence, ask what you need, do it, confirm it in one line, and move on. Steps 1 to 8 are required, the CRM included. Step 9 offers the optional parts, each with a plain "skip for now" path, and step 10 checks the result.
+- **One step at a time, in order.** Say what the step is for in one sentence, ask what you need, do it, confirm it in one line, and move on. Steps 1 to 9 are required, the connector and the CRM included. Step 10 offers the optional parts, each with a plain "skip for now" path, and step 11 checks the result.
 - **Say this early, in plain words:** Harold saves the operator's work by committing it with git and pushing it to their own private repository at the end of every turn. That repository will hold their working life (people, meetings, decisions), so it must be private, and it must be theirs.
 - **If the operator stops partway,** the next session picks up where this one left off: boot names what is still missing in its `⚠ NOT SET UP YET` notice, and this playbook resumes at the first unfinished step.
+- **Starting from one pasted line.** The docs at harold.works give the operator one line to paste into their AI tool, which points it at this playbook. If that is how you got here and there is no copy of the starter on this computer yet, start at step 1, which makes one. You need to be able to run shell commands (git, Node 22+, Python 3.8+ and curl must be installed; help the operator install whichever is missing). If the tool you are running in can only chat and cannot run commands, say so, and ask the operator to paste the same line into an AI tool that can work in a folder on their computer.
+- **Do it yourself wherever you can.** Run the commands, generate values, use the command-line tools of GitHub, Vercel and Supabase once the operator has signed in, and check every result yourself. Ask the operator only for what a person must do: creating accounts, signing in when a browser opens, filling in a form no tool can fill (GitHub's OAuth app form), and answering questions. When they must click, tell them exactly what to click, one screen at a time.
 - **Read the documentation as plain text** when you need more detail than this playbook gives: `https://harold.works/llms-full.txt` holds the full docs.
 
 > **Visualizer, first action:** if boot has run, update `harold/active-sessions/{session}.json`: set `ops` to `"working"`, task = "Setting up Harold", progress = 0.
@@ -24,7 +26,7 @@ Harold must never push to the public starter, and `bin/harold close` refuses to:
 
 Ask whether the operator has a GitHub account (or another git host) and whether they have already made their own copy. Then take one of two paths:
 
-- **From the template (simplest).** On the starter's GitHub page, the operator chooses **Use this template → Create a new repository**, sets it to **Private**, and gives you the new repository's URL. Clone it into the folder they want Harold to live in (`git clone <their URL> <folder>`), then work from that folder.
+- **From the template (simplest).** If the GitHub CLI is installed, have the operator sign in (`gh auth login`, in the browser when asked) and create the copy yourself: `gh repo create <name> --private --template dswinder-repo/harold-template --clone`. Otherwise, on the starter's GitHub page, the operator chooses **Use this template → Create a new repository**, sets it to **Private**, and gives you the new repository's URL; clone it into the folder they want Harold to live in (`git clone <their URL> <folder>`). Then work from that folder.
 - **From a clone you already have.** Ask the operator to create an empty **private** repository (no README, no licence) and give you its URL. Then re-point `origin` and push:
   ```bash
   git remote set-url origin <their private repository URL>
@@ -88,47 +90,66 @@ Ask what the operator is working on now, and take the one to three that matter m
 
 Then ask whether to remove the starter's example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) now or once real content has replaced it. It is inert either way: it carries no dates, so nothing in it falls due.
 
-## Step 8: The CRM
+## Step 8: The connector
 
-Harold has its own CRM, and it is part of Harold, not an add-on: every person the operator deals with is filed there as well as in the vault, and `bin/harold close` checks that each contact touched was filed. It is a Supabase database in the operator's own account, which the free plan covers.
+The connector (`tools/harold-connector`) is a required part of Harold. It is a small server, hosted in the operator's own free Vercel account, that lets them reach Harold from their phone, from the Claude website and from any AI tool on any device that supports remote MCP servers. It carries the CRM and the task list: every AI tool writes contacts and tasks through it. It also needs the CRM database, so this step creates that too.
 
-1. **The database.** The operator creates a Supabase project at supabase.com. In its SQL editor, they run the contents of `tools/harold-mcp/schema.sql` (you can show them the file or paste it for them).
-2. **The tools that reach it.** Choose one with the operator:
-   - **The hosted connector** (`tools/harold-connector`), the standard way: one small deployment that gives every AI tool with remote MCP support, including chat apps on a phone, the CRM and knowledge-base tools. Walk them through `tools/harold-connector/README.md`: a deployment (Vercel or any Node 22+ host), a GitHub OAuth app, the environment variables (with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for the CRM), then adding `<deployment>/mcp` to their AI tool.
-   - **harold-mcp**, the local alternative: nothing to deploy, and it works on this computer only. Run `bin/harold-setup-crm` (it stores the Supabase URL and service-role key in `~/.harold/env` and tests the connection), then `(cd tools/harold-mcp && npm install)`, and add `bin/harold-mcp` to the AI tool's MCP servers by its absolute path (`.mcp.example.json` shows the shape).
+**Tell the operator first, in plain words,** what they will do themselves and what you will do. They will create two free accounts (Vercel and Supabase), sign in when a command opens a browser, and fill in one form on GitHub. You do everything else: the deployment, the settings, the checks. Then work through the items below in order, one at a time, and wait for the operator to confirm each thing only they can do.
 
-   The service-role key is a secret: it goes into `~/.harold/env` or the connector host's environment, never into the repository or the chat history if the tool offers a safer way to enter it.
-3. **Check it.** Search the CRM for any name with `crm_search_contacts` (connector) or `harold_search_contacts` (harold-mcp). An empty result with no error means it works.
-4. **Bring in existing contacts.** Offer to import the operator's contacts from a CSV export: another CRM, Google Contacts, Apple Contacts or LinkedIn's connections export. If they want it:
+1. **The accounts.** Ask the operator to create a free account at vercel.com (the simplest way is **Continue with GitHub**, which also lets Vercel see their private repository) and a free account at supabase.com (also possible with GitHub). If they already have them, use those.
+2. **Deploy the connector.** Create a Vercel project from the operator's private repository, with **Root Directory** `tools/harold-connector`, and deploy it to production. It must be imported from the repository, not uploaded as a folder, so that the connector can work out which repository it serves and later pushes to its folder redeploy it.
+   - Do it yourself with the Vercel CLI: run `npx vercel login` and let the operator sign in when the browser opens, then create and link the project and deploy it (`npx vercel --prod`). Set the project's **Ignored Build Step** to `git diff HEAD^ HEAD --quiet -- .`: Harold pushes the workspace at the end of every turn, and this keeps those pushes from redeploying the connector unless its own folder changed.
+   - If the CLI cannot do a part, give the operator the exact clicks: in Vercel, **Add New**, then **Project**, then **Import** next to their Harold repository; open **Root Directory**, choose `tools/harold-connector`, and press **Deploy**. The connector's README (`tools/harold-connector/README.md`) also has a **Deploy with Vercel** button that does the same.
+   - The connector works out the rest of its own settings on Vercel: the repository, the one GitHub account allowed in (the operator's), its encryption key and its public address. On a host other than Vercel, follow the connector README instead.
+3. **Open the connector's home page.** Its address is the project's production address, `https://<project>.vercel.app` (Vercel shows it on the project page). Fetch it with `curl -s <address>/` and read it. The page shows the two addresses GitHub's form needs (the homepage and the callback address) and says which settings are still missing. Use the production address, never the address of one particular deployment.
+4. **The CRM database.** If Vercel offers its Supabase integration for the project (the project's **Storage** tab, or **Integrations**), let the operator use it: it creates the Supabase project and fills in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Vercel by itself. Otherwise the operator creates a project at supabase.com (**New project**: a name, a database password they keep in their password manager, a region near them) and you note its address and service role key (Supabase: **Project Settings**, then **API**). Either way, create the tables from `tools/harold-mcp/schema.sql`: run it yourself if you can reach the database (the Supabase CLI, or `psql` with the connection string the operator gives you), or have the operator open **SQL Editor**, then **New query**, paste the whole file (paste it for them) and press **Run**. "Done" looks like **Success. No rows returned**.
+5. **The GitHub OAuth app.** This is the one form no tool can fill in, so the operator does it. Tell them, step by step: open `https://github.com/settings/applications/new` (GitHub: **Settings**, then **Developer settings**, then **OAuth Apps**, then **New OAuth App**); Application name `Harold`; Homepage URL and Authorization callback URL exactly as the connector's home page shows them; leave **Enable Device Flow** unticked; press **Register application**. On the next page, copy the **Client ID**, then press **Generate a new client secret** and copy the secret straight away (GitHub shows it once).
+6. **Give Vercel the codes.** Four settings go on the project (Vercel: **Settings**, then **Environment Variables**, Production): `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from the form, and `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` unless the Supabase integration already filled them in. The client secret and the service role key are secrets: the safest path is for the operator to paste them into Vercel's screen themselves. If they give them to you, set them with `npx vercel env add <NAME> production` (it asks for the value) and never repeat them back. Also set `HAROLD_TZ` to the time zone from step 4, so the connector's dates are the operator's. Nothing goes into the repository.
+7. **Redeploy and check.** Redeploy so the connector reads its settings (`npx vercel --prod`, or Vercel: **Deployments**, the latest, **Redeploy**). Then check it yourself, never on trust:
+   ```bash
+   curl -s <address>/                                                           # names the /mcp address; no "Not ready"
+   curl -s <address>/.well-known/oauth-authorization-server | head -c 200       # JSON with "issuer"
+   curl -si -X POST <address>/mcp -H 'content-type: application/json' -d '{}' | grep -i www-authenticate   # a 401 that names resource_metadata
+   ```
+   The connector README's "Deploy and verify" section has the full list. **If `curl` gets a Vercel login page or a Vercel 401 instead of the connector,** Vercel's deployment protection is in the way: use the production address, and if that is still blocked, turn off **Vercel Authentication** for production (project **Settings**, then **Deployment Protection**). The connector does its own sign-in.
+8. **Add the connector to the operator's AI tools.** The address is `<address>/mcp`. Add it to the tool you are running in now, then to each other tool the operator uses: chat apps on the web and phone (in Claude, for example, **Settings**, then **Connectors**, then **Add custom connector**), coding agents and editors. The connector README's "Connect your tool" section has each tool's command or menu. Signing in opens a browser: the connector's own **Connect Harold?** page names the tool, the operator presses **Continue to GitHub** and approves, and only their GitHub account is accepted. Leave any client id or secret fields in the tool empty.
+9. **Check it from the tool.** Call `harold_today` through the connector, then search the CRM for any name with `crm_search_contacts`. An answer with no error (an empty search is fine) means the connector, the knowledge base and the CRM all work.
+
+**Only for a tool that cannot connect to a remote MCP server,** use the local fallback, harold-mcp, on that computer: run `bin/harold-setup-crm` (it stores the Supabase address and service role key in `~/.harold/env` and tests the connection), then `(cd tools/harold-mcp && npm install)`, and add `bin/harold-mcp` to that tool's MCP servers by its absolute path (`.mcp.example.json` shows the shape). On the computer where the operator works, `bin/harold-setup-crm` is also worth running even with the connector: with those two values in `~/.harold/env`, `bin/harold` writes tasks and CRM records directly, and boot and close can apply any queued write themselves.
+
+## Step 9: The CRM and the task list
+
+Harold has its own CRM, and it is part of Harold, not an add-on: every person the operator deals with is filed there as well as in the vault, and `bin/harold close` checks that each contact touched was filed. The database from step 8 holds it, and the same database holds Harold's own task list.
+
+1. **Bring in existing contacts.** Offer to import the operator's contacts from a CSV export: another CRM, Google Contacts, Apple Contacts or LinkedIn's connections export. If they want it:
    - Read the CSV and map its columns to Harold's contact fields: name, email, phone, organisation (`org`), title, type (`category`, one of their contact types) and labels (`categories`). Title has no column of its own unless their database added one (`HAROLD_CRM_EXTRA_FIELDS`), so put it in the notes.
    - Show the operator the mapping and three to five rows as they would be created, and ask which type to give contacts the file does not classify (usually `other`). Change the mapping if they ask.
-   - Create each contact with `crm_upsert_contact` (connector) or `harold_upsert_contact` (harold-mcp). Skip duplicates by email: before creating a contact, search for its email and leave an existing match untouched.
+   - Create each contact with the connector's `crm_upsert_contact`. Skip duplicates by email: before creating a contact, search for its email and leave an existing match untouched.
    - Report how many were created, how many were skipped as duplicates, and how many rows could not be read and why.
 
-   The optional CRM web app (step 9) also has a CSV import screen, if the operator prefers to do it there.
-5. **Harold's task list.** Harold has its own task list, in the same database, in a table called `tasks`; every task gets a ref such as `H-12`. It works with no outside tool connected.
+   The optional CRM web app (step 10) also has a CSV import screen, if the operator prefers to do it there.
+2. **Harold's task list.** It lives in the same database, in a table called `tasks`; every task gets a ref such as `H-12`. It works with no outside tool connected.
    - **A database made just now** from `tools/harold-mcp/schema.sql` already has everything the task list needs. Nothing more to do.
    - **A database made before the task list existed** needs one more script. Tell the operator these steps in plain words:
      1. Open the Supabase project and choose **SQL Editor** in the left menu, then **New query**.
      2. Open the file `tools/harold-mcp/migrations/2026-11-18-task-list.sql` (you can paste its contents for them), copy all of it, and paste it into the editor.
      3. Press **Run**. Supabase may ask you to confirm a query that changes existing tables: confirm.
      4. "Done" looks like this: the result area says **Success. No rows returned**. Running it a second time is safe and changes nothing.
-   - **Check it.** Run `bin/harold task create "Test task" --due <tomorrow, YYYY-MM-DD>`, then `bin/harold task list`. The new task appears with a ref such as `H-1`. Then run `bin/harold task cancel H-1` so the test task does not stay on the list.
-6. **Say what happens next:** from now on the CRM grows on its own. Each meeting debrief, conversation and new name Harold hears is filed there as part of normal work, so the operator never has to maintain it by hand.
+   - **Check it.** Create a test task with the connector's `task_create` (title "Test task", due tomorrow), see it in `task_list` with a ref such as `H-1`, then cancel it with `task_update` so it does not stay on the list. Where the Supabase values are in `~/.harold/env`, `bin/harold task create "Test task" --due <tomorrow, YYYY-MM-DD>`, `bin/harold task list` and `bin/harold task cancel H-1` do the same.
+3. **Say what happens next:** from now on the CRM grows on its own. Each meeting debrief, conversation and new name Harold hears is filed there as part of normal work, so the operator never has to maintain it by hand.
 
-## Step 9: The optional parts
+## Step 10: The optional parts
 
 Offer each in turn, with one sentence on what it gives. "Skip for now" is always a good answer; each can be set up at any time by asking for it.
 
 - **The CRM web app** (`tools/harold-crm`): the CRM in a browser, with contacts, a pipeline, tasks and CSV import and export, on the same database. Steps: `tools/harold-crm/README.md`. Skip: the CRM works fully through the AI tool.
-- **Two-way sync with the task tool the operator already uses.** Harold's task list (step 8, item 5) is already the task system and needs no outside tool. Ask whether the operator uses Linear, Todoist, Asana or Notion. If they do, they keep using it: the hosted connector syncs Harold's task list with it in both directions, and any mix of the four works at once. Each sync needs the hosted connector. Steps: the sections "Optional: two-way sync with Linear", "... with Todoist", "... with Asana" and "... with Notion" below. Skip: tasks stay in Harold's task list only.
-- **The hosted connector**, if step 8 used harold-mcp: it adds access from chat apps and other computers. Skip: sessions in the workspace folder do everything.
+- **Two-way sync with the task tool the operator already uses.** Harold's task list (step 9) is already the task system and needs no outside tool. Ask whether the operator uses Linear, Todoist, Asana or Notion. If they do, they keep using it: the hosted connector syncs Harold's task list with it in both directions, and any mix of the four works at once. Steps: the sections "Optional: two-way sync with Linear", "... with Todoist", "... with Asana" and "... with Notion" below. Skip: tasks stay in Harold's task list only.
 - **Scheduled jobs**: the morning brief written before the operator sits down, and the weekly, monthly and month-end housekeeping, run on GitHub Actions or any scheduler (README, "Scheduled jobs in the cloud"). Skip: the brief runs live when the operator says good morning, and housekeeping runs in sessions when it is due.
 - **More AI tools.** Harold already works in every harness listed in `AGENTS.md`; some need a one-time step (trusting the hooks, or copying a snippet into the operator's own configuration). Ask which tools they use besides this one and do that step for each. Skip: the tool they are using now is enough.
 
 ### Optional: two-way sync with Linear
 
-Do this only if the operator uses Linear and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Linear and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+Do this only if the operator uses Linear and wants the same tasks in both places. It needs the connector (step 8) and its Supabase settings. You do the typing; the operator clicks in Linear and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
 
 **Tell the operator first, in plain words:**
 - Every task in the chosen Linear team is copied into Harold's task list, and every Harold task is copied into that team. A change on either side reaches the other within seconds. Changes to different fields on the two sides are both kept. If the same field changed on both sides, the later change wins and Harold logs the conflict (`bin/harold task conflicts` lists them).
@@ -161,7 +182,7 @@ Do this only if the operator uses Linear and wants the same tasks in both places
 
 ### Optional: two-way sync with Todoist
 
-Do this only if the operator uses Todoist and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Todoist and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+Do this only if the operator uses Todoist and wants the same tasks in both places. It needs the connector (step 8) and its Supabase settings. You do the typing; the operator clicks in Todoist and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
 
 **Tell the operator first, in plain words:**
 - Every open Todoist task is copied into Harold's task list, and every Harold task is copied into Todoist. A change in Harold reaches Todoist within seconds. A change in Todoist reaches Harold within seconds if you set up the webhook (step 5), otherwise within 10 minutes.
@@ -195,7 +216,7 @@ Do this only if the operator uses Todoist and wants the same tasks in both place
 
 ### Optional: two-way sync with Asana
 
-Do this only if the operator uses Asana and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Asana and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+Do this only if the operator uses Asana and wants the same tasks in both places. It needs the connector (step 8) and its Supabase settings. You do the typing; the operator clicks in Asana and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
 
 **Tell the operator first, in plain words:**
 - Tasks in the chosen Asana workspace are copied into Harold's task list, and every Harold task is copied into Asana. A change in Harold reaches Asana within seconds. A change in Asana reaches Harold within seconds if you set up the webhooks (step 6), otherwise within 10 minutes.
@@ -233,7 +254,7 @@ Do this only if the operator uses Asana and wants the same tasks in both places.
 
 ### Optional: two-way sync with Notion
 
-Do this only if the operator uses Notion and wants the same tasks in both places. It needs the hosted connector (step 8, item 2) and its Supabase settings. You do the typing; the operator clicks in Notion and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
+Do this only if the operator uses Notion and wants the same tasks in both places. It needs the connector (step 8) and its Supabase settings. You do the typing; the operator clicks in Notion and Supabase when you ask. Keep the steps in this order. Say what each one is for, and wait for the operator to confirm before the next.
 
 **Tell the operator first, in plain words:**
 - The tasks live in one Notion database, which the operator chooses. Its pages are copied into Harold's task list, and every Harold task becomes a page in that database. A change in Harold reaches Notion within seconds. A change in Notion reaches Harold within seconds if you set up the webhook (step 7), otherwise within 10 minutes.
@@ -269,7 +290,7 @@ Do this only if the operator uses Notion and wants the same tasks in both places
     - Create a test task: `bin/harold task create "Sync test" --due <tomorrow>`. Within a few seconds it appears in the Notion database. Rename it in Notion and run `bin/harold task list` again: the new title appears (within seconds with the webhook, within 10 minutes without). Then run `bin/harold task cancel <ref>` and check the page's status in Notion.
     - If something is missing, run `select * from public.sync_log order by at desc limit 20;` in the SQL editor. `bin/harold task conflicts` lists changes that clashed.
 
-## Step 10: Check, boot and close
+## Step 11: Check, boot and close
 
 1. Run `bin/harold check`. It should print `RESULT: PASS` with no warnings about the time zone or `origin`.
 2. Run `bin/harold boot` (or start a fresh session, where hooks run it). The `⚠ NOT SET UP YET` notice must be gone. If it is still there, it names what is left: go back to that step.
@@ -287,7 +308,8 @@ Do this only if the operator uses Notion and wants the same tasks in both places
 - [ ] No bracketed `YOUR` placeholders left outside `vault/templates/`; the last line of `AGENTS.md` deleted
 - [ ] Contact types confirmed in `dashboard/people.md`
 - [ ] One to three projects in `harold/projects.md`, each with a folder, a card and a next step
-- [ ] CRM database created, reached through the connector or harold-mcp, and checked; existing contacts imported if the operator wanted that
+- [ ] The connector deployed on the operator's own account, its GitHub OAuth app and settings in place, checked with `curl`, and added to the operator's AI tools
+- [ ] CRM database created and checked through the connector; existing contacts imported if the operator wanted that
 - [ ] Harold's task list works (a test task created and canceled)
 - [ ] Each optional part set up or explicitly skipped
 - [ ] `bin/harold check` passes, boot shows no setup notice, a daily note exists, and close pushed to the private repository
