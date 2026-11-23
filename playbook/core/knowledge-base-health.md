@@ -1,6 +1,6 @@
 # Playbook: Knowledge Base Health Check
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use the connector's; harold-mcp's is the fallback for a tool that cannot connect to a remote MCP server. Both write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Keep the knowledge base accurate, consistent and fresh: a weekly quick scan and a monthly full audit.
 **Trigger:** Scheduled: every Friday (Quick Scan, `weekly-scan`), 1st of the month (Full Audit, `full-audit`). On demand: "run health check", "audit the knowledge base", after a restructure or file migration.

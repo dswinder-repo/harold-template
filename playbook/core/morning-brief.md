@@ -1,6 +1,6 @@
 # Playbook: Morning Brief
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use the connector's; harold-mcp's is the fallback for a tool that cannot connect to a remote MCP server. Both write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** Start the day in three guided steps: intel, then the brief and priorities, then ready-to-run prompts.
 **Trigger:** a start-of-day opener, at any hour: "good morning", "morning", "gm", "let's get started", "let's go", "let's get going", "start the day", "daily brief", "boot up", or the same idea in other words. **Not a trigger:** a first message that is a request about a project; do the request and do not run or offer the brief. Once the brief has run today, do not re-run it unless asked.

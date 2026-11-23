@@ -1,6 +1,6 @@
 # Dashboard: Processes & Operating Rules
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use the connector's; harold-mcp's is the fallback for a tool that cannot connect to a remote MCP server. Both write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 *How Harold operates. Loaded every session. The Context Engine below is always on: playbooks fire on what you say, by meaning, never on exact commands.*
 
@@ -90,7 +90,7 @@ As an unattended cloud job (`harold/housekeeping.json` → `"cloud": true`) it i
 
 ## Task Management
 
-- Harold's task list owns tasks and due dates. `bin/harold task list` shows them, and boot prints the ones due soon. With no database key, the list is read from `harold/tasks-snapshot.md`, and writes go through the connector's `task_create` and `task_update` if one is attached. With neither, a write is queued: it is not in the database until it is applied and marked (`bin/harold queue`). Outside task tools are optional: the connector can keep the task list in two-way sync with Linear, Todoist, Asana or Notion (`playbook/core/setup.md`, step 9).
+- Harold's task list owns tasks and due dates. `bin/harold task list` shows them, and boot prints the ones due soon. With no database key, the list is read from `harold/tasks-snapshot.md`, and writes go through the connector's `task_create` and `task_update` if one is attached. With neither, a write is queued: it is not in the database until it is applied and marked (`bin/harold queue`). Outside task tools are optional: the connector can keep the task list in two-way sync with Linear, Todoist, Asana or Notion (`playbook/core/setup.md`, step 10).
 - Every task has a due date and a project.
 - CRM tasks (`crm_task` / `harold_crm_task`) are only for follow-ups tied to one contact.
 

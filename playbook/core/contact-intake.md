@@ -1,6 +1,6 @@
 # Playbook: Contact Intake
 
-> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use whichever your harness has: they write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
+> **CRM tools.** Where a step names two tools (`crm_upsert_contact` / `harold_upsert_contact`), the first is the hosted connector's and the second harold-mcp's. Use the connector's; harold-mcp's is the fallback for a tool that cannot connect to a remote MCP server. Both write the same database. A write made through the connector on a computer without CRM credentials is recorded with `bin/harold file crm '{...,"applied":"connector"}'` (see `playbook/core/crm-filing.md`).
 
 **Purpose:** File a new or changed contact into the CRM, vault and tasks, with a duplicate check first.
 **Trigger:** Runs passively whenever a name with business significance appears; also "add [name] to the CRM", "met [name]", "new contact", "/intake".
