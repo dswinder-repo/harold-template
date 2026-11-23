@@ -20,6 +20,12 @@ export function setTestEnv(extra: Record<string, string> = {}) {
     PUBLIC_BASE_URL: "https://harold-connector.example.com",
     SUPABASE_URL: "",
     SUPABASE_SERVICE_ROLE_KEY: "",
+    SUPABASE_SECRET_KEY: "",
+    // Vercel's system variables: unset unless a test sets them, so no default applies by accident.
+    VERCEL_PROJECT_PRODUCTION_URL: "",
+    VERCEL_GIT_REPO_OWNER: "",
+    VERCEL_GIT_REPO_SLUG: "",
+    VERCEL_GIT_REPO_ID: "",
     ...extra,
   });
 }

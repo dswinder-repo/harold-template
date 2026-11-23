@@ -9,6 +9,7 @@
 //   webhook "expect"      accepts Notion's verification token for the next 30 minutes
 //   webhook "reveal_token" shows the received token once, to paste into Notion's Verify form
 
+import { publicBaseUrl } from "../config.js";
 import type { FetchLike } from "../identity.js";
 import {
   NotionClient, NotionError, WEBHOOK_EXPECT_MS, buildSetup, dataSourceName, describeSetup, loadNotionState, notionSyncFromEnv, patchNotionState,
@@ -91,7 +92,7 @@ export async function setupNotion(args: NotionSetupArgs, deps: NotionSetupDeps):
   const store = deps.store();
   if (!store) return { text: "The task sync's database is not configured (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY), so a Notion setup cannot be saved.", isError: true };
   const now = deps.now();
-  const base = (deps.baseUrl?.() || process.env.PUBLIC_BASE_URL || "<the connector's URL>").replace(/\/+$/, "");
+  const base = (deps.baseUrl?.() || (() => { try { return publicBaseUrl(); } catch { return ""; } })() || "<the connector's URL>").replace(/\/+$/, "");
   let state = await loadNotionState(store);
 
   // Once NOTION_WEBHOOK_SECRET holds the received token, the stored copy is no longer needed.

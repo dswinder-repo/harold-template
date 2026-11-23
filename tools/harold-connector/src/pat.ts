@@ -6,9 +6,11 @@
 // of those can be read as a PAT. It carries an id, a label, the owner's GitHub login and numeric id, the
 // GitHub token the tools act with (checked to be the owner's when the PAT is minted), and an expiry.
 //
-// Only whoever holds TOKEN_KEY can mint one, so using it needs no GitHub round trip. Revocation:
+// Only whoever holds TOKEN_KEY can mint one, so using it needs no GitHub round trip when the owner is named
+// (ALLOWED_GITHUB_LOGIN + ALLOWED_GITHUB_ID); when the owner is the repository's owner, the token's GitHub
+// token is checked once per instance, as for an OAuth access token. Revocation:
 //   one token   add its id to REVOKED_TOKEN_IDS (comma-separated) and redeploy;
-//   all tokens  rotate TOKEN_KEY (this also signs every OAuth client out).
+//   all tokens  rotate TOKEN_KEY, or GITHUB_CLIENT_SECRET when TOKEN_KEY is unset (this also signs every OAuth client out).
 // Lifetime is capped at PAT_MAX_DAYS, both when minting and when the token is used.
 //
 // Mint with `npm run token -- --name <label> --days <n>` (scripts/mint-token.ts).
@@ -40,9 +42,11 @@ export function mintPat(key: Buffer, p: { name: string; days: number; login: str
 /**
  * The PAT's payload if the bearer is a PAT minted with `key`, unexpired, within the lifetime cap, not
  * revoked, and still for the configured owner (login AND numeric id). Otherwise null.
+ * `owner` null: the owner is the repository's owner (OwnerRule "repo-owner"), which only GitHub can confirm,
+ * so the caller must check the PAT's GitHub token with identity.checkTokenIdentityOnce before accepting it.
  */
 export function verifyPat(
-  key: Buffer, bearer: string, owner: { login: string; id: number }, revoked: Set<string> = revokedTokenIds(), now = Math.floor(Date.now() / 1000),
+  key: Buffer, bearer: string, owner: { login: string; id: number } | null, revoked: Set<string> = revokedTokenIds(), now = Math.floor(Date.now() / 1000),
 ): PatPayload | null {
   if (typeof bearer !== "string" || !bearer.startsWith(PAT_PREFIX)) return null;
   const p = open<PatPayload & Record<string, unknown>>(key, "pat", bearer.slice(PAT_PREFIX.length), now);
@@ -50,7 +54,7 @@ export function verifyPat(
   if (typeof p.id !== "string" || !p.id || typeof p.gh !== "string" || !p.gh || typeof p.login !== "string" || typeof p.uid !== "number") return null;
   if (typeof p.exp !== "number" || typeof p.iat !== "number" || p.exp <= now || p.exp - p.iat > PAT_MAX_DAYS * DAY) return null;
   if (revoked.has(p.id)) return null;
-  if (p.login.toLowerCase() !== owner.login.toLowerCase() || p.uid !== owner.id) return null;
+  if (owner && (p.login.toLowerCase() !== owner.login.toLowerCase() || p.uid !== owner.id)) return null;
   return p;
 }
 

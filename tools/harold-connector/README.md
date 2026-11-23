@@ -48,12 +48,12 @@ Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "no
 
 ## Security model
 
-- **One account.** Only the GitHub account named by `ALLOWED_GITHUB_LOGIN` **and** `ALLOWED_GITHUB_ID` gets in; both must match (a login can be renamed and re-registered by someone else, the numeric id cannot). The identity is checked at sign-in, at every token refresh, and once per access token on `/mcp`. A refused account's GitHub grant is revoked.
-- **No database, encrypted state.** Client ids, sign-in state, authorization codes, access tokens (24 hours) and refresh tokens (90 days) are AES-256-GCM blobs sealed with `TOKEN_KEY`, each bound to its purpose, so one kind cannot be replayed as another. Changing `TOKEN_KEY` signs every client out.
+- **One account.** Exactly one GitHub account gets in. By default, on Vercel, it is the owner of the repository the connector is deployed from: at sign-in the connector looks that repository up by its numeric id, with the signed-in person's own GitHub token, and accepts them only if they are its owner, compared by numeric user id. Renaming the account or the repository changes nothing, and someone who later registers the old name does not get in. A repository owned by an organization is refused (several people can administer one, and the connector is for one person); name the owner instead with `ALLOWED_GITHUB_LOGIN` **and** `ALLOWED_GITHUB_ID`, which both must match and which always win when set. Either way the identity is checked at sign-in, at every token refresh, and once per access token on `/mcp` (and once per personal access token when the owner is the repository's owner). A refused account's GitHub grant is revoked.
+- **No database, encrypted state.** Client ids, sign-in state, authorization codes, access tokens (24 hours) and refresh tokens (90 days) are AES-256-GCM blobs sealed with one key, each bound to its purpose, so one kind cannot be replayed as another. The key is `TOKEN_KEY` when set; otherwise it is derived from `GITHUB_CLIENT_SECRET` (HKDF-SHA256 with a fixed, versioned label), so the client secret is then as sensitive as the key itself. Changing the key (`TOKEN_KEY`, or the client secret when `TOKEN_KEY` is unset) signs every client out and revokes every personal access token and the sealed Google token.
 - **Redirects any tool can use.** OAuth redirects may go to loopback (`http://127.0.0.1`, `http://[::1]`, `http://localhost`, any port and path, RFC 8252 §7.3; a loopback redirect may differ from the registered one in its port only), to an app's own scheme such as `cursor://` or `com.example.app:/cb` (RFC 8252 §7.1; never `javascript:`, `data:`, `file:`, `blob:`, `about:`, `vbscript:`, `ws:`, `wss:`, `ftp:` or a few other meaningless ones), or to `https` on any host. Never with userinfo, a fragment, whitespace, or plain `http` to anything but loopback. `ALLOWED_REDIRECT_HOSTS`, when set, narrows https hosts and app schemes and is re-checked on every use, so narrowing it also cuts off existing registrations.
 - **Why that is safe.** Once any tool may connect, a redirect list cannot tell a real tool from an impostor anyway. What protects your Harold is the one-account GitHub gate above, PKCE (S256, required), which binds each code to the client that started the flow so a code intercepted on its way to a loopback port or an app scheme is useless, and the consent page. That page (with a nonce cookie, so another site cannot press its button) stands between every request and GitHub, and shows the client's name and, in large type, exactly where the sign-in will be sent, with the full redirect address underneath. It is the one thing a phishing link has to get past: anyone can register their own client and send you an `/authorize` link, and the page will name their destination. If that is too much trust in one click, set `ALLOWED_REDIRECT_HOSTS`.
 - **Client ID Metadata Documents** (an `https://` client_id whose JSON lists its redirect URIs) are fetched from public hosts only: default port, no redirects followed, at most 64 KB, and a host that is or resolves to a private, loopback or link-local address is refused, so the connector cannot be used to reach internal services. A hostile DNS server that answers differently a moment after the check (DNS rebinding) is not excluded.
-- **Personal access tokens** are sealed with `TOKEN_KEY` as their own kind (never accepted as a client id, code or refresh token, nor the reverse), last at most 365 days, and are revoked by id (`REVOKED_TOKEN_IDS`) or all at once (rotate `TOKEN_KEY`).
+- **Personal access tokens** are sealed with the same key as their own kind (never accepted as a client id, code or refresh token, nor the reverse), last at most 365 days, and are revoked by id (`REVOKED_TOKEN_IDS`) or all at once (change the key).
 - **No deletes.** There is no delete tool. Read tools declare `readOnlyHint: true`; write tools `readOnlyHint: false, destructiveHint: false`.
 - **Secret scan on every write.** Content that looks like a key or token (the same patterns as `bin/harold`, plus GitHub OAuth tokens and plain `password: ...` phrases) is refused and nothing is committed.
 - **Writes are commits.** Each write is one commit on `HAROLD_BRANCH` with the message `chore(connector): ...`, authored by "Harold (connector)" with a neutral email (`harold-connector@users.noreply.github.com`, or `HAROLD_COMMIT_EMAIL`). Writes use the file's current sha and retry up to 3 times on a conflict, so a concurrent session's commit is never overwritten.
@@ -61,53 +61,51 @@ Without `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, the CRM tools answer "no
 
 ## Deploy
 
-Pick the public address first: the GitHub OAuth App and every token depend on it. That origin, with no trailing slash, is `PUBLIC_BASE_URL`.
+On Vercel you type two settings by hand, both from a GitHub OAuth App you create after the first deploy, because that form needs the deployment's address. Everything else has a default (see the table below).
 
-### 1. Create the deployment
+### 1. Deploy
 
-**Vercel** (zero-config Hono; `vercel.json` is included). Either:
+**Vercel, starting fresh** (you have no Harold repository yet): this button copies the starter into a new repository in your GitHub account, which becomes your Harold workspace, and deploys the connector from its `tools/harold-connector` folder. Make the new repository private.
 
-- with the CLI, from this folder:
-  ```bash
-  cd tools/harold-connector
-  vercel link        # create a new project; the framework (Hono) is detected
-  ```
-- or in the Vercel dashboard: import your repository and set the project's **Root Directory** to `tools/harold-connector`.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdswinder-repo%2Fharold-template&root-directory=tools%2Fharold-connector&project-name=harold-connector&repository-name=harold)
 
-The production address is `https://<project>.vercel.app` unless you add a domain. Keep production publicly reachable (Vercel's default *Standard Protection* protects previews only): every tool must reach `/mcp` without a Vercel login. The connector does its own authentication.
+**Vercel, with your Harold repository already set up:** in the Vercel dashboard, import that repository and set the project's **Root Directory** to `tools/harold-connector` (or, with the CLI, `cd tools/harold-connector && vercel link`). Do not use the button: it would create a second repository.
 
-**Any other Node 22+ host** that can run a long-lived HTTP server: `npm ci`, then `PORT=8787 npx tsx local.ts` (this is what `npm run dev` does) behind HTTPS, with the variables below in the environment. `local.ts` serves the same Hono app through `@hono/node-server`.
+Either way, ask for no settings yet. Keep production publicly reachable (Vercel's default *Standard Protection* protects previews only): every tool must reach `/mcp` without a Vercel login. The connector does its own authentication.
 
-### 2. Create a GitHub OAuth App
+**Any other Node 22+ host** that can run a long-lived HTTP server: `npm ci`, then `PORT=8787 npx tsx local.ts` (this is what `npm run dev` does) behind HTTPS. Off Vercel there are no defaults to fall back on: set `HAROLD_REPO`, `PUBLIC_BASE_URL`, `ALLOWED_GITHUB_LOGIN` and `ALLOWED_GITHUB_ID` as well. `local.ts` serves the same Hono app through `@hono/node-server`.
 
-github.com → Settings → Developer settings → OAuth Apps → New OAuth App:
+### 2. Create the GitHub OAuth App
+
+Open the deployment's address (on Vercel, the production domain: `https://<project>.vercel.app`, or your own domain). The connector's home page says exactly what to enter at github.com → Settings → Developer settings → OAuth Apps → New OAuth App:
 
 - Application name: anything, e.g. `Harold connector`
-- Homepage URL: `<PUBLIC_BASE_URL>`
-- Authorization callback URL: **`<PUBLIC_BASE_URL>/github/callback`**
+- Homepage URL: the deployment's address
+- Authorization callback URL: **the deployment's address followed by `/github/callback`**
 - Leave Device Flow off. Register, then *Generate a new client secret*.
 
-### 3. Find your numeric GitHub id and generate a key
+### 3. Add the two settings and redeploy
 
-```bash
-gh api user --jq .id                 # or open https://api.github.com/users/<your-login> and read "id"
-openssl rand -hex 32                 # TOKEN_KEY
-```
+On Vercel: Project → Settings → Environment Variables (or `vercel env add <NAME> production`, which prompts for the value so it never lands in your shell history). Add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, then redeploy (Deployments → the latest one → Redeploy). Also set `HAROLD_TZ`: otherwise "today", the chat-log file name and note dates are UTC dates.
 
-### 4. Set the environment variables
+For the CRM and the task list, add Supabase: either connect Vercel's Supabase integration to the project ([vercel.com/marketplace/supabase](https://vercel.com/marketplace/supabase)), which sets `SUPABASE_URL` and `SUPABASE_SECRET_KEY`, or set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` yourself. The database still needs Harold's schema (`playbook/core/setup.md`, step 8).
 
-On Vercel: Project → Settings → Environment Variables, or `vercel env add <NAME> production` for each (it prompts for the value, so it never lands in your shell history). `.env.example` lists the same set.
+The home page now names the `/mcp` address to add in each tool ([Connect your tool](#connect-your-tool)), or says what is still missing.
 
-| Variable | Required | Example | Purpose |
+### Settings
+
+`.env.example` lists the same set. A setting you set always wins over its default, so a deployment that sets everything keeps working unchanged.
+
+| Variable | Required | Default or example | Purpose |
 |---|---|---|---|
-| `HAROLD_REPO` | yes | `your-login/harold` | The private repository that holds your Harold workspace. No default. |
-| `HAROLD_BRANCH` | no | `main` (default) | The branch tools read and commit to. |
-| `ALLOWED_GITHUB_LOGIN` | yes | `your-login` | The only GitHub account accepted. |
-| `ALLOWED_GITHUB_ID` | yes | `12345678` | That account's numeric id. Must match too. |
 | `GITHUB_CLIENT_ID` | yes | from the OAuth App | GitHub sign-in. |
-| `GITHUB_CLIENT_SECRET` | yes | from the OAuth App | GitHub sign-in. |
-| `TOKEN_KEY` | yes | `openssl rand -hex 32` | 64 hex characters; encrypts every token and code. |
-| `PUBLIC_BASE_URL` | yes | `https://<project>.vercel.app` | This deployment's public origin, no trailing slash. |
+| `GITHUB_CLIENT_SECRET` | yes | from the OAuth App | GitHub sign-in. Unless `TOKEN_KEY` is set, the encryption key is derived from it, so changing it signs everyone out. |
+| `HAROLD_REPO` | on Vercel, no | default on Vercel: the repository the connector is deployed from | The private repository that holds your Harold workspace, as `owner/name`. Required on other hosts. |
+| `HAROLD_BRANCH` | no | `main` (default) | The branch tools read and commit to. |
+| `PUBLIC_BASE_URL` | on Vercel, no | default on Vercel: `https://` plus the project's production domain (your shortest custom domain, else `<project>.vercel.app`) | This deployment's public origin, no trailing slash. Preview deployments use the production address too, so sign-in always goes through production. After adding a domain, update the OAuth App's two URLs (the home page shows them) or set this explicitly; tools then reconnect once. Required on other hosts. |
+| `ALLOWED_GITHUB_LOGIN` | on Vercel, no | default on Vercel: the owner of the deployment's repository | The only GitHub account accepted. Set it together with `ALLOWED_GITHUB_ID` when the repository belongs to an organization, when `HAROLD_REPO` names another repository, or on other hosts. |
+| `ALLOWED_GITHUB_ID` | with the login | `12345678` (`gh api user --jq .id`) | That account's numeric id. Must match too. |
+| `TOKEN_KEY` | no | default: derived from `GITHUB_CLIENT_SECRET` | 64 hex characters (`openssl rand -hex 32`); encrypts every token and code. Set it to keep sessions alive across a change of client secret. |
 | `ALLOWED_REDIRECT_HOSTS` | no | unset (default: any tool) | Optional narrowing: exact https hosts and app schemes, e.g. `claude.ai,claude.com,cursor:`. Unset, empty or `*`: any. Loopback is always accepted. |
 | `REVOKED_TOKEN_IDS` | no | `k3J9...,Xq2...` | Ids of revoked personal access tokens, comma-separated. |
 | `HAROLD_TZ` | no | `America/Chicago` | Your IANA time zone. Unset: dates are UTC. An invalid name also falls back to UTC, and `harold_today` says so. |
@@ -115,8 +113,8 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `HAROLD_HUB_DEGREE` | no | `40` (default) | `harold_related`: a note with more links than this is a hub and no longer makes its neighbours related. Same setting as in `~/.harold/env`. |
 | `HAROLD_PULSE_DAYS` | no | `14` (default) | `harold_pulse`: days without activity after which an active project is quiet. Unset, it uses the value the workspace wrote into `harold/graph.json` (its `HAROLD_PULSE_DAYS`), else 14. |
 | `HAROLD_COMMIT_EMAIL` | no | `you@example.com` | Commit author email. Default `harold-connector@users.noreply.github.com`. |
-| `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM and Harold's task list. Without it those tools say "not configured". |
-| `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM and the task list (server side only; never in the repository). |
+| `SUPABASE_URL` | no | `https://<ref>.supabase.co` | The CRM and Harold's task list. Without it those tools say "not configured". Set by Vercel's Supabase integration. |
+| `SUPABASE_SERVICE_ROLE_KEY` | no | the service_role key | The CRM and the task list (server side only; never in the repository). If unset, `SUPABASE_SECRET_KEY` (the name Vercel's Supabase integration uses) is read instead. |
 | `SYNC_SECRET` | no | `openssl rand -hex 32` | The optional sync, every tool: the shared secret Supabase sends to `/sync/push` and `/sync/catchup`. The same value goes into Supabase Vault as `harold_sync_secret`. Asana's webhook also needs it. |
 | `LINEAR_API_KEY` | no | a Linear personal API key | The optional Linear sync (server side only; never in the repository). |
 | `LINEAR_TEAM_KEY` | no | `ENG` | The Linear team's issue prefix (`ENG` for `ENG-123`). Same setting as in `~/.harold/env`. |
@@ -130,17 +128,18 @@ On Vercel: Project → Settings → Environment Variables, or `vercel env add <N
 | `ALLOWED_GOOGLE_EMAILS` | no | `you@example.com` | The only Google accounts the calendar connect flow will bind, comma-separated. Required with the pair above. |
 | `GOOGLE_REFRESH_TOKEN` | no | the sealed value `/google/callback` shows once | The calendars. Without it the two tools say "not configured". |
 
-Set `HAROLD_TZ`: otherwise "today", the chat-log file name and note dates are UTC dates. To replace a single secret later on Vercel: `vercel env rm GITHUB_CLIENT_SECRET production`, `vercel env add GITHUB_CLIENT_SECRET production`, then redeploy.
+To replace a single secret later on Vercel: `vercel env rm GITHUB_CLIENT_SECRET production`, `vercel env add GITHUB_CLIENT_SECRET production`, then redeploy (without `TOKEN_KEY`, this signs every tool out once).
 
-### 5. Deploy and verify
+### Verify
 
 ```bash
-vercel deploy --prod
-curl -s <PUBLIC_BASE_URL>/                                                        # names the /mcp URL; says "Not ready" if HAROLD_REPO is missing
+curl -s <PUBLIC_BASE_URL>/                                                        # names the /mcp URL; lists anything still missing as "Not ready"
 curl -s <PUBLIC_BASE_URL>/.well-known/oauth-authorization-server | head -c 200    # JSON with "issuer"
 curl -s <PUBLIC_BASE_URL>/.well-known/oauth-protected-resource/mcp                # "resource": "<PUBLIC_BASE_URL>/mcp"
 curl -si -X POST <PUBLIC_BASE_URL>/mcp -H 'content-type: application/json' -d '{}' | grep -i www-authenticate   # 401 + resource_metadata
 ```
+
+Here and below, `<PUBLIC_BASE_URL>` is the deployment's address, whether you set it or it is the default.
 
 ## Optional: two-way task sync (Linear, Todoist, Asana, Notion)
 
@@ -229,7 +228,7 @@ A webhook is always verified before anything else (no GitHub call for a forged o
 
 ## Connect your tool
 
-Every tool uses the same address, **`<PUBLIC_BASE_URL>/mcp`** (MCP Streamable HTTP), and the same sign-in: the tool opens a browser, the connector's own **"Connect Harold?"** page shows the tool's name and exactly where the sign-in will be sent, you press *Continue to GitHub*, and only the account in `ALLOWED_GITHUB_LOGIN` / `ALLOWED_GITHUB_ID` is accepted there. Any client that supports remote MCP servers with OAuth (dynamic client registration or Client ID Metadata Documents) should work: the connector accepts loopback redirects (`http://127.0.0.1`, `http://[::1]`, `http://localhost`, any port: command-line and desktop tools), app schemes such as `cursor://` and `vscode://`, and `https` redirects on any host. Leave any optional OAuth client id / secret fields empty: the connector registers the client itself.
+Every tool uses the same address, **`<PUBLIC_BASE_URL>/mcp`** (MCP Streamable HTTP), and the same sign-in: the tool opens a browser, the connector's own **"Connect Harold?"** page shows the tool's name and exactly where the sign-in will be sent, you press *Continue to GitHub*, and only the owner's account is accepted there (the owner of the deployment's repository, or the account in `ALLOWED_GITHUB_LOGIN` / `ALLOWED_GITHUB_ID`). Any client that supports remote MCP servers with OAuth (dynamic client registration or Client ID Metadata Documents) should work: the connector accepts loopback redirects (`http://127.0.0.1`, `http://[::1]`, `http://localhost`, any port: command-line and desktop tools), app schemes such as `cursor://` and `vscode://`, and `https` redirects on any host. Leave any optional OAuth client id / secret fields empty: the connector registers the client itself.
 
 | Tool | How to connect | Tested with this connector? |
 |---|---|---|
@@ -282,13 +281,15 @@ If a tool's sign-in is refused with `invalid_redirect_uri`, either the tool uses
 
 ### Personal access tokens
 
-For a cron job, a script, or an agent that can only be given a fixed `Authorization: Bearer ...` header. A token is sealed with `TOKEN_KEY` (only whoever holds the key can mint one), carries the GitHub token the tools act with, and lasts at most 365 days.
+For a cron job, a script, or an agent that can only be given a fixed `Authorization: Bearer ...` header. A token is sealed with the connector's key (only whoever holds it can mint one), carries the GitHub token the tools act with, and lasts at most 365 days.
 
 ```bash
 # In a shell that has the deployment's values (never put them on the command line or in a committed file):
-#   TOKEN_KEY, ALLOWED_GITHUB_LOGIN, ALLOWED_GITHUB_ID, and GITHUB_TOKEN (or a signed-in `gh` CLI)
-read -rs TOKEN_KEY && export TOKEN_KEY        # paste, Return; typing is hidden
-export ALLOWED_GITHUB_LOGIN=<your-login> ALLOWED_GITHUB_ID=<your-numeric-id>
+#   the key: TOKEN_KEY, or GITHUB_CLIENT_SECRET when the deployment has no TOKEN_KEY;
+#   the owner: ALLOWED_GITHUB_LOGIN and ALLOWED_GITHUB_ID, or HAROLD_REPO when the deployment leaves them unset;
+#   and GITHUB_TOKEN (or a signed-in `gh` CLI)
+read -rs GITHUB_CLIENT_SECRET && export GITHUB_CLIENT_SECRET   # paste, Return; typing is hidden (or TOKEN_KEY)
+export HAROLD_REPO=<your-login>/<your-repo>                    # or ALLOWED_GITHUB_LOGIN=... ALLOWED_GITHUB_ID=...
 npm run token -- --name nightly-brief --days 90
 ```
 
@@ -297,7 +298,7 @@ The token is printed once (stdout); its id and expiry go to stderr. Nothing is s
 Use it as a header, for example `claude mcp add --transport http harold <PUBLIC_BASE_URL>/mcp --header "Authorization: Bearer $HAROLD_TOKEN"` (Claude Code), or `bearer_token_env_var = "HAROLD_TOKEN"` in the Codex server table.
 
 - **Revoke one token:** add its id to `REVOKED_TOKEN_IDS` (comma-separated) in the deployment and redeploy.
-- **Revoke all of them:** rotate `TOKEN_KEY` (this also signs every OAuth client out).
+- **Revoke all of them:** change the key: rotate `TOKEN_KEY`, or the OAuth App's client secret when `TOKEN_KEY` is unset (this also signs every OAuth client out).
 - Treat a token like a password: it can read and write Harold until it expires. The connector refuses to write one into the knowledge base.
 
 ### Optional: the calendars (Google)
@@ -313,7 +314,7 @@ Connecting more than one Google account: run the connect flow once per account. 
 
 Creating, editing and cancelling events: Harold can manage events after you grant Google's event-editing permission and reconnect the account. Each change requires your instruction. If more than one calendar could be the target, Harold asks you to specify which one before making a change. It reports permission problems, expired connections and usage-limit errors separately. Calendar sharing and deletion of whole calendars aren't supported.
 
-The sealed token is encrypted with `TOKEN_KEY` and useless without it; rotating `TOKEN_KEY` revokes it (connect again the same way).
+The sealed token is encrypted with the connector's key and useless without it; changing the key (`TOKEN_KEY`, or the client secret when `TOKEN_KEY` is unset) revokes it (connect again the same way).
 
 ## Limits
 
@@ -321,7 +322,7 @@ The sealed token is encrypted with `TOKEN_KEY` and useless without it; rotating 
 - **Search lags.** `harold_search` uses GitHub code search, which indexes the repository's default branch and can be a few minutes behind recent commits (including the connector's own). `harold_read` always returns the branch head.
 - **No deletes**, by design. Remove things in a workspace session.
 - **The Google calendar token lives in the environment.** The connector has no database: if the Google grant is revoked or rotated, re-run `/google/authorize` and update `GOOGLE_REFRESH_TOKEN`. A durable token store is a possible follow-up, deliberately not built in - it would make the CRM database a hard dependency of calendar reads.
-- **Stateless sign-in.** An authorization code is refused on reuse only within the same server instance (PKCE still binds it to the client that started the flow); refresh tokens stay valid until they expire. To end every session at once, change `TOKEN_KEY` or revoke the OAuth App's grant on GitHub. Personal access tokens cannot be listed, only revoked by id or all together.
+- **Stateless sign-in.** An authorization code is refused on reuse only within the same server instance (PKCE still binds it to the client that started the flow); refresh tokens stay valid until they expire. To end every session at once, change the key (`TOKEN_KEY`, or the client secret when `TOKEN_KEY` is unset) or revoke the OAuth App's grant on GitHub. Personal access tokens cannot be listed, only revoked by id or all together.
 
 ## Tests
 
@@ -350,7 +351,7 @@ Local server: `PORT=8787 npm run dev` with the variables from `.env.example` and
 ## Files
 
 - `server.ts`: Vercel entrypoint (exports the Hono app). `local.ts`: Node entry for any other host and for local runs.
-- `src/app.ts`: routes. `src/oauth.ts`: the authorization server. `src/redirects.ts`: which redirect URIs and metadata URLs are accepted. `src/crypto.ts`: sealing and PKCE. `src/identity.ts`: the one-account check.
+- `src/app.ts`: routes. `src/oauth.ts`: the authorization server. `src/redirects.ts`: which redirect URIs and metadata URLs are accepted. `src/crypto.ts`: sealing and PKCE. `src/identity.ts`: the one-account check (a named account, or the owner of the deployment's repository).
 - `src/pat.ts` and `scripts/mint-token.ts` (`npm run token`): personal access tokens.
 - `src/tools.ts`: MCP tools. `src/instructions.ts`: what the client's model is told when the connector is on.
 - `src/kb.ts`: knowledge-base reads and writes. `src/github.ts`: GitHub API. `src/text.ts`: dates, frontmatter, secret scan.
@@ -358,7 +359,7 @@ Local server: `PORT=8787 npm run dev` with the variables from `.env.example` and
 - `src/graph.ts`: `harold_related`, a port of `bin/harold related` over `harold/graph.json`. `src/stale.ts`: `crm_stale`. `src/pulse.ts`: `harold_pulse`, the same procedure as `bin/harold pulse` (`test/unit/pulse-fixture.json` is shared with the workspace's Python tests, so both give the same text for the same repository). `src/heartbeat.ts`: `harold_heartbeat` storage and `harold_heartbeat_latest`. `src/morning.ts`: the critical lessons, housekeeping notes and Step 0 in `harold_today`.
 - `src/tasks.ts`: `task_list`, `task_create`, `task_update` and `crm_task`, over Harold's own task list in Supabase (with the old-schema fallback).
 - `src/sync/`: the optional two-way task sync. `provider.ts` (the provider interface), one file per provider (`linear.ts`, `todoist.ts`, `asana.ts`, `notion.ts`, with Notion's setup tool in `notion-setup.ts`), `registry.ts` (which providers are configured), `projectmap.ts`, `engine.ts` (reconcile, field-level merge, conflicts, catch-up, import), `store.ts` (Supabase), `snapshot.ts`, `housekeeping.ts`, `routes.ts`. Also `scripts/linear-import.ts` (`npm run sync:import`), `scripts/asana-webhook.ts` (`npm run sync:asana-webhook`), `scripts/live-test.ts` and `supabase/sync.sql`.
-- `src/crm.ts`: the CRM, ported from `tools/harold-mcp/server.js` against the same schema. `src/config.ts`: every setting.
+- `src/crm.ts`: the CRM, ported from `tools/harold-mcp/server.js` against the same schema. `src/config.ts`: every setting and its default.
 - `src/google.ts`: the connector's own Google sign-in for calendar access (`/google/authorize`, `/google/callback`). `src/calendar.ts`: `calendar_list` and `calendar_events`.
 
 Library note: `mcp-handler` 2.x is built on the MCP TypeScript SDK v2 (`@modelcontextprotocol/server`). The tests connect with both the 1.31 client (`@modelcontextprotocol/sdk`) and the v2 client (`@modelcontextprotocol/client`).

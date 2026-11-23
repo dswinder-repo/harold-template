@@ -149,5 +149,5 @@ export async function callback(req: Request, fetchImpl: FetchLike): Promise<Resp
   return page("Calendar connected", `<h2>Calendar connected for ${esc(email)}</h2>
 <p>Shown once. ${(() => { const pick = slotForAccount(email); return pick.slot ? `Store this as <code>${esc(pick.slot)}</code>${pick.replaces ? ", replacing the existing grant for this account" : ""} in the connector's environment (Production)` : "All 8 account slots are in use; free one before storing"; })()}, redeploy, and the <code>calendar_list</code> and <code>calendar_events</code> tools read every connected account:</p>
 <p><code style="word-break:break-all;user-select:all">${esc(sealed)}</code></p>
-<p>It is encrypted with the connector's TOKEN_KEY and useless without it. Rotating TOKEN_KEY revokes it (connect again the same way). Google consent-screen note: an app left in "Testing" status issues refresh tokens that expire after 7 days; publish the consent screen to avoid a weekly re-connect.</p>`);
+<p>It is encrypted with the connector's key (TOKEN_KEY, or the key derived from GITHUB_CLIENT_SECRET) and useless without it. Changing that key revokes it (connect again the same way). Google consent-screen note: an app left in "Testing" status issues refresh tokens that expire after 7 days; publish the consent screen to avoid a weekly re-connect.</p>`);
 }
