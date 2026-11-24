@@ -1,5 +1,8 @@
 name: Harold morning brief
 
+# NOT RUNNING BY DEFAULT. This file sits in .github/workflows-optional/, which GitHub never runs. It starts
+# running only once you copy it into .github/workflows/ and commit (step 1 of "To enable" below).
+#
 # OPTIONAL. Writes Steps 1-2 of playbook/core/morning-brief.md to harold/briefs/YYYY-MM-DD.md before
 # you sit down, on GitHub's machines (no computer of yours needs to be on), and pushes it. When you
 # next say good morning, `bin/harold boot` finds it and Harold shows it instead of re-running those
@@ -49,19 +52,21 @@ name: Harold morning brief
 # ("not set up"), so nothing fails while you have not turned it on.
 #
 # To enable:
-#   1. Add the repository secret for your agent (above). With no HAROLD_AGENT variable that is
+#   1. Copy this file into .github/workflows/ and commit it:
+#        cp .github/workflows-optional/morning-brief.yml .github/workflows/
+#   2. Add the repository secret for your agent (above). With no HAROLD_AGENT variable that is
 #      CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY.
-#   2. Set the two variables above (and HAROLD_AGENT if you are not using Claude Code).
-#   3. Optional: a repository secret NTFY_TOPIC for a phone push (ntfy app) when the brief lands. This job
+#   3. Set the two variables above (and HAROLD_AGENT if you are not using Claude Code).
+#   4. Optional: a repository secret NTFY_TOPIC for a phone push (ntfy app) when the brief lands. This job
 #      notifies from its own run; brief-notify.yml notifies when anything else (a routine, a session)
 #      pushes a new brief.
-#   4. Try it: Actions → "Harold morning brief" → Run workflow, with force=true and dry_run=true first.
+#   5. Try it: Actions → "Harold morning brief" → Run workflow, with force=true and dry_run=true first.
 #
 # Cost: about 720 short runs a month. On a private repository each run counts as at least one Actions
 # minute (the Free plan includes 2,000 a month). To use fewer, narrow the cron hours to your morning in
 # UTC, wide enough to cover both daylight-saving offsets, e.g. '35 11-14 * * *' for 06:30 in Chicago.
 #
-# Prefer a Claude Code routine? Delete this file and create a routine whose prompt is the contents of
+# Prefer a Claude Code routine? Skip this file (do not copy it) and create a routine whose prompt is the contents of
 # harold/brief-prompt.md, scheduled for your brief time. Its own schedule is the clock; the same gate
 # still keeps it to weekdays and one brief a day.
 on:

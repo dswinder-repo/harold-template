@@ -100,7 +100,7 @@ bin/harold file trigger <id> ran|skipped|deferred "<reason>"
 
 **If a trigger is overdue by more than one cycle, say so out loud.** A missed Friday that nobody mentions becomes seven missed Fridays.
 
-**Cloud housekeeping.** When `harold/housekeeping.json` says `"cloud": true`, the three housekeeping rows run as silent scheduled jobs (`.github/workflows/housekeeping.yml`, or any scheduler running `harold/housekeeping-prompt.md`), not in sessions: boot shows them as a one-line NOTE, not DUE, and close never asks for them. Their results reach the operator once, through `harold/briefs/housekeeping-notes.md` in the next morning brief. Run one in a session only when the operator asks. While it is `false` (the default), sessions run them as above.
+**Cloud housekeeping.** When `harold/housekeeping.json` says `"cloud": true`, the three housekeeping rows run as silent scheduled jobs (`.github/workflows-optional/housekeeping.yml`, copied into `.github/workflows/`, or any scheduler running `harold/housekeeping-prompt.md`), not in sessions: boot shows them as a one-line NOTE, not DUE, and close never asks for them. Their results reach the operator once, through `harold/briefs/housekeeping-notes.md` in the next morning brief. Run one in a session only when the operator asks. While it is `false` (the default), sessions run them as above.
 
 ### Then:
 

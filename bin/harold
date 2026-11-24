@@ -576,7 +576,7 @@ function computeTriggers(root, today, ctx) {
   if (ctx.daily.lastDate) { const gap = daysBetween(ctx.daily.lastDate, t); if (gap >= 3) info.push(`No vault/daily note in ${gap} days (last: ${ctx.daily.last}). One is written this session; harold close enforces it.`); }
   else info.push('No vault/daily notes exist at all.');
   // Housekeeping (weekly scan, full audit, month-end review) can run as unattended cloud jobs
-  // (.github/workflows/housekeeping.yml, or any scheduler running harold/housekeeping-prompt.md). When
+  // (.github/workflows-optional/housekeeping.yml, copied into .github/workflows/, or any scheduler running harold/housekeeping-prompt.md). When
   // harold/housekeeping.json says {"cloud": true}, sessions are never asked to do it: today's job, or one
   // the cloud missed, shows as a one-line note, never as a demand at close. Inside a housekeeping job the
   // items stay listed, so the job's own context names them.
@@ -2583,7 +2583,7 @@ function cmdWhere(root, args) {
 }
 
 // ───────────────────────── brief (the scheduled morning brief) ─────────────────────────
-// One code path for every runner: the GitHub Actions workflow (.github/workflows/morning-brief.yml, which
+// One code path for every runner: the GitHub Actions workflow (.github/workflows-optional/morning-brief.yml, copied into .github/workflows/, which
 // runs hourly and lets this gate decide), a Claude Code routine on its own schedule, or a person at a
 // terminal. The model writes the brief; this makes everything around it deterministic:
 //   brief start    gate: weekday in HAROLD_TZ, at or after HAROLD_BRIEF_TIME, no brief yet today.
@@ -2761,7 +2761,7 @@ function closeBriefJob(root, today, opts, hook) {
 
 // ───────────────────────── housekeeping (weekly scan, monthly full audit, month-end review) ─────────────────────────
 // Optional unattended runs of the three housekeeping triggers, switched on by harold/housekeeping.json
-// {"cloud": true}. One code path for every runner: .github/workflows/housekeeping.yml (it wakes every three
+// {"cloud": true}. One code path for every runner: .github/workflows-optional/housekeeping.yml (copied into .github/workflows/; it wakes every three
 // hours and lets this gate decide), any other scheduler running harold/housekeeping-prompt.md, or a terminal.
 //   housekeeping start [job]   gate: cloud on, the job's day in HAROLD_TZ (weekly-scan: Friday; full-audit:
 //                              the 1st; month-end: the last business day, Monday to Friday), not already
