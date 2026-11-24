@@ -161,7 +161,7 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 
 **Per harness:**
 - **Claude Code.** Open the workspace folder and start a session.
-- **Claude desktop app (Cowork).** Add your private repository as a marketplace (Customize, then Plugins, then Add marketplace), install the `harold` plugin, and connect the workspace folder to a task. The desktop app must be open. Steps: `playbook/core/setup.md`, "Optional: Cowork".
+- **Claude desktop app (Cowork).** Add your private repository as a marketplace (Customize, then Plugins, then Add marketplace), install the `harold` plugin, and connect the workspace folder to a task. The desktop app must be open. Cowork in the cloud can't open the workspace or run the hooks; there Harold works through the connector, like a chat app. Steps: `playbook/core/setup.md`, "Optional: Cowork".
 - **Codex.** Codex runs a project's hooks only after you trust them: start Codex in the workspace, type `/hooks`, review the three Harold hooks and trust them (again after any edit to the file). Its `SessionEnd` hook may run for three seconds, so `close --final` hands its work to a background process (`--detach`); output goes to `harold/active-sessions/.state/<session>.detached.log`.
 - **Cursor.** Runs `.cursor/hooks.json` in a trusted workspace. If filing is missing, Cursor gets a follow-up message and keeps going. Cursor's cloud agents do not run `sessionStart` or `sessionEnd`; there the agent runs boot itself.
 - **Gemini CLI, Qwen Code, Grok Build.** Project hooks run once you trust the folder (Gemini also warns once per new hook; Grok: `/hooks-trust` or `--trust`).
