@@ -38,6 +38,6 @@ Standard operating procedures: plain markdown files that say exactly how Harold 
 - Every step names the file it writes to. A step that says "update the relevant systems" is not a step.
 - State what happens when data is missing.
 - End with a completion checklist.
-- A workflow earns a playbook after you have done it manually three times, not before.
+- Write a playbook as soon as work recurs or the operator has to explain a multi-step routine, so it never needs explaining twice (AGENTS.md, "Grow the playbooks"); improve an existing one where it fits.
 - Playbooks that only produce advice and write nothing should say so at the top.
 - Resolve project folders through `harold/projects.md` (`bin/harold where`), never by hard-coded path.
