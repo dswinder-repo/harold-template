@@ -1,6 +1,6 @@
 # Playbook: Setup
 
-**Purpose:** Walk a new operator through making their own private copy of Harold and setting it up, in conversation, from the first clone to a clean first close.
+**Purpose:** Walk a new operator through choosing where Harold lives, making their own private copy and setting it up, in conversation, to a clean first close.
 
 **Trigger:** "set up Harold", "install Harold", "help me get started with Harold", a first run in a fresh copy of the starter, or boot opening with `⚠ NOT SET UP YET`. Also when the operator points their AI tool at harold.works or the starter repository and asks for Harold.
 
@@ -12,7 +12,8 @@
 - **One step at a time, in order.** Say what the step is for in one sentence, ask what you need, do it, confirm it in one line, and move on. Steps 1 to 9 are required, the connector and the CRM included. Step 10 offers the optional parts, each with a plain "skip for now" path, and step 11 checks the result.
 - **Say this early, in plain words:** Harold saves the operator's work by committing it with git and pushing it to their own private repository at the end of every turn. That repository will hold their working life (people, meetings, decisions), so it must be private, and it must be theirs.
 - **If the operator stops partway,** the next session picks up where this one left off: boot names what is still missing in its `⚠ NOT SET UP YET` notice, and this playbook resumes at the first unfinished step.
-- **Starting from one pasted line.** The docs at harold.works give the operator one line to paste into their AI tool, which points it at this playbook. If that is how you got here and there is no copy of the starter on this computer yet, start at step 1, which makes one. You need to be able to run shell commands (git, Node 22+, Python 3.8+ and curl must be installed; help the operator install whichever is missing). If the tool you are running in can only chat and cannot run commands, say so, and ask the operator to paste the same line into an AI tool that can work in a folder on their computer.
+- **Starting from one pasted line.** The docs at harold.works give the operator one line to paste into their AI tool, which points it at this playbook. If that is how you got here and the operator has no copy of Harold yet, start at step 1: it asks where Harold will live, then makes the copy. You need to be able to run shell commands, on the operator's computer or in a cloud session. On their computer, git, Node 22+, Python 3.8+ and curl must be installed (help the operator install whichever is missing); cloud sessions usually have them already. If the tool you are running in can only chat and cannot run commands, say so, and ask the operator to paste the same line into an AI tool that can: one that works in a folder on their computer, or one that runs cloud sessions from a GitHub repository.
+- **Working in a cloud session.** Three things differ from a computer. *Network:* many cloud tools limit which sites a session can reach, and setup needs GitHub, Vercel and Supabase (`github.com`, `api.github.com`, `vercel.com`, `api.vercel.com`, `supabase.com`, the project's own `<ref>.supabase.co` address, and the npm registry for `npx`). If a command is refused by the network, tell the operator which sites to allow in the cloud tool's settings for this environment and wait for them; if they would rather not, do that part from a temporary copy on their computer (step 1). *Signing in:* a command that would open a browser on a computer prints a link or a code in a cloud session instead; give it to the operator to open. *Branch:* the cloud tool should start sessions on the repository's main branch, which is where the connector reads and writes. A session on a separate branch is saved to that branch only, and reaches Harold when it is merged.
 - **Do it yourself wherever you can.** Run the commands, generate values, use the command-line tools of GitHub, Vercel and Supabase once the operator has signed in, and check every result yourself. Ask the operator only for what a person must do: creating accounts, signing in when a browser opens, filling in a form no tool can fill (GitHub's OAuth app form), and answering questions. When they must click, tell them exactly what to click, one screen at a time.
 - **Read the documentation as plain text** when you need more detail than this playbook gives: `https://harold.works/llms-full.txt` holds the full docs.
 
@@ -20,20 +21,34 @@
 
 ---
 
-## Step 1: A private repository of the operator's own
+## Step 1: Where Harold lives, and a private copy of the operator's own
 
-Harold must never push to the public starter, and `bin/harold close` refuses to: while `origin` still points at it, close commits locally and stops with "NOT PUSHED: origin is the public Harold starter".
+**First, ask where the operator wants to keep Harold.** Before making anything, explain the two ways in plain words, say what each means day to day, and let them choose. They can change their mind later: either way, everything is in their private GitHub repository.
 
-Ask whether the operator has a GitHub account (or another git host) and whether they have already made their own copy. Then take one of two paths:
+> **1. In the cloud (recommended).** Harold lives only in your private GitHub repository. When you want to work with it, you start a session in your AI tool's cloud, from that repository (for example Claude Code on the web or in the Claude app, Codex cloud tasks or Cursor background agents). The session copies Harold at the start and saves back to your repository at the end of every turn. Chat apps on your phone and on the web reach Harold through the connector. Nothing stays on your computer, and you can pick up from any device. You need an AI tool that can run cloud sessions from a GitHub repository.
+>
+> **2. On your own computer.** Harold is a folder on your computer, which you open in your AI tool there. It is still saved to your private GitHub repository at the end of every turn, and chat apps still reach it through the connector. Your computer needs a few free programs (git, Node, Python), which I can install for you.
 
-- **From the template (simplest).** If the GitHub CLI is installed, have the operator sign in (`gh auth login`, in the browser when asked) and create the copy yourself: `gh repo create <name> --private --template dswinder-repo/harold-template --clone`. Otherwise, on the starter's GitHub page, the operator chooses **Use this template → Create a new repository**, sets it to **Private**, and gives you the new repository's URL; clone it into the folder they want Harold to live in (`git clone <their URL> <folder>`). Then work from that folder.
+Both ways need the connector (step 8). Installing git, Node and Python on the operator's computer is needed only for the second way, or to run this setup from their computer.
+
+**Then decide where this setup runs:**
+
+- **Already in a cloud session.** Do everything here. If the session was started on the public starter itself, make the private copy (below, from the template), then ask the operator to start a new cloud session on their own repository and carry on there from step 2.
+- **In a tool on their computer, and they chose the cloud.** Create their private repository on GitHub (below, from the template). Then either finish setup here, in a temporary copy on this computer that you push to their repository every turn (this needs git, Node, Python and curl here), or, if they would rather install nothing, have them start a cloud session on their new repository and carry on there from step 2. Step 11 tells them how to open Harold in the cloud from then on.
+- **In a tool on their computer, and they chose their computer.** Clone the copy into the folder they want Harold to live in, outside iCloud, Dropbox or other synced folders, which can evict files.
+
+**Making the copy.** Harold must never push to the public starter, and `bin/harold close` refuses to: while `origin` still points at it, close commits locally and stops with "NOT PUSHED: origin is the public Harold starter".
+
+Ask whether the operator has a GitHub account (or another git host) and whether they have already made their own copy. If they have no GitHub account yet, help them create one first; Harold needs somewhere private to save to. Then take one of two paths:
+
+- **From the template (simplest).** If the GitHub CLI is installed, have the operator sign in (`gh auth login`, in the browser when asked) and create the copy yourself: `gh repo create <name> --private --template dswinder-repo/harold-template`, adding `--clone` to put a working copy here. Otherwise, on the starter's GitHub page, the operator chooses **Use this template → Create a new repository**, sets it to **Private**, and gives you the new repository's URL. To work from a copy here, clone it (`git clone <their URL> <folder>`) and work from that folder.
 - **From a clone you already have.** Ask the operator to create an empty **private** repository (no README, no licence) and give you its URL. Then re-point `origin` and push:
   ```bash
   git remote set-url origin <their private repository URL>
   git push -u origin HEAD
   ```
 
-Check it with `git remote get-url origin`: it must be the operator's repository. If the operator has no GitHub account yet, help them create one first; Harold needs somewhere private to save to. Suggest a folder outside iCloud, Dropbox or other synced folders, which can evict files.
+Check it with `git remote get-url origin`: it must be the operator's repository.
 
 ## Step 2: Git identity
 
@@ -115,7 +130,7 @@ The connector (`tools/harold-connector`) is a required part of Harold. It is a s
 8. **Add the connector to the operator's AI tools.** The address is `<address>/mcp`. Add it to the tool you are running in now, then to each other tool the operator uses: chat apps on the web and phone (in Claude, for example, **Settings**, then **Connectors**, then **Add custom connector**), coding agents and editors. The connector README's "Connect your tool" section has each tool's command or menu. Signing in opens a browser: the connector's own **Connect Harold?** page names the tool, the operator presses **Continue to GitHub** and approves, and only their GitHub account is accepted. Leave any client id or secret fields in the tool empty.
 9. **Check it from the tool.** Call `harold_today` through the connector, then search the CRM for any name with `crm_search_contacts`. An answer with no error (an empty search is fine) means the connector, the knowledge base and the CRM all work.
 
-**Only for a tool that cannot connect to a remote MCP server,** use the local fallback, harold-mcp, on that computer: run `bin/harold-setup-crm` (it stores the Supabase address and service role key in `~/.harold/env` and tests the connection), then `(cd tools/harold-mcp && npm install)`, and add `bin/harold-mcp` to that tool's MCP servers by its absolute path (`.mcp.example.json` shows the shape). On the computer where the operator works, `bin/harold-setup-crm` is also worth running even with the connector: with those two values in `~/.harold/env`, `bin/harold` writes tasks and CRM records directly, and boot and close can apply any queued write themselves.
+**Only for a tool that cannot connect to a remote MCP server,** use the local fallback, harold-mcp, on that computer: run `bin/harold-setup-crm` (it stores the Supabase address and service role key in `~/.harold/env` and tests the connection), then `(cd tools/harold-mcp && npm install)`, and add `bin/harold-mcp` to that tool's MCP servers by its absolute path (`.mcp.example.json` shows the shape). When Harold lives on the operator's computer, `bin/harold-setup-crm` is also worth running there even with the connector: with those two values in `~/.harold/env`, `bin/harold` writes tasks and CRM records directly, and boot and close can apply any queued write themselves. In the cloud there is no computer to keep `~/.harold/env` on. If the cloud tool can store secret environment variables for its sessions, the same two values can go there; otherwise `bin/harold`'s task and CRM writes are queued and applied through the connector, as `AGENTS.md` describes.
 
 ## Step 9: The CRM and the task list
 
@@ -294,14 +309,16 @@ Do this only if the operator uses Notion and wants the same tasks in both places
 
 1. Run `bin/harold check`. It should print `RESULT: PASS` with no warnings about the time zone or `origin`.
 2. Run `bin/harold boot` (or start a fresh session, where hooks run it). The `⚠ NOT SET UP YET` notice must be gone. If it is still there, it names what is left: go back to that step.
-3. Write today's daily note in `vault/daily/` saying Harold was set up, with the projects added and the optional parts chosen or skipped.
+3. Write today's daily note in `vault/daily/` saying Harold was set up, where it lives (the cloud or the operator's computer), the projects added and the optional parts chosen or skipped.
 4. Run `bin/harold close`. It commits everything and pushes to the operator's private repository, and must end with a line saying the commits were pushed. If it says NOT PUSHED, read the reason and fix it (usually `origin` or the git credentials), then close again.
 5. Tell the operator, in two or three sentences, that Harold is ready, what to say tomorrow morning ("good morning"), and that every turn is saved and pushed to their private repository.
+6. **If they chose the cloud,** tell them how to open Harold from now on: in their cloud tool, start a new session on their private repository (name it), on its main branch, and say "good morning" there. If setup ran in a temporary copy on their computer, that copy is no longer needed once close has pushed: offer to delete it, and delete it only if they say yes.
 
 ---
 
 ## Completion checklist
 
+- [ ] The operator chose where Harold lives (the cloud or their computer), after hearing what each means
 - [ ] `origin` is the operator's own private repository; never the public starter
 - [ ] Git name and email set; `AGENTS.md` names the account, the repository and the live projects
 - [ ] `HAROLD_TZ` set in `harold/settings.env`; other settings confirmed or left at their defaults
@@ -313,3 +330,4 @@ Do this only if the operator uses Notion and wants the same tasks in both places
 - [ ] Harold's task list works (a test task created and canceled)
 - [ ] Each optional part set up or explicitly skipped
 - [ ] `bin/harold check` passes, boot shows no setup notice, a daily note exists, and close pushed to the private repository
+- [ ] For the cloud: the operator knows how to open Harold in their cloud tool; a temporary copy on their computer was deleted only if they agreed

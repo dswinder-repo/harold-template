@@ -21,7 +21,7 @@ If someone has pointed you at this repository or at harold.works and asked you t
 
 **The order of first steps.** `playbook/core/setup.md` is the full procedure, and its step numbers are the same as in the Quick start below and in the docs. In short:
 
-1. **Point `origin` at the operator's own private repository, and give git a name and email** (steps 1 and 2). Do this before anything runs `bin/harold close`, because close commits and pushes on every turn. A clone of the public starter still has the starter as `origin`, and Harold refuses to push there.
+1. **Ask where Harold will live, point `origin` at the operator's own private repository, and give git a name and email** (steps 1 and 2). The operator chooses between the cloud (recommended: Harold lives only in their private GitHub repository and they work in cloud sessions from it) and a folder on their own computer; step 1 explains both in plain words and what changes for each. Do this before anything runs `bin/harold close`, because close commits and pushes on every turn. A clone of the public starter still has the starter as `origin`, and Harold refuses to push there.
 2. **Run `bin/harold check`** (step 3). It should print `RESULT: PASS`.
 3. **Ask the operator for their details and fill in the placeholders yourself** (steps 4 to 7): time zone, name, role, contact types, their first projects. Ask in conversation; never guess, and never ask them to edit files.
 4. **Deploy the connector and create the CRM database** (step 8). The connector is a required part of Harold: it is how every AI tool, the operator's phone included, reaches the knowledge base, the CRM and the task list. Do everything you can yourself (the Vercel CLI once the operator has signed in, the database tables, the settings, the `curl` checks), and tell the operator exactly what to click for the parts only a person can do: creating free Vercel and Supabase accounts and filling in GitHub's OAuth app form.
@@ -39,19 +39,26 @@ Harold's instructions live in plain markdown. 2.0 adds a floor under them: `bin/
 
 ## Quick start
 
-**The easy way: let your AI tool set it up.** Paste this line into any AI tool that can work in a folder on your computer and run commands:
+**Choose where Harold lives.** There are two ways, and setup asks you first:
+
+- **In the cloud (recommended).** Harold lives only in your private GitHub repository. You work with it in cloud sessions started from that repository (for example Claude Code on the web or in the Claude app, Codex cloud tasks or Cursor background agents), which copy it at the start and save back at the end of every turn. Chat apps on your phone and the web reach it through the connector. Nothing stays on your computer. You need an AI tool that runs cloud sessions from a GitHub repository; if the tool limits which sites its sessions can reach, allow GitHub, Vercel and Supabase in its settings for setup.
+- **On your own computer.** A working copy in a folder on your computer, opened in your AI tool there. It is still saved to your private GitHub repository every turn, and chats still go through the connector. Your computer needs git, Node and Python.
+
+Either way, the connector is required.
+
+**The easy way: let your AI tool set it up.** Paste this line into an AI tool that can run commands, either in a folder on your computer or in a cloud session:
 
 ```text
 Set up Harold for me: follow the setup playbook at https://github.com/dswinder-repo/harold-template/blob/main/playbook/core/setup.md, and read https://harold.works/llms-full.txt for anything it doesn't cover.
 ```
 
-It makes your private copy of this starter and walks you through the whole setup in conversation, doing the work itself. You answer its questions, create a few free accounts (GitHub, Vercel, Supabase), sign in when it opens a browser, and fill in one form on GitHub.
+It asks where you want Harold to live, makes your private copy of this starter and walks you through the whole setup in conversation, doing the work itself. If you choose the cloud but start from a tool on your computer, it can do the setup there and then tell you how to open Harold in your cloud tool. You answer its questions, create a few free accounts (GitHub, Vercel, Supabase), sign in when it opens a browser, and fill in one form on GitHub.
 
 **Required:** your own private repository, your details, the connector and the CRM (a Supabase database the connector reaches). **Optional:** the CRM web app, two-way sync between Harold's task list and Linear, Todoist, Asana or Notion, scheduled jobs and extra harnesses. Harold has its own task list, so none of those tools is needed.
 
 The steps below are the same steps, with the same numbers, as the setup playbook (`playbook/core/setup.md`) and [Initial Setup](https://harold.works/docs/#getting-started/initial-setup) in the docs, condensed for doing it by hand.
 
-1. **Make it your own private repository.** Every close commits your work and pushes it to `origin`, so `origin` must be a **private** repository of your own: it will hold your working life. On this repository's GitHub page choose **Use this template → Create a new repository**, set it to **Private**, and clone your copy (`git clone https://github.com/<you>/<your-repo>.git my-harold`). Or by hand: create an empty **private** repository on GitHub (no README, no license), clone the starter, point `origin` at your repository and push:
+1. **Choose where Harold lives (above), and make it your own private repository.** Every close commits your work and pushes it to `origin`, so `origin` must be a **private** repository of your own: it will hold your working life. On this repository's GitHub page choose **Use this template → Create a new repository**, set it to **Private**, and clone your copy (`git clone https://github.com/<you>/<your-repo>.git my-harold`). Or by hand: create an empty **private** repository on GitHub (no README, no license), clone the starter, point `origin` at your repository and push:
    ```bash
    git clone https://github.com/dswinder-repo/harold-template.git my-harold
    cd my-harold
@@ -59,7 +66,7 @@ The steps below are the same steps, with the same numbers, as the setup playbook
    git push -u origin main
    ```
    Do this before your first session. Until `origin` points at your own repository, boot says the workspace is not set up yet, and close commits locally but refuses to push.
-   Requirements: git, curl, Node 22+ and Python 3.8+ (standard library only, for search and the link graph). Nothing in this repository needs a newer Python; the Model Council add-on the docs describe lives in its own repository and needs Python 3.10+. The CRM web app also needs pnpm, only where you build it. Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
+   For the cloud, you only need the private repository: start a cloud session on it in your AI tool and do the remaining steps there. On your computer (or to do setup from it), the requirements are git, curl, Node 22+ and Python 3.8+ (standard library only, for search and the link graph). Nothing in this repository needs a newer Python; the Model Council add-on the docs describe lives in its own repository and needs Python 3.10+. The CRM web app also needs pnpm, only where you build it. Keep the workspace out of iCloud/Dropbox-style synced folders if you can; boot catches evicted files, but it is better not to have them.
 
 2. **Tell git who you are**, unless this computer already has a git identity: `git config user.name "<your name>" && git config user.email "<your email>"`. Put the same name, email and GitHub account in the **Git & GitHub Workflow** section of `AGENTS.md`.
 
