@@ -132,7 +132,7 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 | Harness | Hooks? | Wiring in this repository | Start → boot | End of every turn → close | Session end → close --final | Source checked |
 |---|---|---|---|---|---|---|
 | Claude Code | yes | `.claude/settings.json` | `SessionStart` | `Stop` | `SessionEnd` | Claude Code hooks docs |
-| Claude desktop app (Cowork) | yes | plugin `tools/harold-plugin/` | `SessionStart` + `boot-harold` skill | `Stop` | `SessionEnd` | Claude Code plugin hooks |
+| Claude desktop app (Cowork) | yes | plugin `tools/harold-plugin/` (installed from your repository as a marketplace) | `SessionStart` + `boot-harold` skill | `Stop` | `SessionEnd` | Claude Code plugin hooks |
 | Codex | yes | `.codex/hooks.json` (trust once with `/hooks`) | `SessionStart` | `Stop` | `SessionEnd` (3 s limit: detached) | Codex hooks docs |
 | Cursor | yes | `.cursor/hooks.json` | `sessionStart` | `stop` (follow-up message) | `sessionEnd` | Cursor hooks docs |
 | Gemini CLI | yes | `.gemini/settings.json` | `SessionStart` (`additionalContext`) | `AfterAgent` (`decision: block` retries) | `SessionEnd` (not awaited: detached) | google-gemini/gemini-cli `docs/hooks/`, `packages/core/src/hooks/` |
@@ -161,7 +161,7 @@ If a harness has a hook or plugin mechanism for the start of a session, the end 
 
 **Per harness:**
 - **Claude Code.** Open the workspace folder and start a session.
-- **Claude desktop app (Cowork).** Install the plugin in `tools/harold-plugin/` and connect the workspace folder.
+- **Claude desktop app (Cowork).** Add your private repository as a marketplace (Customize, then Plugins, then Add marketplace), install the `harold` plugin, and connect the workspace folder to a task. The desktop app must be open. Steps: `playbook/core/setup.md`, "Optional: Cowork".
 - **Codex.** Codex runs a project's hooks only after you trust them: start Codex in the workspace, type `/hooks`, review the three Harold hooks and trust them (again after any edit to the file). Its `SessionEnd` hook may run for three seconds, so `close --final` hands its work to a background process (`--detach`); output goes to `harold/active-sessions/.state/<session>.detached.log`.
 - **Cursor.** Runs `.cursor/hooks.json` in a trusted workspace. If filing is missing, Cursor gets a follow-up message and keeps going. Cursor's cloud agents do not run `sessionStart` or `sessionEnd`; there the agent runs boot itself.
 - **Gemini CLI, Qwen Code, Grok Build.** Project hooks run once you trust the folder (Gemini also warns once per new hook; Grok: `/hooks-trust` or `--trust`).

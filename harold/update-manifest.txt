@@ -23,6 +23,7 @@ tests/
 # Harold's own software
 tools/harold-mcp/
 tools/harold-plugin/
+.claude-plugin/marketplace.json
 tools/harold-connector/
 tools/harold-crm/
 tools/harness-hooks/

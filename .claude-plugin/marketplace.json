@@ -1,0 +1,12 @@
+{
+  "name": "harold",
+  "description": "Harold: a chief-of-staff operating system. Boots from your Harold workspace and enforces filing at the end of every turn.",
+  "owner": { "name": "[YOUR NAME]" },
+  "plugins": [
+    {
+      "name": "harold",
+      "source": "./tools/harold-plugin",
+      "description": "Boots Harold at session start, gates tools until an oversized boot is read, and files and saves at the end of every turn."
+    }
+  ]
+}
