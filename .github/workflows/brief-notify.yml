@@ -11,7 +11,7 @@ name: Harold morning brief notify
 # NTFY_TOPIC (Settings → Secrets and variables → Actions). For a self-hosted ntfy server, also set the
 # repository variable NTFY_SERVER (default https://ntfy.sh). Without NTFY_TOPIC every step is skipped.
 #
-# No double notices: morning-brief.yml notifies from its own run, and its push (made with the workflow's
+# No double notices: morning-brief.yml (if you copied it in) notifies from its own run, and its push (made with the workflow's
 # GITHUB_TOKEN) does not start other workflows, so this one never fires for it.
 on:
   push:

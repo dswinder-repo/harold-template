@@ -38,7 +38,7 @@ Priority-setting is guided, not open-ended. Harold proposes; you confirm, correc
 
 ## STEP 0: Is today's draft already written? (check FIRST, every time)
 
-If you turned on the scheduled morning brief (`.github/workflows/morning-brief.yml`, or any hosted scheduled agent (a Claude Code routine or another tool's equivalent) running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
+If you turned on the scheduled morning brief (`.github/workflows-optional/morning-brief.yml`, copied into `.github/workflows/`, or any hosted scheduled agent (a Claude Code routine or another tool's equivalent) running `harold/brief-prompt.md`), Steps 1 and 2 may already be written for today, at `harold/briefs/YYYY-MM-DD.md`. It is due on weekdays at `HAROLD_BRIEF_TIME` (default 06:30) in `HAROLD_TZ`. Re-running Steps 1 and 2 when that draft exists wastes the operator's morning and the work already done.
 
 1. **Find it.** `bin/harold boot` prints a section **"Today's morning brief draft"**; `bin/harold brief status` prints the same thing on demand. It says one of:
    - **READY** (in this checkout) → read that file.

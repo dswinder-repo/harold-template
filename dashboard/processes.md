@@ -53,7 +53,7 @@
 
 ### Time Triggers
 
-`bin/harold boot` computes these from the real date and `harold/trigger-log.jsonl`. Due work runs the same session and is recorded with `bin/harold file trigger <id> ran|skipped|deferred "<reason>"`; `bin/harold close` blocks until it is. Exception: with `"cloud": true` in `harold/housekeeping.json`, `weekly-scan`, `full-audit` and `month-end` run as silent scheduled jobs (`.github/workflows/housekeeping.yml` or `harold/housekeeping-prompt.md`), and sessions only see a note.
+`bin/harold boot` computes these from the real date and `harold/trigger-log.jsonl`. Due work runs the same session and is recorded with `bin/harold file trigger <id> ran|skipped|deferred "<reason>"`; `bin/harold close` blocks until it is. Exception: with `"cloud": true` in `harold/housekeeping.json`, `weekly-scan`, `full-audit` and `month-end` run as silent scheduled jobs (`.github/workflows-optional/housekeeping.yml` (copied into `.github/workflows/`) or `harold/housekeeping-prompt.md`), and sessions only see a note.
 
 | Trigger id | When | What runs |
 |------------|------|-----------|

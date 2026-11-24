@@ -45,8 +45,7 @@ tools/visualizer/
 .mcp.example.json
 
 # Scheduled jobs
-.github/workflows/morning-brief.yml
-.github/workflows/housekeeping.yml
+.github/workflows-optional/
 .github/workflows/brief-notify.yml
 .github/actions/
 harold/brief-prompt.md

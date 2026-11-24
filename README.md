@@ -249,10 +249,12 @@ tools/
   harness-hooks/           user-level hook snippets for Kimi Code (kimi-config.toml) and Hermes Agent (hermes-config.yaml)
   visualizer/              Expedition HQ, a local live dashboard of sessions (node tools/visualizer/serve.js)
 .github/workflows/
+  brief-notify.yml         OPTIONAL phone notice (ntfy) when anything pushes a new brief draft; off until NTFY_TOPIC is set
+.github/workflows-optional/
   morning-brief.yml        OPTIONAL scheduled morning brief, in your time zone at your time, written by
                            any agent with a headless mode; HAROLD_AGENT picks it, subscription first (see below)
   housekeeping.yml         OPTIONAL weekly scan, monthly full audit and month-end review, silently, same switch
-  brief-notify.yml         OPTIONAL phone notice (ntfy) when anything pushes a new brief draft; off until NTFY_TOPIC is set
+  README.md                what each file does; each runs only once copied into .github/workflows/
 .github/actions/harold-agent/
   action.yml               runs the chosen agent for both jobs: Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI,
                            Grok Build, Kimi Code, Qwen Code, or any other CLI through a custom command
@@ -309,7 +311,7 @@ Quiet projects come first, with their next step; the rest follow in one line eac
 
 ## Scheduled jobs in the cloud
 
-Two kinds of work run on a schedule, on GitHub's machines, so no computer of yours needs to be on: the morning brief and housekeeping. Both are GitHub Actions workflows in `.github/workflows/`, both are off until you set them up, and both use the same agent switch and secrets. The repository variable `HAROLD_AGENT` picks the agent (unset means Claude Code), and `.github/actions/harold-agent` runs it the same way for both jobs: the same prompt, at the repository root, allowed to run `bin/harold` and a few read-only commands. Variables and secrets live under Settings → Secrets and variables → Actions.
+Two kinds of work run on a schedule, on GitHub's machines, so no computer of yours needs to be on: the morning brief and housekeeping. Both are GitHub Actions workflows that ship in `.github/workflows-optional/`, where GitHub never runs them, so both are off until you copy the one you want into `.github/workflows/` and commit (`cp .github/workflows-optional/morning-brief.yml .github/workflows/`, and the same for `housekeeping.yml`), and both use the same agent switch and secrets. The repository variable `HAROLD_AGENT` picks the agent (unset means Claude Code), and `.github/actions/harold-agent` runs it the same way for both jobs: the same prompt, at the repository root, allowed to run `bin/harold` and a few read-only commands. Variables and secrets live under Settings → Secrets and variables → Actions.
 
 **Subscription first.** Wherever an agent's maker sells a subscription, the scheduled jobs can run on it, and that is what they use when its secret is present. An API key is only for people without a subscription; if both secrets are set, the subscription wins.
 
@@ -390,9 +392,9 @@ GitHub Actions is the starter's way to schedule. Any other scheduler that can ru
 
 Say "good morning" and Harold runs the morning brief (`playbook/core/morning-brief.md`). Optionally, Steps 1 and 2 can be written for you before you sit down, so the morning starts with them on screen. By default that happens at **6:30am on weekdays, in your time zone**.
 
-`.github/workflows/morning-brief.yml` does it on GitHub's machines, so no computer of yours needs to be on. GitHub schedules only in UTC, so the workflow wakes every hour (at :35, so a 6:30 brief starts about 6:35) and asks `bin/harold brief start` whether the brief is due: a weekday in your zone, at or after your time, and no brief yet today. Every other hour it stops in seconds, and daylight saving takes care of itself. The draft lands in `harold/briefs/YYYY-MM-DD.md`; the next time you boot, Harold sees it and shows it instead of re-running those steps.
+`.github/workflows-optional/morning-brief.yml`, once copied into `.github/workflows/`, does it on GitHub's machines, so no computer of yours needs to be on. GitHub schedules only in UTC, so the workflow wakes every hour (at :35, so a 6:30 brief starts about 6:35) and asks `bin/harold brief start` whether the brief is due: a weekday in your zone, at or after your time, and no brief yet today. Every other hour it stops in seconds, and daylight saving takes care of itself. The draft lands in `harold/briefs/YYYY-MM-DD.md`; the next time you boot, Harold sees it and shows it instead of re-running those steps.
 
-To turn it on, add the secret for your agent (above) and give it your zone and time: in `harold/settings.env` (committed, so the job reads it too), or as two repository **variables**, which win when set:
+To turn it on, copy the workflow in (`cp .github/workflows-optional/morning-brief.yml .github/workflows/`, then commit and push), add the secret for your agent (above) and give it your zone and time: in `harold/settings.env` (committed, so the job reads it too), or as two repository **variables**, which win when set:
 
 | Variable | Example | Default |
 |---|---|---|
@@ -403,13 +405,13 @@ To change the time or zone later, change the variables; nothing else. Check the 
 
 **Phone notice.** Set the repository secret `NTFY_TOPIC` (a topic name only you know, in the free ntfy app) and you get a notice when a draft lands. The job notifies from its own run; `.github/workflows/brief-notify.yml` covers every other writer (a routine, a session, another computer) by sending one for each new `harold/briefs/YYYY-MM-DD.md` pushed to your default branch. The notice says only that the brief is ready, with a link to the file.
 
-**Prefer a Claude Code routine?** Delete the workflow and create a routine whose prompt is `harold/brief-prompt.md`, on its own schedule (for example weekdays at your brief time). The routine's schedule is the clock; the same gate still skips weekends and days that already have a brief. Set `HAROLD_TZ` in the routine's environment so dates are yours, not the server's.
+**Prefer a Claude Code routine?** Skip the workflow (do not copy it in, or delete the copy) and create a routine whose prompt is `harold/brief-prompt.md`, on its own schedule (for example weekdays at your brief time). The routine's schedule is the clock; the same gate still skips weekends and days that already have a brief. Set `HAROLD_TZ` in the routine's environment so dates are yours, not the server's.
 
 ### Housekeeping: weekly, monthly, month-end
 
-Three of the scheduled triggers are upkeep rather than conversation: the **weekly scan** (Fridays), the **monthly full audit** (the 1st, including the slim-down that moves stale sections of over-budget startup files into an archive file beside them) and the **month-end review** (the last business day, Monday to Friday). By default a session does them when boot lists them as due. Turned on, `.github/workflows/housekeeping.yml` does them instead, silently, and pushes the results; anything worth your attention lands as one line in `harold/briefs/housekeeping-notes.md`, and the next morning brief shows it once.
+Three of the scheduled triggers are upkeep rather than conversation: the **weekly scan** (Fridays), the **monthly full audit** (the 1st, including the slim-down that moves stale sections of over-budget startup files into an archive file beside them) and the **month-end review** (the last business day, Monday to Friday). By default a session does them when boot lists them as due. Turned on, `.github/workflows-optional/housekeeping.yml` (copied into `.github/workflows/`) does them instead, silently, and pushes the results; anything worth your attention lands as one line in `harold/briefs/housekeeping-notes.md`, and the next morning brief shows it once.
 
-**One switch.** In `harold/housekeeping.json`, set `"cloud": true`, commit and push. That line does two things at once: the workflow starts doing the jobs, and sessions stop treating them as due work (boot shows a one-line note instead, and close never asks for them), so a job is never done twice or not at all. While it is `false`, the workflow stops at its gate within seconds and costs nothing else. The same secret as the brief, plus `HAROLD_TZ`, is all it needs.
+**Two steps to turn it on.** First copy the workflow in: `cp .github/workflows-optional/housekeeping.yml .github/workflows/`, then commit and push. Second, the switch. In `harold/housekeeping.json`, set `"cloud": true`, commit and push. That line does two things at once: the workflow starts doing the jobs, and sessions stop treating them as due work (boot shows a one-line note instead, and close never asks for them), so a job is never done twice or not at all. While it is `false`, the workflow stops at its gate within seconds and costs nothing else. The same secret as the brief, plus `HAROLD_TZ`, is all it needs.
 
 GitHub schedules only in UTC, so the workflow wakes every three hours and asks `bin/harold housekeeping start` whether a job is due: that job's day in your zone, and not yet recorded as ran or skipped today. The first wake-up after your local midnight does it, usually before your brief. When two jobs share a day (a Friday that is the 1st, or the last business day), they run on two consecutive wake-ups. `bin/harold housekeeping status` shows the gate for each job today.
 

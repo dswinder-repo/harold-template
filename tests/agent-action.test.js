@@ -210,10 +210,10 @@ test('credential choice: if-no-credential=skip ends green with a notice and auth
   assert.notStrictEqual(creds(sandbox(), { AGENT: 'nope', ON_MISSING: 'skip' }).status, 0, 'a wrong HAROLD_AGENT still fails');
   const action = fs.readFileSync(path.join(ROOT, '.github/actions/harold-agent/action.yml'), 'utf8');
   assert.match(action, /- name: Run the agent\n\s+id: run\n\s+if: \$\{\{ steps\.creds\.outputs\.auth != 'none' \}\}/);
-  const brief = fs.readFileSync(path.join(ROOT, '.github/workflows/morning-brief.yml'), 'utf8');
+  const brief = fs.readFileSync(path.join(ROOT, '.github/workflows-optional/morning-brief.yml'), 'utf8');
   assert.match(brief, /if-no-credential: skip/);
   assert.match(brief, /steps\.agent\.outputs\.skipped != 'true'/);
-  const hk = fs.readFileSync(path.join(ROOT, '.github/workflows/housekeeping.yml'), 'utf8');
+  const hk = fs.readFileSync(path.join(ROOT, '.github/workflows-optional/housekeeping.yml'), 'utf8');
   assert.doesNotMatch(hk, /if-no-credential: skip/, 'housekeeping, once switched on, fails loudly without a credential');
 });
 
