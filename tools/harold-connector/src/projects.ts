@@ -46,7 +46,9 @@ export function formatWhere(projects: Project[], query: string): { found: boolea
   const ranked = rankProjects(projects, q);
   if (!ranked.length) return { found: false, text: `no project matches "${q}" — if this is a new project, run playbook/core/project-intake.md: create the folder, add the harold/projects.md entry, create the vault card, cross-link.` };
   const top = ranked[0].p;
-  const L = [`${top.name} [${top.status}]`, `folder: ${top.folder || ""}`];
+  // Only archived and autonomous are hand-set; whether it is active or quiet is derived (harold_pulse).
+  const st = (String(top.status || "").trim().toLowerCase().match(/^[a-z]+/) || [""])[0];
+  const L = [`${top.name}${st === "archived" || st === "autonomous" ? ` [${st}]` : ""}`, `folder: ${top.folder || ""}`];
   if (top.routes) L.push("routes:\n" + top.routes.split(";").map(r => "  " + r.trim()).join("\n"));
   if (top.card) L.push(`card: ${top.card}`);
   if (top.people) L.push(`people: ${top.people}`);

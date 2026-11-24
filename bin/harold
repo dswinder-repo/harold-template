@@ -20,7 +20,7 @@
  *   harold update  bring Harold's own files (harold/update-manifest.txt) up to the starter [--dry-run] [--from] [--ref]
  *   harold where   resolve a topic or alias to a folder via harold/projects.md
  *   harold search | related | backlinks   full-text search and the link graph (bin/harold-index)
- *   harold pulse   each active project's last activity and next step; quiet ones first [--json] [--all]
+ *   harold pulse   which projects are active (recent or upcoming activity) and which are quiet [--json] [--all]
  *
  * Settings come from the environment, then from ~/.harold/env (HAROLD_ENV_FILE overrides the path), then from
  * harold/settings.env (committed; non-secret HAROLD_* settings only, so every machine and scheduled job shares them):
@@ -28,7 +28,7 @@
  *   HAROLD_BRIEF_TIME  HH:MM local time the scheduled morning brief is due on weekdays. Default 06:30.
  *   HAROLD_CHECKS      optional, comma-separated workspace scripts that check runs; a non-zero exit becomes a warning.
  *   HAROLD_STALE_DAYS  days after which a maintained note counts as stale in related/search. Default 30.
- *   HAROLD_PULSE_DAYS  days without activity after which an active project counts as quiet in pulse and boot. Default 14.
+ *   HAROLD_PULSE_DAYS  the window, back and ahead, in which activity makes a project active; quiet otherwise. Default 14.
  *   HAROLD_JOB=1       set by a scheduler that runs only Harold's jobs (as GitHub Actions and Claude Code routines
  *                      are taken to): today's job marker alone puts close in job mode. Elsewhere a running job does.
  *   HAROLD_NOW         TESTING ONLY: pretend it is this time ("2026-10-05T06:10:00" is wall-clock time
@@ -763,20 +763,53 @@ function cmdIndexQuery(root, sub, argv) {
   const r = haroldIndex(root, [sub, ...argv], 60000);
   process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); return r.status == null ? 2 : r.status;
 }
-// Project pulse: each active project's newest activity (linked notes, its folder, daily and meeting notes that name it,
-// git commits touching its folder) and its next step. bin/harold-index computes it from the same rows harold/graph.json
-// holds, so the connector's harold_pulse gives the same answer.
+// Project pulse: which projects are active (activity: heartbeats, linked notes, its folder, meeting notes that name it,
+// open tasks due, meeting notes dated ahead, git commits that change its folder) and which are quiet, with each active
+// one's next step. bin/harold-index computes it from the same rows harold/graph.json holds, so the connector's
+// harold_pulse gives the same answer.
 function cmdPulse(root, argv) {
   const r = haroldIndex(root, ['pulse', ...argv.filter(a => a === '--json' || a === '--all')], 60000);
   process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || ''); return r.status == null ? 2 : r.status;
 }
-function pulseBootLines(root) {
-  const r = haroldIndex(root, ['pulse', '--boot'], 30000);
-  if (r.status === 0 && (r.stdout || '').trim()) {
-    const lines = r.stdout.trimEnd().split('\n'), items = lines.slice(1);
-    return items.length > 8 ? [lines[0], ...items.slice(0, 8), `- ... ${items.length - 8} more: ${CLI(root)} pulse`] : lines;
+// Which projects are active is derived, never hand-set: archived and autonomous are the only statuses written in
+// harold/projects.md; any other project is active with activity within HAROLD_PULSE_DAYS (back or ahead), and quiet
+// otherwise. Quiet projects are never nagged about. One `harold-index pulse --json --all` per process answers every
+// caller (the boot map, its pulse section, the digest and check); its JSON carries the boot text too.
+const TERMINAL_STATUSES = ['archived', 'autonomous'];
+const setStatusWord = p => ((String(p.status || '').trim().toLowerCase().match(/^[a-z]+/) || [''])[0]);
+let pulseMemo = null;
+function pulseJson(root) {
+  if (pulseMemo && pulseMemo.root === root) return pulseMemo.v;
+  const r = haroldIndex(root, ['pulse', '--json', '--all'], 60000);
+  let v;
+  try {
+    if (r.status !== 0) throw new Error(((r.stderr || '').trim().split('\n').pop() || (r.error && r.error.message) || `harold-index pulse exited ${r.status}`).slice(0, 160));
+    v = { ok: true, data: JSON.parse(r.stdout) };
+  } catch (e) { v = { ok: false, err: e.message }; }
+  pulseMemo = { root, v };
+  return v;
+}
+// { ok, err, active, quiet, terminal } (map entries, active in pulse order, each with .derived). When pulse fails,
+// the old hand-set reading (status: active) stands in, and err says why.
+function derivedProjects(root, projects) {
+  const pj = pulseJson(root);
+  const by = new Map(projects.map(p => [p.name, p]));
+  if (pj.ok) {
+    const out = { ok: true, err: '', active: [], quiet: [], terminal: [] };
+    for (const x of pj.data.projects || []) {
+      const p = by.get(x.name); if (!p) continue;
+      p.derived = x.status;
+      (x.status === 'active' ? out.active : x.status === 'quiet' ? out.quiet : out.terminal).push(p);
+    }
+    return out;
   }
-  return [`## Project pulse: unavailable (${((r.stderr || '').trim().split('\n').pop() || (r.error && r.error.message) || 'harold-index pulse failed').slice(0, 160)})`];
+  projects.forEach(p => { p.derived = p.status === 'active' ? 'active' : setStatusWord(p) || 'no status'; });
+  return { ok: false, err: pj.err, active: projects.filter(p => p.status === 'active'), quiet: [], terminal: projects.filter(p => p.status !== 'active') };
+}
+function pulseBootLines(root) {
+  const pj = pulseJson(root);
+  if (pj.ok && pj.data.boot) return pj.data.boot.trimEnd().split('\n');
+  return [`## Project pulse: unavailable (${pj.ok ? 'no boot text in harold-index pulse --json' : pj.err})`];
 }
 
 
@@ -789,7 +822,8 @@ function cmdCheck(root, today, opts) {
   L.push(`root: ${root}`);
   L.push(`playbooks: ${okPb}/${c.playbooks.items.length} readable`);
   L.push(`learnings: ${c.learnings.rows.length} loaded, ${c.learnings.critical.length} critical`);
-  L.push(`projects: ${c.projects.ok ? c.projects.projects.length : 0} in map (${c.projects.ok ? c.projects.projects.filter(p => p.status === 'active').length : 0} active)`);
+  const dp = c.projects.ok ? derivedProjects(root, c.projects.projects) : null;
+  L.push(`projects: ${c.projects.ok ? c.projects.projects.length : 0} in map (${dp ? dp.active.length : 0} active${dp && dp.ok ? `, ${dp.quiet.length} quiet` : ''})${dp && !dp.ok ? ` — derived status unavailable: ${dp.err}` : ''}`);
   L.push(`alerts: last rebuilt ${c.ctx.alerts.updated || '?'} (${c.ctx.alerts.age ?? '?'}d)  blockers: ${c.ctx.blockers.rows.length} active  events parsed: ${c.ctx.events.rows.length}  daily notes: ${c.ctx.daily.count} (last ${c.ctx.daily.lastDate || 'none'})`);
   L.push(`scheduled: ${c.triggers.due.length} due today, ${c.triggers.overdue.length} overdue`);
   c.warnings.forEach(w => L.push(`WARN  ${w}`));
@@ -917,11 +951,12 @@ function cmdBoot(root, today, opts, hook) {
   L.push(`## Critical learnings (${c.learnings.critical.length} of ${c.learnings.rows.length}; all binding — in full: ${CLI(root)} learnings; this session's project: ${CLI(root)} learnings --project <slug>)`);
   L.push(...learningLines(c.learnings.critical, LEARNINGS_BUDGET, CLI(root)));
   L.push('');
-  const act = c.projects.projects.filter(p => p.status === 'active');
-  L.push(`## Project map — ${c.projects.projects.length} entries, ${act.length} active (${P('harold/projects.md')}; resolve folders with: ${CLI(root)} where <topic>)`);
-  act.forEach(p => L.push(`- ${p.name} → ${p.folder}${p.aliasList.length ? ' (' + p.aliasList.slice(0, 2).join(', ') + ')' : ''}${p.aliasesTodo ? ' (aliases TODO: learn them from how the operator talks, never ask)' : ''}`));
-  const rest = c.projects.projects.filter(p => p.status !== 'active');
-  if (rest.length) L.push(`Not active: ${rest.map(p => `${p.name} [${p.status.split(' ')[0].replace(/[^a-z]/gi, '')}]`).join(', ')}`);
+  const dp = derivedProjects(root, c.projects.projects);
+  L.push(`## Project map — ${c.projects.projects.length} entries, ${dp.active.length} active${dp.ok ? `, ${dp.quiet.length} quiet` : ''} (active is derived from recent or upcoming activity, ${CLI(root)} pulse; ${P('harold/projects.md')}; resolve folders with: ${CLI(root)} where <topic>)`);
+  if (!dp.ok) L.push(`derived status unavailable: ${dp.err} (showing the hand-set status: active instead)`);
+  dp.active.forEach(p => L.push(`- ${p.name} → ${p.folder}${p.aliasList.length ? ' (' + p.aliasList.slice(0, 2).join(', ') + ')' : ''}${p.aliasesTodo ? ' (aliases TODO: learn them from how the operator talks, never ask)' : ''}`));
+  if (dp.quiet.length) L.push(`Quiet: ${dp.quiet.map(p => p.name).join(', ')}`);
+  if (dp.terminal.length) L.push(`Not active: ${dp.terminal.map(p => `${p.name} [${p.derived}]`).join(', ')}`);
   L.push('');
   L.push(...pulseBootLines(root));
   L.push('');
@@ -1043,7 +1078,7 @@ function contextDigest(root, today, L, c, n, bytes) {
   const due = [...c.triggers.due.map(d => `DUE ${d.id}`), ...c.triggers.overdue.map(d => `OVERDUE ${d.id} (say it out loud)`)];
   const waitingLine = L.find(l => l.startsWith('## Waiting writes'));
   if (waitingLine) D.push(`${waitingLine.replace(/^## /, '')} List them with: ${CLI(root)} queue`);
-  D.push(`Scheduled work: ${due.length ? due.join(', ') : 'nothing due'}. Critical learnings: ${c.learnings.critical.length}. Active projects: ${c.projects.projects.filter(p => p.status === 'active').length}. Blockers: ${c.ctx.blockers.rows.length}.`);
+  D.push(`Scheduled work: ${due.length ? due.join(', ') : 'nothing due'}. Critical learnings: ${c.learnings.critical.length}. Active projects: ${derivedProjects(root, c.projects.projects).active.length}. Blockers: ${c.ctx.blockers.rows.length}.`);
   D.push(L[L.length - 1]);
   return D.join('\n');
 }
@@ -2573,7 +2608,9 @@ function cmdWhere(root, args) {
   const ranked = rankProjects(projects, q);
   if (!ranked.length) { console.log(`no project matches "${q}" — if this is a new project, run playbook/core/project-intake.md: create the folder, add the harold/projects.md entry, create the vault card, cross-link.`); return 1; }
   const top = ranked[0].p;
-  console.log(`${top.name} [${top.status}]\nfolder: ${path.join(root, top.folder || '')}`);
+  // Only archived and autonomous are hand-set; whether it is active or quiet is derived (harold pulse).
+  const tag = TERMINAL_STATUSES.includes(setStatusWord(top)) ? ` [${setStatusWord(top)}]` : '';
+  console.log(`${top.name}${tag}\nfolder: ${path.join(root, top.folder || '')}`);
   if (top.routes) console.log('routes:\n' + top.routes.split(';').map(r => '  ' + r.trim()).join('\n'));
   if (top.card) console.log(`card: ${path.join(root, top.card)}`);
   if (top.people) console.log(`people: ${top.people}`);
@@ -3283,7 +3320,7 @@ function main() {
     default:
       console.log(`harold — deterministic floor under Harold (root: ${root})\n\n  boot [--full]      load + verify + register session; refuses if the contract fails\n  check [--json]     contract test only\n  learnings [--project <slug>] [--severity <s>] [--all]   print learnings in full (default: the critical ones; with
                      --project, that project's critical and warning entries plus global ones)
-  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this where the key is\n  queue [list] [--json] | done <id> "<result>" | defer <id>|all "<reason>"   writes waiting in harold/crm-queue.jsonl (not in\n                     the database): the connector call that applies each, then mark it done; close blocks until each is done or deferred\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database). With no key, write through\n                     the connector's task_create / task_update if attached; with neither, writes here queue (see queue)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   each active project's last activity and next step; quiet ones (HAROLD_PULSE_DAYS, default 14) first\n  heartbeats roll [--dry-run]   move old heartbeats out of each live heartbeats.jsonl into monthly files (close does this)\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
+  context [n]        print the next unread part of a boot too large for the hook output (the context gate)\n  gate               PreToolUse hook: blocks tools until the boot context has been read; fails open\n  close [--final]    verify filing, clear session state, record triggers, commit + push\n                     as hooks: --via=<harness> picks the answer format (claude, codex, cursor, gemini, qwen,\n                     copilot, grok, kimi, goose, hermes, cline, opencode, amp, openclaw); close --detach returns at once\n  file trigger|daily|crm|learning|heartbeat ...\n  replay [--dry-run] apply queued CRM writes (harold/crm-queue.jsonl) now; boot and close also do this where the key is\n  queue [list] [--json] | done <id> "<result>" | defer <id>|all "<reason>"   writes waiting in harold/crm-queue.jsonl (not in\n                     the database): the connector call that applies each, then mark it done; close blocks until each is done or deferred\n  brief start|finish|status|notify   the scheduled morning brief (HAROLD_TZ, HAROLD_BRIEF_TIME; see harold/brief-prompt.md)\n  housekeeping start [job]|finish|status   the scheduled weekly scan, full audit and month-end review\n                     (harold/housekeeping.json "cloud": true; see harold/housekeeping-prompt.md)\n  update [--dry-run] [--from <git url or path>] [--ref <branch>]   bring Harold's own files (harold/update-manifest.txt)\n                     up to the starter (harold/upstream.json); your content is never touched, your edits never overwritten\n  task list|create|start|done|cancel|reopen|update|conflicts   Harold's own task list (the database). With no key, write through\n                     the connector's task_create / task_update if attached; with neither, writes here queue (see queue)\n  where <topic>      resolve to a folder via harold/projects.md\n  search <query>     SQLite FTS5 search over all markdown, each hit with its top linked notes (auto-rebuilds when stale)\n  related <note|topic> [--depth 1|2] [--limit N]   follow the links: neighbours, how they link, staleness, gaps\n  backlinks <note>   every note that links to it\n  pulse [--all] [--json]   active projects (activity within HAROLD_PULSE_DAYS, default 14, back or ahead) with their\n                     last activity and next step; quiet ones on one line (--all: one each, and archived/autonomous)\n  heartbeats roll [--dry-run]   move old heartbeats out of each live heartbeats.jsonl into monthly files (close does this)\n  index [--full]     rebuild harold/search.db (full-text index + link graph)\n  root               print workspace root`);
       code = cmd ? 2 : 0;
   }
   process.exit(code);

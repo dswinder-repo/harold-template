@@ -1,11 +1,11 @@
 # Harold Project Map
 
-*The live registry of every project and engagement Harold routes work into. `bin/harold boot` loads it; `bin/harold where <topic>` queries it; playbooks resolve folders through it instead of hard-coding paths; `bin/harold close` and the search index treat every `folder:` here as a knowledge directory. `playbook/core/analyst.md` cross-references new intel against the **active** entries here, not against a static list.*
+*The live registry of every project and engagement Harold routes work into. `bin/harold boot` loads it; `bin/harold where <topic>` queries it; playbooks resolve folders through it instead of hard-coding paths; `bin/harold close` and the search index treat every `folder:` here as a knowledge directory. `playbook/core/analyst.md` cross-references new intel against the **active** projects (as `bin/harold pulse` derives them), not against a static list.*
 
 **Format is machine-read.** One `## ` heading per project. Fields are `- key: value` bullets directly under the heading. Keys:
 
 - `folder` — path relative to the workspace root (must exist, or boot warns)
-- `status` — active | paused | archived
+- `status` — only `archived` (finished) or `autonomous` (self-maintaining, never surfaced); leave it out otherwise
 - `type` — employer | client | venture | workstream | personal | tool
 - `aliases` — comma-separated: what you actually call it out loud. Harold adds new ones as it hears them.
 - `keywords` — comma-separated terms that signal this project in conversation
@@ -17,13 +17,14 @@
 - `linear_project`, `todoist_project`, `asana_project`, `notion_project` — optional: the exact name of the matching project (or, for Notion, the matching value of the project property) in that tool, when its sync is on and the names differ. Without it, the sync matches a project to this entry by its name or an alias.
 - `notes` — anything else
 
+**Whether a project is active is derived, never written here.** `bin/harold pulse` works it out: a project is active when it has activity within `HAROLD_PULSE_DAYS` days of today (default 14), looking ahead as well as back: heartbeats, meeting, daily and decision notes linked with its card, files in its folder, commits that change its folder, an open task due, a meeting note dated ahead. Otherwise it is quiet. Quiet projects are listed plainly and never nagged about; work there makes them active again on their own. A leftover `status: active` or `paused` is ignored.
+
 **Ending an engagement = set `status: archived`.** Nothing else changes; the folder, cards and history stay. New projects are added by `playbook/core/project-intake.md`, usually without being asked: you start talking about something the map does not know, and Harold creates the folder, this entry, the vault card and the cross-links.
 
 ---
 
 ## Example Project
 - folder: projects/example
-- status: active
 - type: workstream
 - aliases: example, the example, sample project
 - keywords: acme, nda, partnership
@@ -36,7 +37,6 @@
 
 ## Harold (this system)
 - folder: tools
-- status: active
 - type: tool
 - aliases: harold, the system, chief of staff
 - keywords: boot, close, playbook, vault, crm, mcp

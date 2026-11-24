@@ -78,7 +78,7 @@ Then offer the other settings in that file, each with its default, and change on
 
 - `HAROLD_BRIEF_TIME`: the weekday time the scheduled morning brief is due (default 06:30).
 - `HAROLD_STALE_DAYS`: days after which a note counts as stale (default 30).
-- `HAROLD_PULSE_DAYS`: days without activity after which a project counts as quiet (default 14).
+- `HAROLD_PULSE_DAYS`: the window, back and ahead, in which activity makes a project active; quiet otherwise (default 14).
 
 `harold/settings.env` is committed, so it must only ever hold non-secret settings. Credentials go in `~/.harold/env`, never in the repository.
 
@@ -102,7 +102,7 @@ Every contact in the CRM has exactly one type. Show the operator the default lis
 
 ## Step 7: First projects
 
-Ask what the operator is working on now, and take the one to three that matter most. For each, follow `playbook/core/project-intake.md`: a folder, an entry in `harold/projects.md` (folder, status `active`, type, the names they actually call it as aliases, and its next step) and a card in `vault/projects/`. Ask for the next step of each; `bin/harold pulse` shows it every day.
+Ask what the operator is working on now, and take the one to three that matter most. For each, follow `playbook/core/project-intake.md`: a folder, an entry in `harold/projects.md` (folder, type, the names they actually call it as aliases, and its next step) and a card in `vault/projects/`. Ask for the next step of each; `bin/harold pulse` shows it every day.
 
 Then ask whether to remove the starter's example content (Jane Doe, Acme Corp, "Example Project", blocker B001, the example lesson L001, the example event) now or once real content has replaced it. It is inert either way: it carries no dates, so nothing in it falls due.
 

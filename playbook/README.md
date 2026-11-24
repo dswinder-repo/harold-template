@@ -30,7 +30,7 @@ Standard operating procedures: plain markdown files that say exactly how Harold 
 | `core/session-file.md` | Keep this session's file in `harold/active-sessions/` current so the live Expedition HQ visualizer shows what is happening. | Every session, every turn: boot creates the file, the first tool call of each user message updates it, close puts it to sleep. |
 | `core/setup.md` | Walk a new operator through making their own private copy of Harold and setting it up, in conversation, from the first clone to a clean first close. | "set up Harold", "install Harold", a first run in a fresh copy of the starter, or boot opening with `⚠ NOT SET UP YET`. |
 | `core/ship-to-github.md` | Commit, push and (for live projects) open a PR at the end of every coding session, without leaking secrets. | End of any coding session; "push this", "ship it", "commit and push"; starting a new project that needs a repo. |
-| `core/status.md` | Give the operator a concise dashboard summary: projects, quiet projects, flags, stale relationships and upcoming deadlines. | "status", "what's happening", "where are we", "dashboard", "/status". |
+| `core/status.md` | Give the operator a concise dashboard summary: active projects, flags, stale relationships and upcoming deadlines. | "status", "what's happening", "where are we", "dashboard", "/status". |
 
 ## Rules for writing a playbook
 

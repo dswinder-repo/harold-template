@@ -86,7 +86,7 @@ Everything below is the live procedure, used when there is no draft and as the s
    **This is the critical differentiator. Never skip it.** The news is the surface; the angles are the point.
 
    1. **Build today's relevance set from the operator's live work, before reading any news.** There is no standing list of regions, policies or topics: a topic matters only because something live makes it matter. Collect the organizations, people, places, markets and policies named by:
-      - **Active projects:** every `status: active` entry in `harold/projects.md` (its `keywords`, `people`, `competitors` and `next_step`).
+      - **Active projects:** every project `bin/harold pulse` lists as active (`harold_pulse` on the connector; active is derived from recent or upcoming activity), with its `keywords`, `people`, `competitors` and `next_step` from `harold/projects.md`.
       - **Tasks:** open tasks from Harold's task list (overdue, due this week, in progress, high priority).
       - **Calendar:** today's and this week's meetings (attendees, their organizations, locations) and any travel.
       - **Alerts and blockers:** the Current Alerts in `harold/alerts.md` and `harold/blockers.md`.
@@ -130,7 +130,7 @@ This is why alerts never go stale. `harold/alerts.md` is a **derived view**: reb
 2. **`harold/blockers.md`:** days since each blocker was raised. More than 7 days = 🔴, 4-7 days = 🟠 (the bands in `playbook/core/blocker-escalation.md`). A blocker older than 7 days also fires the escalation trigger (`blocker-escalation:<ID>`).
 3. **`harold/events.md`:** days until each event. An event fewer than 10 days out with prep not complete fires `event-prep:<event>`.
 4. **Stale relationships, when a CRM tool is available:** `crm_stale` on the connector, `harold_cadence_check` on harold-mcp. List each contact it returns under 🟡 WATCH (name, days since the last touch, its cadence). The scheduled draft job includes them only when its session has a CRM tool. With no CRM tool here, say so in one line.
-5. **Quiet projects:** `bin/harold pulse` (boot already printed them; `harold_pulse` on the connector, and `harold_today` lists them). List each quiet project under 🟡 WATCH next to the stale relationships: name, days quiet, what the last activity was, and its next step. "No next step recorded" goes in as written: it is the gap to close. The scheduled draft job runs `bin/harold`, so its alerts include them.
+5. **Projects:** `bin/harold pulse` (`harold_pulse` on the connector) says which projects are active: activity within `HAROLD_PULSE_DAYS`, back or ahead. Quiet projects are never nagged about: they get no WATCH row, no "quiet N days" line and no next-step demand, and they become active again on their own when work happens. An active project with "no next step recorded" is the gap to close; say it once.
 6. **Rebuild the "Current Alerts" section** of `harold/alerts.md` from those sources.
 7. Move resolved items to the Alert History section of `harold/alerts-archive.md` (newest first), never back into `harold/alerts.md`: that file is loaded at every boot and has a size budget.
 8. Update the `Last updated: <Month D, YYYY>` line at the bottom of the file.

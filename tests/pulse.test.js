@@ -48,51 +48,90 @@ function workspace() {
 
 const w = workspace();
 
-test('pulse: quiet projects first, with what the last activity was, its date and the next step', () => {
+test('pulse: active is derived; quiet projects on one line, never nagged', () => {
   const r = run(w, ['pulse']);
   assert.strictEqual(r.code, 0, r.err);
-  assert.match(r.out, /^# Project pulse, 2026-10-20: 2 of 2 active projects quiet \(no activity in more than 14 days\)/);
-  // The example card (last_updated 2026-09-26) is its newest activity: 24 days.
-  assert.match(r.out, /\nQuiet:\n(- .*\n)*- Example Project — quiet 24 days \(last: project card 2026-09-26\); next step: Send Jane Doe the signed NDA\n/);
-  assert.match(r.out, /- Harold \(this system\) — quiet \d+ days \(last: .*\); next step: no next step recorded/);
-  assert.match(r.out, /Quiet after HAROLD_PULSE_DAYS \(14\) days without any/);
+  // The example card's own date (2026-09-26) is not activity: only the first commit (2026-09-01) is, 49 days ago.
+  assert.match(r.out, /^# Project pulse, 2026-10-20: 0 active, 2 quiet \(active: activity within 14 days\)\n/);
+  assert.match(r.out, /\nQuiet \(not nagged; work there makes them active again\): Example Project, Harold \(this system\)\n/);
+  assert.doesNotMatch(r.out, /no next step recorded|quiet \d+ days|Send Jane Doe the signed NDA/);
+  assert.match(r.out, /A project is active with activity within HAROLD_PULSE_DAYS \(14\) days/);
 });
 
-test('pulse --json, and --all lists the projects that are not judged', () => {
+test('pulse --json, and --all lists each quiet project and the archived and autonomous ones', () => {
   const j = JSON.parse(run(w, ['pulse', '--json']).out);
   assert.strictEqual(j.today, '2026-10-20');
   assert.strictEqual(j.pulse_days, 14);
   assert.strictEqual(j.git, 'ok');
+  assert.deepStrictEqual([j.active, j.quiet], [0, 2]);
+  assert.strictEqual(j.boot, '## Project pulse: 0 active, 2 quiet; active means activity within 14 days (bin/harold pulse)');
   const ex = j.projects.find(p => p.name === 'Example Project');
-  assert.deepStrictEqual([ex.quiet, ex.days, ex.last.label, ex.last.date, ex.next_step_source], [true, 24, 'project card', '2026-09-26', 'harold/projects.md']);
-  fs.appendFileSync(path.join(w.ws, 'harold/projects.md'), '\n## Old Venture\n- folder: projects/old\n- status: archived\n');
+  assert.deepStrictEqual([ex.status, ex.set_status, ex.quiet, ex.days, ex.last.label, ex.last.date, ex.next_step_source],
+    ['quiet', '', true, 49, 'commit', '2026-09-01', 'harold/projects.md']);
+  fs.appendFileSync(path.join(w.ws, 'harold/projects.md'), '\n## Old Venture\n- folder: projects/old\n- status: archived\n\n## Watcher\n- folder: projects/watcher\n- status: autonomous (self-maintaining)\n');
   const all = run(w, ['pulse', '--all']);
-  assert.match(all.out, /\nNot judged \(not active\):\n- Old Venture \[archived\]/);
-  assert.doesNotMatch(run(w, ['pulse']).out, /Old Venture/);
+  assert.match(all.out, /\nQuiet \(not nagged; work there makes them active again\):\n- Example Project — last activity 49 days ago \(commit 2026-09-01, "init"\)\n/);
+  assert.match(all.out, /\nNot judged \(archived or autonomous\):\n- Old Venture \[archived\]\n- Watcher \[autonomous\]\n/);
+  assert.doesNotMatch(run(w, ['pulse']).out, /Old Venture|Watcher/);
   w.git('checkout', 'harold/projects.md');
 });
 
-test('activity: a commit to the project folder, and a daily note that names the project', () => {
+test('activity: a commit to the project folder, and a daily note that links its card, make it active', () => {
   fs.writeFileSync(path.join(w.ws, 'projects/example/plan.txt'), 'draft\n');
   w.git('add', 'projects/example/plan.txt');
   spawnSync('git', ['commit', '-qm', 'feat: first plan for the example'], { cwd: w.ws, env: { ...process.env, GIT_AUTHOR_DATE: '2026-10-10T12:00:00Z', GIT_COMMITTER_DATE: '2026-10-10T12:00:00Z' } });
-  assert.match(run(w, ['pulse']).out, /- Example Project — active 10 days ago \(last: commit 2026-10-10, "feat: first plan for the example"\)/);
-  fs.writeFileSync(path.join(w.ws, 'vault/daily/2026-10-18-work.md'), '# Work\n\nWent over the sample project with Jane.\n');   // an alias, no link
-  assert.match(run(w, ['pulse']).out, /- Example Project — active 2 days ago \(last: daily note 2026-10-18, "Work"\)/);
+  assert.match(run(w, ['pulse']).out, /\nActive:\n- Example Project — last activity 10 days ago \(commit 2026-10-10, "feat: first plan for the example"\); next step: Send Jane Doe the signed NDA\n/);
+  fs.writeFileSync(path.join(w.ws, 'vault/daily/2026-10-18-work.md'), '# Work\n\nWent over the sample project with Jane.\n');   // an alias, no link: a daily note that only names it does not count
+  assert.match(run(w, ['pulse']).out, /- Example Project — last activity 10 days ago \(commit 2026-10-10/);
+  fs.writeFileSync(path.join(w.ws, 'vault/daily/2026-10-18-work.md'), '# Work\n\nWent over [[Example Project]] with Jane.\n');   // links the card: counts
+  assert.match(run(w, ['pulse']).out, /- Example Project — last activity 2 days ago \(daily note 2026-10-18, "Work"\)/);
   fs.rmSync(path.join(w.ws, 'vault/daily/2026-10-18-work.md'));
   w.git('reset', '-q', '--hard', 'HEAD~1');
 });
 
-test('boot prints only the quiet projects, or one line; HAROLD_PULSE_DAYS comes from ~/.harold/env', () => {
-  const b = run(w, ['boot']);
+test('an open task due soon in the task snapshot makes a quiet project active', () => {
+  fs.writeFileSync(path.join(w.ws, 'harold/tasks-snapshot.md'), '# Tasks snapshot\n\n## Due this week (1)\n\n- **H-7** · Draft the plan · Example Project · due 2026-10-23 · medium\n');
+  const r = run(w, ['pulse']);
+  assert.match(r.out, /^# Project pulse, 2026-10-20: 1 active, 1 quiet/);
+  assert.match(r.out, /\nActive:\n- Example Project — upcoming: task due in 3 days \(2026-10-23, "Draft the plan"\); next step: Send Jane Doe the signed NDA\n/);
+  fs.rmSync(path.join(w.ws, 'harold/tasks-snapshot.md'));
+});
+
+test('boot and check print the counts only, never the quiet projects; terminal ones show their status; HAROLD_PULSE_DAYS comes from ~/.harold/env', () => {
+  fs.appendFileSync(path.join(w.ws, 'harold/projects.md'), '\n## Old Venture\n- folder: projects/old\n- status: archived\n');
+  const b = run(w, ['boot', '--full']);
   assert.strictEqual(b.code, 0, b.err);
-  assert.match(b.out, /\n## Project pulse: 2 of 2 active projects quiet, no activity in more than 14 days \(bin\/harold pulse for all\)\n- /);
-  assert.match(b.out, /- Example Project — quiet 24 days \(last: project card 2026-09-26\); next step: Send Jane Doe the signed NDA/);
+  assert.match(b.out, /\n## Project pulse: 0 active, 2 quiet; active means activity within 14 days \(bin\/harold pulse\)\n\n/);
+  const section = b.out.slice(b.out.indexOf('\n## Project pulse'), b.out.indexOf('\n## Active blockers'));
+  assert.doesNotMatch(section, /Example Project|Harold \(this system\)|quiet \d+ days|next step/);
+  assert.match(b.out, /\n## Project map — 3 entries, 0 active, 2 quiet .*\nQuiet: Example Project, Harold \(this system\)\nNot active: Old Venture \[archived\]\n/);
+  assert.match(run(w, ['check']).out, /\nprojects: 3 in map \(0 active, 2 quiet\)\n/);
+  w.git('checkout', 'harold/projects.md');
   fs.writeFileSync(w.envFile, 'HAROLD_PULSE_DAYS=60\n');
   const b2 = run(w, ['boot', '--full'], { HAROLD_SESSION_ID: 'pulse-test-2' });
-  assert.match(b2.out, /\n## Project pulse: all 2 active projects active within 60 days \(bin\/harold pulse\)\n/);
-  assert.match(run(w, ['pulse']).out, /0 of 2 active projects quiet \(no activity in more than 60 days\)/);
+  assert.match(b2.out, /\n## Project pulse: 2 active, 0 quiet; active means activity within 60 days \(bin\/harold pulse\)\n/);
+  assert.match(b2.out, /\n- Example Project → projects\/example \(example, the example\)\n/);
+  assert.match(run(w, ['pulse']).out, /: 2 active, 0 quiet \(active: activity within 60 days\)/);
   fs.rmSync(w.envFile);
+});
+
+test('where shows a status only when it is archived or autonomous', () => {
+  assert.match(run(w, ['where', 'example']).out, /^Example Project\nfolder: /);
+  fs.appendFileSync(path.join(w.ws, 'harold/projects.md'), '\n## Old Venture\n- folder: projects/old\n- status: archived\n- aliases: old venture\n');
+  assert.match(run(w, ['where', 'old venture']).out, /^Old Venture \[archived\]\n/);
+  w.git('checkout', 'harold/projects.md');
+});
+
+test('when pulse fails, boot falls back to the hand-set status and says why', () => {
+  const hi = path.join(w.ws, 'bin/harold-index');
+  fs.renameSync(hi, hi + '.real');
+  fs.writeFileSync(hi, "import os, runpy, sys\nif sys.argv[1:2] == ['pulse']: sys.stderr.write('pulse broke here\\n'); sys.exit(1)\nsys.argv[0] = os.path.abspath(__file__) + '.real'\nrunpy.run_path(sys.argv[0], run_name='__main__')\n");
+  try {
+    const b = run(w, ['boot', '--full'], { HAROLD_SESSION_ID: 'pulse-test-3' });
+    assert.strictEqual(b.code, 0, b.err);
+    assert.match(b.out, /\n## Project map — 2 entries, 0 active \(active is derived.*\nderived status unavailable: pulse broke here \(showing the hand-set status: active instead\)\nNot active: Example Project \[no status\], Harold \(this system\) \[no status\]\n/);
+    assert.match(b.out, /\n## Project pulse: unavailable \(pulse broke here\)\n/);
+  } finally { fs.rmSync(hi); fs.renameSync(hi + '.real', hi); }
 });
 
 test('file heartbeat: appends to the project folder, and the pulse judges the project by it', () => {

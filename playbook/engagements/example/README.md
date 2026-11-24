@@ -5,7 +5,7 @@ Core playbooks (`playbook/core/`) are how you operate anywhere, and nothing in t
 **How to use this folder**
 
 1. Copy it to `playbook/engagements/<employer-or-client>/` (e.g. `playbook/engagements/acme/`). Delete this `example/` folder when you do.
-2. Add a project for the engagement to `harold/projects.md` with `type: employer` or `type: client` and `status: active`.
+2. Add a project for the engagement to `harold/projects.md` with `type: employer` or `type: client` (no `status:` line: whether it is active is derived from its activity).
 3. Write one playbook per recurring workflow, in the same format as the core ones (`# Playbook: ...`, `**Purpose:**`, `**Trigger:**`, steps that name the files they write, a completion checklist). A workflow earns a playbook after you have done it by hand three times.
 4. Add a row for each to `playbook/README.md` (e.g. `` `engagements/acme/investor-outreach.md` ``) and a trigger row to the Context Engine in `dashboard/processes.md`. `bin/harold boot` loads every playbook under `playbook/`, warns when one is missing from the index, and refuses to start when the index lists one that is gone.
 

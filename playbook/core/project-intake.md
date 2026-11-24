@@ -16,7 +16,7 @@ Watch every message for a body of work that will produce files and needs a home:
 - A deliverable that fits no existing folder (a memo, model, deck or tool for something unmapped)
 - A name the operator uses for a project that `bin/harold where` cannot resolve
 
-**Still triggered (never a reason to skip):** the idea is exploratory, nothing is agreed, a partner has not said yes, or the name is provisional. Status `active` with the open points in `notes` is the right entry. A body of work that already produced a deliverable (a concept doc, a memo) is a project.
+**Still triggered (never a reason to skip):** the idea is exploratory, nothing is agreed, a partner has not said yes, or the name is provisional. An entry with the open points in `notes` is the right one. A body of work that already produced a deliverable (a concept doc, a memo) is a project.
 
 **Not triggered by:**
 - A one-off question with no follow-on work
@@ -35,7 +35,7 @@ Watch every message for a body of work that will produce files and needs a home:
 **If the project EXISTS:** update, don't duplicate.
 - Work in its folder.
 - If the operator used a name the map doesn't list, add it to the entry's `aliases` line.
-- If their words imply a status change (paused, archived, revived), update `status`.
+- If their words say the project has ended, set `status: archived`; if they revive an archived one, remove the line. On hold or "later" needs no change: active and quiet are derived.
 - Do NOT create a second folder or card. Confirm in one line: "Filed under [Project] — added alias '[name]'." Otherwise say nothing about intake.
 
 **If the project is NEW:** continue.
@@ -62,9 +62,9 @@ Watch every message for a body of work that will produce files and needs a home:
 - Otherwise → a top-level folder. Follow the naming convention your workspace already uses (e.g. `company/seed-round`, or `snake_case` at the top level). Be consistent.
 
 ### Status
-- **active** — work is happening now (the default for anything just raised)
-- **paused** — on hold, waiting, "later"
+A new entry has no `status:` line. Whether a project is active is derived, not set: `bin/harold pulse` counts it active while it has activity within `HAROLD_PULSE_DAYS` (back or ahead), and quiet otherwise. On hold or "later" needs no change: with no work it goes quiet on its own, and it is never nagged about. Only two statuses are written by hand:
 - **archived** — ended. **Ending a project = `status: archived`.** Nothing else changes: folder, card and history stay.
+- **autonomous** — self-maintaining; never surfaced in briefs, alerts or reviews.
 
 ---
 
@@ -77,7 +77,6 @@ Watch every message for a body of work that will produce files and needs a home:
    ```
    ## Seed Round
    - folder: company/seed-round
-   - status: active
    - type: workstream
    - aliases: the raise, the round, fundraise
    - keywords: investor, term sheet, data room
@@ -85,11 +84,11 @@ Watch every message for a body of work that will produce files and needs a home:
    - card: vault/projects/seed-round.md
    - next_step: Send the deck to the first five investors
    ```
-   - `status`: `active` | `paused` | `archived`
+   - `status`: only `archived` or `autonomous`; leave it out otherwise
    - `type`: `employer` | `client` | `venture` | `workstream` | `personal` | `tool`
    - `aliases`: what the operator actually said first, then other names they're likely to use
    - `keywords`: names, organizations, products and places that will signal this project in conversation
-   - Optional lines: `routes` (subfolder → purpose), `competitors` (read by the analyst playbook), `next_step` (the one thing that moves it forward; `bin/harold pulse` shows it and flags its absence), `notes` (parent, isolation rule, binding lessons)
+   - Optional lines: `routes` (subfolder → purpose), `competitors` (read by the analyst playbook), `next_step` (the one thing that moves it forward; `bin/harold pulse` shows it next to an active project's last activity and flags its absence), `notes` (parent, isolation rule, binding lessons)
    - **Verify:** `bin/harold where "<name>"` resolves to the new entry. If it doesn't, fix the entry before moving on.
 
 3. **Create the vault card** `vault/projects/<slug>.md` from `vault/templates/project.md`. Its frontmatter looks like this:
@@ -128,7 +127,7 @@ Name:        [what the operator calls it — the first alias]
 Type:        [employer / client / venture / workstream / personal / tool]
 Parent:      [existing project, or none]
 Folder:      [path]
-Status:      [active / paused / archived]
+Status:      [none, or archived / autonomous]
 Counterparty/owner: [who's on the other side, if anyone]
 Goal:        [one line]
 People:      [[...]], [[...]]
@@ -159,7 +158,7 @@ Date:        [today, from bin/harold boot, never inferred]
 
 ### Project ends
 **Operator:** "I'm wrapping up with Globex at the end of the month."
-Set `status: paused` now with a note ("ends [date] per operator"); at month end set `status: archived`. Nothing deleted, nothing moved.
+Add a note to the entry now ("ends [date] per operator"); at month end set `status: archived`. Nothing deleted, nothing moved.
 
 ---
 

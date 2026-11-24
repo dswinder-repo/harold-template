@@ -202,7 +202,7 @@ describe("knowledge-base writes (fake GitHub)", () => {
       "vault/people/Jane Doe.md": "---\ntype: partner\n---\n# Jane Doe\n",
       "vault/people/Janet Doering.md": "# Janet\n",
     });
-    expect((await kb.where(repo, "the raise")).text).toMatch(/^Seed Fundraise \[paused\]\nfolder: projects\/seed-fundraise/);
+    expect((await kb.where(repo, "the raise")).text).toMatch(/^Seed Fundraise\nfolder: projects\/seed-fundraise/);
     const t = await kb.today(repo, NOON);
     expect(t.text).toContain("Wednesday, 2026-09-30");
     expect(t.text).toContain("# Brief\nWeather.");

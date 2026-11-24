@@ -58,7 +58,7 @@ export async function today(repo: HaroldRepo, now = new Date()): Promise<ToolTex
     "## Housekeeping notes",
     hkNew ? `From harold/briefs/housekeeping-notes.md (under "## New"):\n${hkNew}` : "None waiting.",
     "",
-    "## Quiet projects",
+    "## Projects",
     pulse,
     "",
     "## Most recent daily notes",
