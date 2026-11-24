@@ -26,6 +26,7 @@ export function cleanPath(p: string): string {
   return s;
 }
 
+const commitFilesCache = new Map<string, [string, string][] | null>();
 const treeCache = new Map<string, { at: number; paths: { path: string; size: number }[] }>();
 
 export class HaroldRepo {
@@ -137,16 +138,43 @@ export class HaroldRepo {
     return { ok: false, reason: "Gave up after 3 retries: the file kept changing underneath" };
   }
 
-  /** The newest commit on the branch that touches `path` (a file or a folder), or null when there is none. */
-  async lastCommit(path: string): Promise<{ date: string; message: string } | null> {
+  /** The newest commits on the branch that touch `path` (a file or a folder), newest first, at most `max`. */
+  async commitsTouching(path: string, max = 20): Promise<{ sha: string; date: string; message: string; merge: boolean }[]> {
     const p = cleanPath(path);
-    const r = await this.api("GET", `/repos/${this.repo}/commits?sha=${encodeURIComponent(this.branch)}&path=${encodeURIComponent(p)}&per_page=1`);
-    if (r.status === 404 || r.status === 409) return null; // 409: an empty repository
+    const r = await this.api("GET", `/repos/${this.repo}/commits?sha=${encodeURIComponent(this.branch)}&path=${encodeURIComponent(p)}&per_page=${max}`);
+    if (r.status === 404 || r.status === 409) return []; // 409: an empty repository
     if (!r.ok) await this.fail(r, `list commits for ${p}`);
-    const j = (await r.json()) as { commit?: { committer?: { date?: string }; message?: string } }[];
-    const c = Array.isArray(j) ? j[0] : undefined;
-    const date = c?.commit?.committer?.date;
-    return date ? { date, message: c?.commit?.message || "" } : null;
+    const j = (await r.json()) as { sha?: string; parents?: unknown[]; commit?: { committer?: { date?: string }; message?: string } }[];
+    return (Array.isArray(j) ? j : []).flatMap(c => {
+      const date = c.commit?.committer?.date;
+      return date ? [{ sha: String(c.sha || ""), date, message: c.commit?.message || "", merge: (c.parents?.length || 0) > 1 }] : [];
+    });
+  }
+
+  /** The files one commit changed, as [status, path]: A (added), M (modified or type change), D (removed), R (renamed: the new
+   *  path, plus a D for the old one). null when the list may be cut short (it is paged; past 5 pages the commit is huge). Commits
+   *  never change, so the answer is kept for the life of the process. */
+  async commitFiles(sha: string): Promise<[string, string][] | null> {
+    const key = `${this.repo}@${sha}`;
+    const hit = commitFilesCache.get(key);
+    if (hit !== undefined) return hit;
+    const out: [string, string][] = [];
+    let complete = false;
+    for (let page = 1; page <= 5 && !complete; page++) {
+      const r = await this.api("GET", `/repos/${this.repo}/commits/${encodeURIComponent(sha)}?per_page=100&page=${page}`);
+      if (!r.ok) await this.fail(r, `read commit ${sha.slice(0, 7)}`);
+      const j = (await r.json()) as { files?: { filename: string; status: string; previous_filename?: string }[] };
+      const files = j.files || [];
+      for (const f of files) {
+        if (f.status === "removed") out.push(["D", f.filename]);
+        else if (f.status === "renamed") { if (f.previous_filename) out.push(["D", f.previous_filename]); out.push(["R", f.filename]); }
+        else out.push([f.status === "added" || f.status === "copied" ? "A" : "M", f.filename]);
+      }
+      complete = files.length < 100;
+    }
+    const res = complete ? out : null;
+    commitFilesCache.set(key, res);
+    return res;
   }
 
   // ── used by the write tests (throwaway branches only) ──

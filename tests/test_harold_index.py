@@ -328,7 +328,9 @@ class PulseTest(unittest.TestCase):
         for rel, text in self.fx['files'].items(): self.put(rel, text)
         self.git('init', '-q'); self.git('add', '-A'); self.git('commit', '-qm', 'init', date=self.fx['initial_commit'])
         for c in self.fx['commits']:
-            for rel, text in c['files'].items(): self.put(rel, text)
+            for rel, text in c['files'].items():
+                if text is None: os.remove(os.path.join(self.root, rel))   # null in the fixture: the commit deletes the file
+                else: self.put(rel, text)
             self.git('add', '-A'); self.git('commit', '-qm', c['message'], date=c['date'])
         hi.set_root(self.root)
         hi.build(quiet=True)
@@ -358,37 +360,162 @@ class PulseTest(unittest.TestCase):
         self.assertEqual(hi.pulse_text(hi.pulse_data(include_inactive=True), True), self.fx['expected']['text_all'])
         self.assertEqual(hi.pulse_boot(hi.pulse_data()), self.fx['expected']['boot'])
 
+    def test_only_commits_that_add_or_change_files_in_few_projects_count(self):
+        # The fixture's 2026-10-05 commit adds files in 4 project folders (housekeeping), the 2026-10-06 one only deletes one.
+        d = {p['name']: p for p in hi.pulse_data(include_inactive=True)['projects']}
+        self.assertIsNone(d['Delta']['last']); self.assertTrue(d['Delta']['quiet'])      # delete-only and 4-project commits do not count
+        self.assertEqual(d['Beta Launch']['last']['date'], '2026-10-03')                  # the single-project commit does, the bulk one after it does not
+
+    def test_commit_counts_rule(self):
+        folders = {'A': 'a', 'B': 'b', 'C': 'c', 'D': 'd', 'A2': 'a/sub'}
+        self.assertTrue(hi.commit_counts([('A', 'a/x')], 'a', folders))
+        self.assertTrue(hi.commit_counts([('M', 'a/x'), ('M', 'vault/y'), ('M', 'bin/z')], 'a', folders))   # files outside every folder do not count toward the 3
+        self.assertTrue(hi.commit_counts([('R', 'a/new'), ('D', 'b/old')], 'a', folders))                    # renamed into the folder
+        self.assertFalse(hi.commit_counts([('D', 'a/x')], 'a', folders))                                      # delete-only
+        self.assertTrue(hi.commit_counts([('A', 'a/x'), ('A', 'b/x'), ('M', 'c/x')], 'a', folders))          # 3 projects
+        self.assertFalse(hi.commit_counts([('A', 'a/x'), ('A', 'b/x'), ('M', 'c/x'), ('M', 'd/x')], 'a', folders))  # 4 projects
+        self.assertTrue(hi.commit_counts([('A', 'a/sub/x'), ('A', 'b/x')], 'a/sub', folders))                # nested: a/sub/x is in A and A2, plus B = 3
+        self.assertFalse(hi.commit_counts([('A', 'a/sub/x'), ('A', 'b/x'), ('A', 'c/x')], 'a', folders))     # nested counts separately: A, A2, B, C = 4
+
     def test_activity_sources_and_next_step_sources(self):
         d = {p['name']: p for p in hi.pulse_data(include_inactive=True)['projects']}
-        self.assertEqual(d['Pilot Program']['last']['path'], 'vault/meetings/2026-09-18-acme-kickoff.md')  # not the 2026-10-20 meeting
+        self.assertEqual(d['Pilot Program']['last']['path'], 'vault/meetings/2026-09-18-acme-kickoff.md')  # the 2026-11-20 meeting is beyond the window
         self.assertEqual(d['Pilot Program']['next_step_source'], 'vault/projects/pilot.md (frontmatter)')
         self.assertEqual((d['Beta Launch']['last']['kind'], d['Beta Launch']['last']['date']), ('commit', '2026-10-03'))
         self.assertEqual(d['Beta Launch']['next_step_source'], 'projects/beta/README.md')  # the card's next_step is a placeholder comment
         self.assertEqual((d['Gamma Research']['card'], d['Gamma Research']['last']['via']), ('vault/projects/gamma-research.md', 'mention'))
         self.assertEqual(d['Gamma Research']['next_step_source'], 'harold/projects.md')
-        self.assertEqual((d['Echo']['last']['via'], d['Echo']['next_step']), ('folder', 'call Bob'))
+        self.assertEqual((d['Echo']['last']['via'], d['Echo']['last']['label'], d['Echo']['next_step']), ('plan', 'task due', 'call Bob'))
         self.assertIsNone(d['Delta']['last'])
         self.assertTrue(d['Delta']['quiet'])
-        self.assertIsNone(d['Old Thing']['quiet'])  # paused: not judged
 
     def test_threshold_setting(self):
-        os.environ['HAROLD_PULSE_DAYS'] = '40'
+        os.environ['HAROLD_PULSE_DAYS'] = '400'
         data = hi.pulse_data()
-        self.assertEqual([p['name'] for p in data['projects'] if p['quiet']], ['Delta'])
-        self.assertEqual(data['pulse_days'], 40)
+        self.assertEqual([p['name'] for p in data['projects'] if p['quiet']], ['Old Thing'])   # Delta's task due in 30 days is inside a 400-day window; Old Thing has no dated activity
+        self.assertEqual(data['pulse_days'], 400)
         hi.graph_json(quiet=True)
-        with open(hi.GRAPH_JSON, encoding='utf-8') as fh: self.assertIn('"pulse_days":40,', fh.readline())
+        with open(hi.GRAPH_JSON, encoding='utf-8') as fh: self.assertIn('"pulse_days":400,', fh.readline())
+
+    # ── derived status: activity within HAROLD_PULSE_DAYS, back or ahead ──
+    def test_derived_status_from_the_shared_fixture(self):
+        data = hi.pulse_data(include_inactive=True)
+        self.assertEqual([(p['name'], p['status']) for p in data['projects']], [
+            ('Gamma Research', 'active'), ('Beta Launch', 'active'), ('Echo', 'active'),
+            ('Delta', 'quiet'), ('Old Thing', 'quiet'), ('Pilot Program', 'quiet'),
+            ('Foxtrot', 'archived'), ('Sentinel', 'autonomous')])
+        self.assertEqual((data['active'], data['quiet']), (3, 3))
+        d = {p['name']: p for p in data['projects']}
+        self.assertEqual(d['Pilot Program']['set_status'], 'active')   # a legacy hand value, kept as set_status, ignored
+        self.assertEqual(d['Old Thing']['set_status'], 'paused')
+        self.assertEqual(d['Sentinel']['set_status'], 'autonomous')
+
+    def test_terminal_statuses_are_never_judged(self):
+        d = {p['name']: p for p in hi.pulse_data(include_inactive=True)['projects']}
+        for n, st in (('Foxtrot', 'archived'), ('Sentinel', 'autonomous')):
+            self.assertEqual((d[n]['status'], d[n]['quiet'], d[n]['days'], d[n]['last']), (st, None, None, None))
+        data = hi.pulse_data()
+        self.assertNotIn('Foxtrot', [p['name'] for p in data['projects']])   # only with include_inactive
+        self.assertNotIn('Sentinel', hi.pulse_text(data))
+        self.assertIn('- Sentinel [autonomous]', hi.pulse_text(hi.pulse_data(include_inactive=True), True))
+        self.assertEqual(hi.set_status({'status': 'Autonomous (side project; never surfaced)'}), 'autonomous')
+        self.assertEqual(hi.set_status({}), '')
+
+    def test_legacy_active_and_paused_are_ignored(self):
+        pm = self.fx['files']['harold/projects.md']
+        self.put('harold/projects.md', pm.replace('- status: active\n', '').replace('- status: paused\n', ''))
+        hi.build(quiet=True)
+        bare = [(p['name'], p['status']) for p in hi.pulse_data()['projects']]
+        self.put('harold/projects.md', pm.replace('## Delta\n', '## Delta\n- status: active\n').replace('- status: active\n- aliases: the pilot', '- status: paused\n- aliases: the pilot'))
+        hi.build(quiet=True)
+        self.assertEqual([(p['name'], p['status']) for p in hi.pulse_data()['projects']], bare)
+        self.assertIn(('Delta', 'quiet'), bare)
+
+    def test_boot_never_lists_quiet_projects(self):
+        boot = hi.pulse_boot(hi.pulse_data())
+        self.assertEqual(boot, '## Project pulse: 3 active, 3 quiet; active means activity within 14 days (bin/harold pulse)')
+        text = hi.pulse_text(hi.pulse_data())
+        self.assertNotIn('Old Thing', text.split('Quiet (')[0])   # not with the active, no next step asked
+        self.assertNotIn('waiting on a reply from Jane', text)    # a quiet project's next step is not demanded or shown
 
     def test_without_git_commits_are_not_counted_and_it_says_so(self):
         shutil.rmtree(os.path.join(self.root, '.git'))
         data = hi.pulse_data()
         self.assertEqual(data['git'], 'not a git repository')
         text = hi.pulse_text(data)
-        self.assertIn('- Beta Launch — quiet 67 days (last: project card 2026-08-01); next step: Book the venue', text)
+        self.assertIn('Quiet (not nagged; work there makes them active again): Beta Launch, Delta, Old Thing, Pilot Program', text)
         self.assertIn('Git history not used here (not a git repository): commits were not counted.', text)
 
+    # ── what counts as activity: the card's own date and cards linking to it do not ──
+    def delta(self):
+        return {p['name']: p for p in hi.pulse_data(include_inactive=True)['projects']}['Delta']
+
+    def test_a_card_edited_today_with_no_other_work_is_quiet(self):
+        self.put('vault/projects/delta.md', '---\ntags: [project]\nlast_updated: 2026-10-07\n---\n# Delta\n')
+        hi.build(quiet=True)
+        d = self.delta()
+        self.assertEqual((d['card'], d['status'], d['last']), ('vault/projects/delta.md', 'quiet', None))
+
+    def test_a_person_card_linking_to_the_project_card_does_not_make_it_active(self):
+        self.put('vault/projects/delta.md', '---\ntags: [project]\nlast_updated: 2026-10-01\n---\n# Delta\n')
+        self.put('vault/people/Jane.md', '---\nlast_updated: 2026-10-07\n---\n# Jane\n\nWorks on [[Delta]].\n')
+        self.put('vault/intel/delta-note.md', '---\nlast_updated: 2026-10-07\n---\n# Delta intel\n\nSee [[Delta]].\n')
+        hi.build(quiet=True)
+        d = self.delta()
+        self.assertEqual((d['status'], d['last']), ('quiet', None))
+
+    def test_a_daily_note_that_only_names_the_project_does_not_count_but_one_that_links_the_card_does(self):
+        self.put('vault/projects/delta.md', '---\ntags: [project]\nlast_updated: 2026-10-01\n---\n# Delta\n')
+        self.put('vault/daily/2026-10-07-work.md', '# Work log\n\nTalked about Delta all day.\n')
+        hi.build(quiet=True)
+        self.assertEqual((self.delta()['status'], self.delta()['last']), ('quiet', None))
+        self.put('vault/daily/2026-10-07-work.md', '# Work log\n\nTalked about [[Delta]] all day.\n')
+        hi.build(quiet=True)
+        d = self.delta()
+        self.assertEqual((d['status'], d['last']['via'], d['last']['date'], d['last']['label']), ('active', 'link', '2026-10-07', 'daily note'))
+
+    # ── forward-looking work: open tasks and meeting notes dated ahead, within HAROLD_PULSE_DAYS ──
+    def snapshot(self, *rows):
+        self.put('harold/tasks-snapshot.md', '# Tasks snapshot\n\n## Open\n\n' + ''.join(f'- **H-{i}** · {t} · {p} · due {d} · medium\n' for i, (t, p, d) in enumerate(rows, 40)))
+
+    def test_an_open_task_due_in_7_days_makes_a_quiet_project_active(self):
+        self.snapshot(('Plan the retro', 'delta', '2026-10-14'))   # project matched case-insensitively
+        d = self.delta()
+        self.assertEqual((d['status'], d['days'], d['last']['label'], d['last']['title']), ('active', -7, 'task due', 'Plan the retro'))
+        self.assertIn('- Delta — upcoming: task due in 7 days (2026-10-14, "Plan the retro")', hi.pulse_text(hi.pulse_data()))
+
+    def test_a_task_line_without_a_priority_still_counts(self):
+        self.put('harold/tasks-snapshot.md', '# Tasks snapshot\n\n- **H-1** · Plan the retro · Delta · due 2026-10-10\n')
+        self.assertEqual((self.delta()['status'], self.delta()['days']), ('active', -3))
+
+    def test_an_overdue_open_task_inside_the_window_counts_and_outside_it_does_not(self):
+        self.snapshot(('Late thing', 'Delta', '2026-10-01'))
+        d = self.delta()
+        self.assertEqual((d['status'], d['days'], d['last']['label']), ('active', 6, 'task due'))
+        self.snapshot(('Very late thing', 'Delta', '2026-09-01'))
+        self.assertEqual(self.delta()['status'], 'quiet')
+
+    def test_a_task_due_in_30_days_or_for_another_project_does_not_make_it_active(self):
+        self.snapshot(('Plan the retro', 'Delta', '2026-11-06'), ('Elsewhere', 'Delta Force', '2026-10-09'))
+        self.assertEqual((self.delta()['status'], self.delta()['last']), ('quiet', None))
+
+    def test_a_meeting_note_dated_ahead_makes_it_active_inside_the_window_only(self):
+        self.put('vault/projects/delta.md', '---\ntags: [project]\nlast_updated: 2026-10-01\n---\n# Delta\n')
+        self.put('vault/meetings/2026-10-12-delta-planning.md', '---\ndate: 2026-10-12\n---\n# Delta planning\n\nWith [[Delta]].\n')
+        self.put('vault/meetings/2026-11-12-delta-later.md', '---\ndate: 2026-11-12\n---\n# Delta later\n\nWith [[Delta]].\n')
+        hi.build(quiet=True)
+        d = self.delta()
+        self.assertEqual((d['status'], d['days'], d['last']['label'], d['last']['date']), ('active', -5, 'upcoming meeting', '2026-10-12'))
+        os.remove(os.path.join(self.root, 'vault/meetings/2026-10-12-delta-planning.md')); hi.build(quiet=True)
+        self.assertEqual(self.delta()['status'], 'quiet')   # the one in November is beyond 14 days
+
+    def test_past_activity_in_the_window_beats_a_future_item(self):
+        self.snapshot(('Soon', 'Beta Launch', '2026-10-09'))
+        b = {p['name']: p for p in hi.pulse_data(include_inactive=True)['projects']}['Beta Launch']
+        self.assertEqual((b['last']['kind'], b['days']), ('commit', 4))
+
     def test_mentions_whole_words_and_short_aliases_by_case(self):
-        self.put('harold/projects.md', self.fx['files']['harold/projects.md'] + '\n## Zed\n- folder: projects/zed\n- status: active\n- aliases: ZD\n')
+        self.put('harold/projects.md', self.fx['files']['harold/projects.md'] + '\n## Zed\n- folder: projects/zed\n- aliases: ZD\n')
         self.put('vault/daily/2026-10-01-a.md', '# A\n\nThe ZD numbers came in. Pilots everywhere.\n')
         self.put('vault/daily/2026-10-02-b.md', '# B\n\nzd lowercase is not the project.\n')
         hi.build(quiet=True)

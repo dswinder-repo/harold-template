@@ -15,7 +15,9 @@ rebuilt from the markdown in seconds.
   harold-index backlinks <note> [--json]   every note that links to <note>
   harold-index graph-json              write harold/graph.json (compact graph, no bodies) if it changed
   harold-index pulse [--json] [--all] [--boot]
-                                       each active project's last activity and next step; quiet ones first.
+                                       which projects are active (activity within HAROLD_PULSE_DAYS, looking
+                                       ahead too) and which are quiet; --all adds the archived and autonomous
+                                       ones; --json carries the boot text in "boot".
                                        A project that posts heartbeats (<folder>/heartbeats.jsonl, else
                                        harold/heartbeats/<project>.jsonl) is judged by them alone;
                                        `bin/harold file heartbeat '<json>'` writes them.
@@ -43,12 +45,12 @@ every build, so a new note fixes old broken links in files that did not change.
 
 Settings (environment; bin/harold passes them through from ~/.harold/env and harold/settings.env): HAROLD_STALE_DAYS (default 30)
 is when a maintained note counts as stale; HAROLD_HUB_DEGREE (default 40) is the link count above which a
-note is a hub and no longer makes its neighbours related; HAROLD_PULSE_DAYS (default 14) is when an active
-project with no activity counts as quiet; HAROLD_TODAY or HAROLD_TZ set "today".
+note is a hub and no longer makes its neighbours related; HAROLD_PULSE_DAYS (default 14) is the window, back and
+ahead, in which a project's activity makes it active; HAROLD_TODAY or HAROLD_TZ set "today".
 
 Called by `bin/harold search|related|backlinks|index` and by boot and close. Python 3.8+, stdlib only.
 """
-import os, re, sys, sqlite3, json, time, subprocess
+import os, re, sys, sqlite3, json, time, subprocess, datetime
 from urllib.parse import unquote
 
 ROOT = DB = GRAPH_JSON = None
@@ -856,21 +858,30 @@ def graph_json(quiet=False):
     return True
 
 # ───────────────────────── project pulse ─────────────────────────
-# For each active project in harold/projects.md: its newest activity, its next step, and whether it has gone
-# quiet. Deterministic, from graph_rows() (the rows graph.json holds), the project map, the card and the folder
-# README, and git. tools/harold-connector/src/pulse.ts is the same procedure over graph.json and the GitHub API:
-# change one, change the other, and keep the shared expectations in both test suites equal.
+# Which projects are active, derived rather than hand-set. status: in harold/projects.md holds only the terminal
+# values archived and autonomous, which are never judged. Any other project is active when it has real activity
+# within HAROLD_PULSE_DAYS days of today, looking ahead as well as back (an open task due, a meeting note dated
+# ahead), and quiet otherwise. Quiet projects are listed plainly and never nagged about: no warning, no alert, no
+# next-step demand; work there makes them active again on their own. A legacy hand-set active or paused is ignored.
+# The starter judges by activity alone: it keeps no roster of the sessions managing each project, so nothing else
+# can make a project active. Deterministic, from graph_rows() (the rows graph.json holds), the project map, the
+# task snapshot, the card and the folder README, and git. tools/harold-connector/src/pulse.ts is the same procedure
+# over graph.json and the GitHub API: change one, change the other, and keep the shared expectations in both test
+# suites equal.
 PULSE_LABEL = {'meeting': 'meeting note', 'daily': 'daily note', 'decision': 'decision', 'intel': 'intel note',
-               'person': 'person card', 'company': 'company card', 'project': 'project card'}
-PULSE_OUT_TYPES = {'meeting', 'daily', 'decision'}  # what a project card links to that counts as its activity
+               'person': 'person card', 'company': 'company card'}
+PULSE_OUT_TYPES = {'meeting', 'daily', 'decision'}  # notes linked with the project card (either way) that count as its activity
+TASKS_PATH = 'harold/tasks-snapshot.md'
+# One open task of the snapshot: - **ref** · title · project · due YYYY-MM-DD[ · priority ...]
+TASK_RE = re.compile(r'^\s*-\s+\*\*[^*]+\*\*\s+·\s+(.+)\s+·\s+(.+?)\s+·\s+due\s+(\d{4}-\d{2}-\d{2})(?:\s+·\s+.*)?\s*$')
 ISO_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-PULSE_VIA_RANK = {'card': 0, 'folder': 1, 'link': 2, 'mention': 3}  # same date: the project's own notes first
+PULSE_VIA_RANK = {'folder': 0, 'link': 1, 'mention': 2, 'plan': 3}  # same date: the project's own notes first
 NEXT_LINE_RE = re.compile(r'^\s*(?:[-*+]\s+)?(?:\*\*|__)?next[ _-]?steps?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.*)$', re.I)
 NEXT_HEAD_RE = re.compile(r'^#{1,6}\s+next[ _-]?steps?\s*:?\s*$', re.I)
 FM_BLOCK_RE = re.compile(r'^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)')
 
 def pulse_days():
-    """HAROLD_PULSE_DAYS (default 14): an active project with no activity for more than this many days is quiet."""
+    """HAROLD_PULSE_DAYS (default 14): a project with no activity within this many days of today is quiet."""
     try:
         n = int(os.environ.get('HAROLD_PULSE_DAYS', '').strip() or '14')
         return n if n >= 0 else 14
@@ -972,18 +983,62 @@ def local_date(epoch):
     except Exception:
         return time.strftime('%Y-%m-%d', time.localtime(epoch))
 
-def last_commit(folder):
-    """{'date', 'subject'} of the newest commit touching the folder, or None."""
+PULSE_BULK_PROJECTS = 3   # a commit touching the folders of more than this many projects is housekeeping, not work
+PULSE_COMMIT_WALK = 20    # commits looked at per project
+
+def commit_files(sha):
+    """[(status letter, path)] of one commit: A, M, D, T, C, and for a rename R with the new path plus a D for the old one."""
     try:
-        r = subprocess.run(['git', '-C', ROOT, 'log', '-1', '--format=%ct%x00%B', '--', folder + '/'], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(['git', '-C', ROOT, 'diff-tree', '-r', '-M', '-z', '--no-commit-id', '--name-status', '--root', sha], capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
-    if r.returncode != 0 or '\x00' not in r.stdout: return None
-    ct, msg = r.stdout.split('\x00', 1)
-    try: epoch = int(ct.strip())
-    except ValueError: return None
-    subject = (msg.strip().split('\n') or [''])[0].strip()
-    return {'date': local_date(epoch), 'subject': subject if len(subject) <= 72 else subject[:71] + '…'}
+    if r.returncode != 0: return None
+    parts = r.stdout.decode('utf-8', 'replace').split('\x00')
+    out, i = [], 0
+    while i < len(parts) and parts[i]:
+        st = parts[i][0]
+        if st in 'RC' and i + 2 < len(parts):
+            if st == 'R': out.append(('D', parts[i + 1]))
+            out.append(('A' if st == 'C' else 'R', parts[i + 2])); i += 3
+        else:
+            out.append((st, parts[i + 1] if i + 1 < len(parts) else '')); i += 2
+    return out
+
+def commit_counts(files, folder, folders):
+    """Whether a commit counts as activity for the project whose folder is `folder`: it adds or changes (A, M, R, T)
+    a file inside the folder, and the files it touches (any status) fall inside the folders of at most
+    PULSE_BULK_PROJECTS distinct projects (folders: project name -> folder; nested folders count separately)."""
+    hit = False
+    touched = set()
+    for st, path in files:
+        for name, f in folders.items():
+            if f and path.startswith(f + '/'): touched.add(name)
+        if st != 'D' and folder and path.startswith(folder + '/'): hit = True
+    return hit and len(touched) <= PULSE_BULK_PROJECTS
+
+def last_commit(folder, folders=None, cutoff=''):
+    """{'date', 'subject'} of the newest commit that counts as activity for the folder (see commit_counts), or None.
+    Walks back through at most PULSE_COMMIT_WALK commits touching the folder, and stops once one is older than
+    cutoff (an ISO date) without counting. Merge commits never count."""
+    folders = folders or {}
+    try:
+        r = subprocess.run(['git', '-C', ROOT, 'log', f'--max-count={PULSE_COMMIT_WALK}', '--format=%H%x01%P%x01%ct%x01%B%x00', '--', folder + '/'], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0: return None
+    for rec in r.stdout.split('\x00'):
+        rec = rec.lstrip('\n')
+        if not rec.strip(): continue
+        try: sha, parents, ct, msg = rec.split('\x01', 3); epoch = int(ct.strip())
+        except ValueError: continue
+        date = local_date(epoch)
+        if len(parents.split()) < 2:
+            files = commit_files(sha)
+            if files is not None and commit_counts(files, folder, folders):
+                subject = (msg.strip().split('\n') or [''])[0].strip()
+                return {'date': date, 'subject': subject if len(subject) <= 72 else subject[:71] + '…'}
+        if cutoff and date < cutoff: break
+    return None
 
 def heartbeat_rel(p):
     """The project's own folder holds its heartbeats; a project without a usable folder falls back to harold/heartbeats/."""
@@ -1005,112 +1060,153 @@ def latest_heartbeat(p, today_iso):
         if best is None or o['date'] >= best['date']: best = o
     return best
 
-def pulse_activity(p, g, mentions, card, folder, today_iso, commit):
-    """The newest dated activity of one project: a note (dates written in the note) or a commit. None when nothing."""
+def add_days(iso, n):
+    return (datetime.date.fromisoformat(iso) + datetime.timedelta(days=n)).isoformat()
+
+def read_plans(today_iso, win):
+    """Forward-looking work from the committed task snapshot (harold/tasks-snapshot.md, written by the connector):
+    open tasks due within win days of today, overdue ones included. → [(date, title, project lowercased)]."""
+    lo, hi_ = add_days(today_iso, -win), add_days(today_iso, win)
+    tasks = []
+    for line in (read_rel(TASKS_PATH) or '').split('\n'):
+        m = TASK_RE.match(line)
+        if m and lo <= m.group(3) <= hi_: tasks.append((m.group(3), m.group(1).strip(), m.group(2).strip().lower()))
+    return tasks
+
+def pulse_activity(p, g, mentions, card, folder, today_iso, commit, tasks=None, win=14):
+    """The newest dated activity of one project: a note (dates written in the note), a commit or an open task due
+    (within win days either side of today). Past activity within the window wins; failing that the nearest thing
+    coming up (a task due, a meeting note dated up to win days ahead). None when nothing."""
     nodes, out, inn = g['nodes'], g['out'], g['inn']
     # A project that posts heartbeats (<folder>/heartbeats.jsonl, else harold/heartbeats/<project>.jsonl) is judged by them alone.
     hb = latest_heartbeat(p, today_iso)
     if hb: return {'kind': 'heartbeat', 'date': hb['date'], 'path': heartbeat_rel(p), 'title': (hb['done'].strip().split('\n')[0])[:72], 'via': 'heartbeat', 'label': 'heartbeat'}
-    cands, seen = [], set()
+    horizon = add_days(today_iso, win)
+    cands, upcoming, seen = [], [], set()
+    def put(c):
+        (upcoming if c['date'] > today_iso else cands).append(c)
     def add(path, via):
         n = nodes.get(path)
         if path in seen or not n or n['type'] == 'template': return
         d = n['last_updated']
-        if not ISO_RE.match(d or '') or d > today_iso: return
+        if not ISO_RE.match(d or ''): return
+        if d > today_iso and not (n['type'] == 'meeting' and d <= horizon): return
         seen.add(path)
-        cands.append({'kind': 'note', 'date': d, 'path': path, 'title': n['title'], 'via': via,
-                      'label': 'project card' if path == card else PULSE_LABEL.get(n['type'], 'note')})
-    if card in nodes: add(card, 'card')
-    for s in sorted(inn.get(card, ())): add(s, 'link')
+        put({'kind': 'note', 'date': d, 'path': path, 'title': n['title'], 'via': via,
+             'label': 'upcoming meeting' if d > today_iso else PULSE_LABEL.get(n['type'], 'note')})
+    # The card's own date is not activity (cards get edited in bulk), nor are person, company or intel cards linking to it.
+    for s_ in sorted(inn.get(card, ())):
+        if nodes.get(s_, {}).get('type') in PULSE_OUT_TYPES: add(s_, 'link')
     for d in sorted(out.get(card, ())):
         if nodes.get(d, {}).get('type') in PULSE_OUT_TYPES: add(d, 'link')
     if folder:
         for path in sorted(nodes):
-            if path.startswith(folder + '/'): add(path, 'folder')
-    for s in sorted(mentions.get(p['name'], ())):
-        if nodes.get(s, {}).get('type') in ('daily', 'meeting'): add(s, 'mention')
-    cands.sort(key=lambda c: (-int(c['date'].replace('-', '')), PULSE_VIA_RANK[c['via']], c['path']))
+            if path.startswith(folder + '/') and path != card: add(path, 'folder')
+    for s_ in sorted(mentions.get(p['name'], ())):
+        if nodes.get(s_, {}).get('type') == 'meeting': add(s_, 'mention')
+    for d, title, proj in tasks or ():
+        if proj == p['name'].lower(): put({'kind': 'note', 'date': d, 'path': TASKS_PATH, 'title': title, 'via': 'plan', 'label': 'task due'})
+    cands.sort(key=lambda c: (-int(c['date'].replace('-', '')), PULSE_VIA_RANK[c['via']], c['path'], c['title']))
     best = cands[0] if cands else None
     if commit and ISO_RE.match(commit['date']) and commit['date'] <= today_iso and (not best or commit['date'] > best['date']):
         best = {'kind': 'commit', 'date': commit['date'], 'path': folder + '/', 'title': commit['subject'], 'via': 'git', 'label': 'commit'}
+    if best and best['date'] >= add_days(today_iso, -win): return best
+    if upcoming:
+        upcoming.sort(key=lambda c: (int(c['date'].replace('-', '')), PULSE_VIA_RANK[c['via']], c['path'], c['title']))
+        return upcoming[0]
     return best
 
+TERMINAL = ('archived', 'autonomous')   # the only hand-set statuses: finished, or self-maintaining and never surfaced
+
+def set_status(p):
+    """The first word of the map's status:, lowercased ('autonomous (side project; ...)' is 'autonomous')."""
+    m = re.match(r'[a-z]+', (p.get('status') or '').strip().lower())
+    return m.group(0) if m else ''
+
 def pulse_data(include_inactive=False):
+    """Every project's derived status. archived and autonomous (hand-set) are never judged. Any other project is
+    active with activity within HAROLD_PULSE_DAYS days of today (back or ahead), and quiet otherwise. A legacy
+    hand-set active or paused is ignored. include_inactive adds the terminal ones."""
     rows = graph_rows()
     today_iso = today()
     nodes = {r[0]: {'title': r[1], 'type': r[2], 'last_updated': r[3]} for r in rows['nodes']}
     out, inn = {}, {}
-    for s, d, _ in rows['edges']:
-        out.setdefault(s, set()).add(d); inn.setdefault(d, set()).add(s)
+    for s_, d, _ in rows['edges']:
+        out.setdefault(s_, set()).add(d); inn.setdefault(d, set()).add(s_)
     mentions = {}
-    for s, name in rows['mentions']: mentions.setdefault(name, set()).add(s)
+    for s_, name in rows['mentions']: mentions.setdefault(name, set()).add(s_)
     g = {'nodes': nodes, 'out': out, 'inn': inn}
     gs = git_state()
     days_limit = pulse_days()
+    projects = load_projects()
+    pulse_folders = {q['name']: norm_folder(q.get('folder')) for q in projects}
+    tasks = read_plans(today_iso, days_limit)
     res = []
-    for p in load_projects():
-        status = (p.get('status') or '').strip().lower()
-        if status != 'active' and not include_inactive: continue
+    for p in projects:
+        raw = set_status(p)
+        if raw in TERMINAL and not include_inactive: continue
         folder, card = norm_folder(p.get('folder')), find_card(p, nodes)
-        item = {'name': p['name'], 'status': status, 'folder': folder, 'card': card}
-        if status == 'active':
-            commit = last_commit(folder) if folder and not gs else None
-            last = pulse_activity(p, g, mentions, card, folder, today_iso, commit)
+        item = {'name': p['name'], 'status': raw, 'set_status': raw, 'folder': folder, 'card': card,
+                'quiet': None, 'days': None, 'last': None}
+        if raw not in TERMINAL:
+            commit = last_commit(folder, pulse_folders, add_days(today_iso, -days_limit)) if folder and not gs else None
+            last = pulse_activity(p, g, mentions, card, folder, today_iso, commit, tasks, days_limit)
             days = age_days(last['date']) if last else None
-            item.update({'quiet': last is None or days > days_limit, 'days': days, 'last': last})
-        else:
-            item.update({'quiet': None, 'days': None, 'last': None})
+            item['status'] = 'active' if last is not None and days <= days_limit else 'quiet'
+            item.update({'quiet': item['status'] == 'quiet', 'days': days, 'last': last})
         item['next_step'], item['next_step_source'] = next_step(p, card, folder)
         res.append(item)
-    act = [x for x in res if x['status'] == 'active']
-    act.sort(key=lambda x: (0 if x['quiet'] else 1, -(x['days'] if x['days'] is not None else 10 ** 9), x['name']))
-    rest = sorted((x for x in res if x['status'] != 'active'), key=lambda x: x['name'])
-    return {'today': today_iso, 'pulse_days': days_limit, 'git': gs or 'ok', 'active': len(act),
-            'quiet': sum(1 for x in act if x['quiet']), 'projects': act + rest}
+    act = sorted((x for x in res if x['status'] == 'active'),
+                 key=lambda x: (x['days'] is None, abs(x['days']) if x['days'] is not None else 0, x['name']))
+    quiet = sorted((x for x in res if x['status'] == 'quiet'), key=lambda x: x['name'])
+    rest = sorted((x for x in res if x['status'] not in ('active', 'quiet')), key=lambda x: x['name'])
+    return {'today': today_iso, 'pulse_days': days_limit, 'git': gs or 'ok', 'active': len(act), 'quiet': len(quiet),
+            'projects': act + quiet + rest}
 
-def pulse_line(x, full):
+def pulse_when(x):
+    """'last activity 4 days ago (commit 2026-10-03, "feat: ...")', 'upcoming: task due in 3 days (...)', or 'no dated activity found'."""
     last = x['last']
-    if last is None: act = 'quiet, no dated activity found'
-    else:
-        lab = f"{last['label']} {last['date']}"
-        if last['kind'] == 'commit' or last['label'] != 'project card': lab += f', "{last["title"]}"'
-        d = x['days']
-        when = 'today' if d == 0 else '1 day ago' if d == 1 else f'{d} days ago'
-        act = (f'quiet {d} days' if x['quiet'] else f'active {when}') + f' (last: {lab})'
-    s = f"- {x['name']} — {act}"
-    if full: s += '; next step: ' + (x['next_step'] or 'no next step recorded')
-    return s
+    if last is None: return 'no dated activity found'
+    d = x['days']
+    if d is not None and d < 0:
+        return f"upcoming: {last['label']} in {'1 day' if d == -1 else f'{-d} days'} ({last['date']}, \"{last['title']}\")"
+    lab = f"{last['label']} {last['date']}, \"{last['title']}\""
+    return f"last activity {'today' if d == 0 else '1 day ago' if d == 1 else f'{d} days ago'} ({lab})"
+
+def pulse_line(x):
+    """One active project: its last activity and its next step."""
+    return f"- {x['name']} — {pulse_when(x)}; next step: " + (x['next_step'] or 'no next step recorded')
 
 def pulse_text(data, show_all=False):
-    act = [x for x in data['projects'] if x['status'] == 'active']
     n, q, days = data['active'], data['quiet'], data['pulse_days']
-    if not n: L = [f"# Project pulse, {data['today']}: no active projects in harold/projects.md"]
-    else:
-        L = [f"# Project pulse, {data['today']}: {q} of {n} active project{'s' if n != 1 else ''} quiet (no activity in more than {days} days)"]
-        quiet = [x for x in act if x['quiet']]
-        live = [x for x in act if not x['quiet']]
-        if quiet: L += ['', 'Quiet:'] + [pulse_line(x, True) for x in quiet]
-        if live: L += ['', 'Active:'] + [pulse_line(x, show_all) for x in live]
-    other = [x for x in data['projects'] if x['status'] != 'active']
-    if show_all and other: L += ['', 'Not judged (not active):'] + [f"- {x['name']} [{x['status'] or 'no status'}]" for x in other]
-    L += ['', 'Activity: notes linked to the project card, files in its folder, daily and meeting notes that name it (dates written in the notes), '
-              f'and git commits touching its folder. Quiet after HAROLD_PULSE_DAYS ({days}) days without any. '
+    L = [f"# Project pulse, {data['today']}: {n} active, {q} quiet (active: activity within {days} days)"]
+    act = [x for x in data['projects'] if x['status'] == 'active']
+    quiet = [x for x in data['projects'] if x['status'] == 'quiet']
+    if act: L += ['', 'Active:'] + [pulse_line(x) for x in act]
+    if quiet:
+        if show_all: L += ['', 'Quiet (not nagged; work there makes them active again):'] + [f"- {x['name']} — {pulse_when(x)}" for x in quiet]
+        else: L += ['', 'Quiet (not nagged; work there makes them active again): ' + ', '.join(x['name'] for x in quiet)]
+    other = [x for x in data['projects'] if x['status'] not in ('active', 'quiet')]
+    if show_all and other: L += ['', 'Not judged (archived or autonomous):'] + [f"- {x['name']} [{x['status']}]" for x in other]
+    L += ['', 'Activity: heartbeats; meeting, daily and decision notes linked with the project card (either way); files in its folder; meeting notes that name it without a link (dates written in the notes); '
+              f'open tasks due ({TASKS_PATH}) and meeting notes dated ahead, within HAROLD_PULSE_DAYS of today; '
+              f'and git commits that add or change files in its folder and touch no more than {PULSE_BULK_PROJECTS} projects\' folders. '
+              'The card\'s own date and links from person, company or intel cards do not count. '
+              f'A project is active with activity within HAROLD_PULSE_DAYS ({days}) days; status: in harold/projects.md is only archived or autonomous. '
               'Record a next step as next_step: in the project\'s harold/projects.md entry or its card\'s frontmatter.']
     if data['git'] != 'ok': L.append(f"Git history not used here ({data['git']}): commits were not counted.")
     return '\n'.join(L)
 
 def pulse_boot(data):
-    """The short PROJECT PULSE section of bin/harold boot: only the quiet projects, or one line."""
+    """The PROJECT PULSE section of bin/harold boot: the counts only. Quiet projects are never listed here."""
     n, q, days = data['active'], data['quiet'], data['pulse_days']
-    if not n: return '## Project pulse: no active projects in harold/projects.md'
-    if not q: return f"## Project pulse: all {n} active project{'s' if n != 1 else ''} active within {days} days (bin/harold pulse)"
-    L = [f"## Project pulse: {q} of {n} active project{'s' if n != 1 else ''} quiet, no activity in more than {days} days (bin/harold pulse for all)"]
-    L += [pulse_line(x, True) for x in data['projects'] if x['status'] == 'active' and x['quiet']]
-    return '\n'.join(L)
+    return f"## Project pulse: {n} active, {q} quiet; active means activity within {days} days (bin/harold pulse)"
 
 def cmd_pulse(argv):
     data = pulse_data(include_inactive='--all' in argv)
-    if '--json' in argv: print(json.dumps(data, indent=1, ensure_ascii=False)); return 0
+    if '--json' in argv:
+        data['boot'] = pulse_boot(data)
+        print(json.dumps(data, indent=1, ensure_ascii=False)); return 0
     if '--boot' in argv: print(pulse_boot(data)); return 0
     print(pulse_text(data, show_all='--all' in argv)); return 0
 

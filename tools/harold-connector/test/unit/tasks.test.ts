@@ -68,7 +68,7 @@ describe("task_create", () => {
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/No project matches "Fund" in harold\/projects\.md\. Close matches: .*Fundraise.*Fundamentals Review/);
     const none = await tasks.createTask(sb(), load, { title: "x", project: "Zzz Nothing" });
-    expect(none.text).toMatch(/Active projects: Acme Pilot, Fundraise/);
+    expect(none.text).toMatch(/Projects: Acme Pilot, Fundraise/);
     expect(db.tables.tasks).toHaveLength(0);
   });
 

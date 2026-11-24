@@ -127,7 +127,7 @@ describe("OAuth flow (mocked GitHub)", () => {
     const list = await client.listTools();
     expect(list.tools.map(t => t.name).sort()).toEqual([...TOOL_NAMES].sort());
     const where = await client.callTool({ name: "harold_where", arguments: { topic: "harold" } });
-    expect((where.content as { text: string }[])[0].text).toMatch(/^Harold \[active\]/);
+    expect((where.content as { text: string }[])[0].text).toMatch(/^Harold\nfolder: /);
     await client.close();
 
     const refreshed = await refreshAuthorization(as, { metadata, clientInformation, refreshToken: tokens.refresh_token!, fetchFn: appFetch });

@@ -14,7 +14,7 @@ export class FakeGithub {
   concurrentWrite?: (path: string, current: string | undefined) => string;
   calls: string[] = [];
   searchHits: string[] = [];                  // paths /search/code answers with (GitHub code search)
-  commitLog: { date: string; message: string; paths: string[] }[] = [];  // what /repos/:o/:r/commits?path= answers from
+  commitLog: { date: string; message: string; paths: string[]; files?: { filename: string; status: string; previous_filename?: string }[]; merge?: boolean }[] = [];  // what /repos/:o/:r/commits?path= answers from
   /** GET /repositories/:id; `visibleTo` lists the tokens that can see it (a private repository is 404 to anyone else). */
   repos = new Map<number, { owner: { login: string; id: number; type: "User" | "Organization" }; visibleTo: string[] }>();
 
@@ -71,9 +71,19 @@ export class FakeGithub {
     }
     if (url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/commits$/) && method === "GET") {
       const p = url.searchParams.get("path") || "";
-      const hits = this.commitLog.filter(c => !p || c.paths.some(x => x === p || x.startsWith(`${p}/`)))
-        .sort((a, b) => Date.parse(b.date) - Date.parse(a.date)).slice(0, Number(url.searchParams.get("per_page") || 30));
-      return res(200, hits.map((c, i) => ({ sha: this.sha(c.message + c.date + i), commit: { message: c.message, committer: { date: c.date }, author: { name: "t", email: "t@example.com", date: c.date } } })));
+      const hits = this.commitLog.map((c, i) => ({ c, sha: this.sha(`${c.message}${c.date}${i}`) })).filter(({ c }) => !p || c.paths.some(x => x === p || x.startsWith(`${p}/`)))
+        .sort((a, b) => Date.parse(b.c.date) - Date.parse(a.c.date)).slice(0, Number(url.searchParams.get("per_page") || 30));
+      return res(200, hits.map(({ c, sha }) => ({ sha, parents: c.merge ? [{}, {}] : [{}], commit: { message: c.message, committer: { date: c.date }, author: { name: "t", email: "t@example.com", date: c.date } } })));
+    }
+    const cm = url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)$/);
+    if (cm && method === "GET") {
+      this.calls.push(`COMMIT ${cm[1]}`);
+      const i = this.commitLog.findIndex((c, k) => this.sha(`${c.message}${c.date}${k}`) === cm[1]);
+      if (i < 0) return res(404, { message: "No commit found" });
+      const c = this.commitLog[i];
+      const all = c.files || c.paths.map(filename => ({ filename, status: "modified" }));
+      const per = Number(url.searchParams.get("per_page") || 300), page = Number(url.searchParams.get("page") || 1);
+      return res(200, { sha: cm[1], files: all.slice((page - 1) * per, page * per) });
     }
     if (url.pathname.match(/\/git\/trees\//)) return res(200, { tree: [...this.files.keys()].map(p => ({ path: p, type: "blob", size: this.files.get(p)!.length })) });
     if (url.pathname === "/search/code") return res(200, { items: this.searchHits.map(path => ({ path, text_matches: [] })) });

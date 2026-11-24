@@ -12,6 +12,7 @@
 
 import { resolveContact, type Sb } from "./crm.js";
 import { rankProjects, type Project } from "./projects.js";
+import { setStatus, TERMINAL } from "./pulse.js";
 import { secretScan } from "./text.js";
 
 export interface TaskResult { text: string; isError?: boolean; person?: { name: string } }
@@ -107,7 +108,7 @@ async function resolveProject(load: ProjectsLoader, want: string): Promise<Proj>
   const [top, second] = ranked;
   if (top && (top.s >= 100 || (top.s >= 40 && (!second || top.s - second.s >= 20)))) return { name: top.p.name };
   const close = ranked.slice(0, 5).map(x => x.p.name);
-  const list = close.length ? `Close matches: ${close.join(", ")}.` : `Active projects: ${projects.filter(p => p.status === "active").map(p => p.name).join(", ") || projects.map(p => p.name).join(", ")}.`;
+  const list = close.length ? `Close matches: ${close.join(", ")}.` : `Projects: ${projects.filter(p => !TERMINAL.includes(setStatus(p))).map(p => p.name).join(", ") || projects.map(p => p.name).join(", ")}.`;
   return { error: err(`No project matches "${want}" in harold/projects.md. ${list} Pass one of these names (harold_where finds it), or leave project out.`) };
 }
 

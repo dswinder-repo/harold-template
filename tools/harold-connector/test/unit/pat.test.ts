@@ -50,7 +50,7 @@ describe("personal access tokens", () => {
       requestInit: { headers: { Authorization: `Bearer ${t.token}` } },
     }));
     const where = await client.callTool({ name: "harold_where", arguments: { topic: "harold" } });
-    expect((where.content as { text: string }[])[0].text).toMatch(/^Harold \[active\]/);
+    expect((where.content as { text: string }[])[0].text).toMatch(/^Harold\nfolder: /);
     await client.close();
     expect(gh.calls.filter(c => c === "GET /user")).toEqual([]);
     expect(gh.calls.some(c => c.includes("/contents/harold/projects.md"))).toBe(true);

@@ -33,7 +33,7 @@ Name the signal precisely. Not "Acme Corp is using AI" but "Acme Corp moved its 
 
 | Domain | What to check | Where / tools |
 |--------|---------------|---------------|
-| **Active projects** | Every entry with `status: active`: its `keywords`, `people` and folder | `harold/projects.md`, `bin/harold where <topic>` |
+| **Active projects** | Every project `bin/harold pulse` lists as active (activity is recent or coming up; `harold_pulse` on the connector): its `keywords`, `people` and folder | `harold/projects.md`, `bin/harold where <topic>` |
 | **Competitors** | The `competitors` line of each active entry | `harold/projects.md` |
 | **Upcoming events and meetings** | Who are we meeting, and about what? Does this change the conversation? | `harold/events.md`, calendar, `crm_get_contact` / `harold_get_contact` |
 | **Blockers** | Does this resolve, worsen, or create a blocker? | `harold/blockers.md` |
